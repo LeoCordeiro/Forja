@@ -1,6 +1,7 @@
 import type * as SQLite from 'expo-sqlite';
 import { EXERCICIOS, MEDIA_BASE } from './exercicios';
-import { ALIMENTOS, RECEITAS } from './alimentos';
+import { ALIMENTOS, RECEITAS, type SeedReceita } from './alimentos';
+import { RECEITAS_FIT } from './receitas-fit';
 import { CONQUISTAS, ROTINAS_PADRAO } from './conquistas';
 
 /**
@@ -44,11 +45,25 @@ export async function seedIfEmpty(db: SQLite.SQLiteDatabase) {
     );
     for (const f of foods) foodIds.set(f.nome, f.id);
 
-    for (const r of RECEITAS) {
+    // As receitas fit entram junto com as básicas; as tags alimentam o filtro
+    // por preferência alimentar no cardápio.
+    const todasReceitas: (SeedReceita & { tags?: string[]; viral?: string })[] = [
+      ...RECEITAS,
+      ...RECEITAS_FIT,
+    ];
+
+    for (const r of todasReceitas) {
       const res = await db.runAsync(
-        `INSERT INTO recipes (nome, rendimento_porcoes, tempo_preparo_min, dificuldade)
-         VALUES (?,?,?,?)`,
-        [r.nome, r.porcoes, r.tempoMin, r.dificuldade]
+        `INSERT INTO recipes (nome, rendimento_porcoes, tempo_preparo_min, dificuldade, tags, observacao)
+         VALUES (?,?,?,?,?,?)`,
+        [
+          r.nome,
+          r.porcoes,
+          r.tempoMin,
+          r.dificuldade,
+          (r.tags ?? []).join(','),
+          r.viral ?? null,
+        ]
       );
       const rid = res.lastInsertRowId;
 

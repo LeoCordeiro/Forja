@@ -14,3 +14,5 @@ export { Confete, Celebrar } from './Celebrate';
 export type { Comemoracao } from './Celebrate';
 export { ExerciseDemo } from './ExerciseDemo';
 export { Input } from './Input';
+export { Ajuda, TituloComAjuda } from './Ajuda';
+export type { ConteudoAjuda } from './Ajuda';

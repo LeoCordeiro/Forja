@@ -10,7 +10,7 @@
  * (Supabase) sem reescrita, quando for a hora de comercializar.
  */
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export const DDL = `
 PRAGMA journal_mode = WAL;

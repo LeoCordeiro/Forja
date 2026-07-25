@@ -9,8 +9,14 @@ import { resumo } from '@/features/perfil/api';
 import { listarDias, prsRecentes, sessaoAberta } from '@/features/treino/api';
 import { macrosDoDia } from '@/features/dieta/api';
 import { getStats, progressoNivel } from '@/features/gamificacao/api';
-import { kcal, num, pct, peso, volume } from '@/shared/utils/format';
+import { kcal, num, pct, peso } from '@/shared/utils/format';
 import { dataAmigavel, hoje } from '@/shared/utils/date';
+import { resumoSemana } from '@/features/treino/frequencia';
+import { registrar as registrarAgua, statusHidratacao, totalDoDia } from '@/features/agua/api';
+import { faseDaSemana, LABEL_FASE, planoRetorno, semanaAtual as semanaDoPlano } from '@/features/treino/periodizacao';
+import { Ajuda } from '@/shared/ui/Ajuda';
+import { AJUDA } from '@/shared/ajudas';
+import { buzz } from '@/shared/utils/haptics';
 
 export default function Home() {
   const router = useRouter();
@@ -24,7 +30,11 @@ export default function Home() {
       prsRecentes(3),
       sessaoAberta(),
     ]);
-    return { r, dias, macros, stats, prs, aberta };
+    const [semana, agua] = await Promise.all([
+      resumoSemana(r?.perfil.dias_treino_semana ?? 3),
+      totalDoDia(),
+    ]);
+    return { r, dias, macros, stats, prs, aberta, semana, agua };
   }, []);
 
   if (carregando || !dados?.r) {
@@ -35,9 +45,15 @@ export default function Home() {
     );
   }
 
-  const { r, dias, macros, stats, prs, aberta } = dados;
+  const { r, dias, macros, stats, prs, aberta, semana, agua } = dados;
   const nivel = progressoNivel(stats.xp_total);
   const primeiroNome = r.perfil.nome.split(' ')[0];
+  const statusAgua = statusHidratacao(agua, r.metaAguaMl);
+
+  // Fase do plano de retorno — muda o que se espera do treino desta semana.
+  const semanaPlano = r.perfil.retomou_em ? semanaDoPlano(r.perfil.retomou_em) : null;
+  const plano = planoRetorno(r.perfil.meses_parado ?? 0);
+  const fase = semanaPlano ? faseDaSemana(plano, semanaPlano) : null;
 
   // Sugere o dia menos recente da rotina — o que está "devendo" há mais tempo.
   const sugerido = [...dias].sort(
@@ -102,6 +118,63 @@ export default function Home() {
           </View>
         </Card>
       </Animated.View>
+
+      {/* ── Semana ── */}
+      <Animated.View entering={FadeInDown.delay(90).duration(300)}>
+        <Card>
+          <View style={s.entre}>
+            <Txt v="label">Sua semana</Txt>
+            <Txt v="small" cor={semana.feitos >= semana.meta ? colors.success : colors.textDim} bold>
+              {semana.feitos} de {semana.meta}
+            </Txt>
+          </View>
+
+          <View style={s.semana}>
+            {semana.dias.map((d) => (
+              <View key={d.data} style={s.diaCol}>
+                <Txt v="small" size={10} cor={d.hoje ? colors.primary : colors.textFaint} bold={d.hoje}>
+                  {d.letra}
+                </Txt>
+                <View
+                  style={[
+                    s.diaBox,
+                    d.treinou && { backgroundColor: colors.success, borderColor: colors.success },
+                    d.hoje && !d.treinou && { borderColor: colors.primary, borderWidth: 2 },
+                    d.futuro && { opacity: 0.4 },
+                  ]}
+                >
+                  {d.treinou ? (
+                    <Ionicons name="checkmark" size={16} color="#00251A" />
+                  ) : d.futuro ? null : (
+                    <Ionicons name="close" size={13} color={colors.textFaint} />
+                  )}
+                </View>
+              </View>
+            ))}
+          </View>
+
+          <Txt v="small" cor={colors.textFaint} style={{ marginTop: spacing.sm }}>
+            {semana.mensagem}
+          </Txt>
+        </Card>
+      </Animated.View>
+
+      {/* ── Fase do plano ── */}
+      {fase && fase.fase !== 'acumulo' ? (
+        <Animated.View entering={FadeInDown.delay(100).duration(300)}>
+          <Card faixa={colors.info} padding={spacing.md}>
+            <View style={s.entre}>
+              <View style={{ flex: 1, gap: 2 }}>
+                <Txt v="label" cor={colors.info}>
+                  Semana {semanaPlano} · {LABEL_FASE[fase.fase]}
+                </Txt>
+                <Txt v="small">{fase.nota}</Txt>
+              </View>
+              <Ajuda conteudo={AJUDA.rir} />
+            </View>
+          </Card>
+        </Animated.View>
+      ) : null}
 
       {/* ── Treino de hoje ── */}
       <Animated.View entering={FadeInDown.delay(120).duration(300)} style={{ gap: spacing.md }}>
@@ -187,6 +260,58 @@ export default function Home() {
         </Card>
       </Animated.View>
 
+      {/* ── Água ── */}
+      <Animated.View entering={FadeInDown.delay(210).duration(300)} style={{ gap: spacing.md }}>
+        <View style={s.entre}>
+          <Txt v="label">Hidratação</Txt>
+          <Press onPress={() => router.push('/agua')} haptic="leve">
+            <Txt v="small" cor={colors.info} bold>
+              Ver tudo
+            </Txt>
+          </Press>
+        </View>
+        <Card>
+          <View style={s.entre}>
+            <View style={{ flex: 1, gap: spacing.sm }}>
+              <View style={s.entre}>
+                <Txt v="h2" cor={colors.info}>
+                  {(agua / 1000).toFixed(1).replace('.', ',')} L
+                  <Txt v="small" cor={colors.textDim}>
+                    {' '}
+                    de {(r.metaAguaMl / 1000).toFixed(1).replace('.', ',')}
+                  </Txt>
+                </Txt>
+                <Txt v="small" cor={statusAgua.cor} bold>
+                  {statusAgua.texto}
+                </Txt>
+              </View>
+              <Barra valor={pct(agua, r.metaAguaMl)} cor={colors.info} altura={8} />
+            </View>
+          </View>
+
+          <View style={s.copos}>
+            {[200, 300, 500].map((ml) => (
+              <Press
+                key={ml}
+                onPress={async () => {
+                  await registrarAgua(ml);
+                  buzz.medio();
+                  recarregar();
+                }}
+                style={s.copoRapido}
+                scale={0.92}
+                haptic={false}
+              >
+                <Ionicons name="add" size={14} color={colors.info} />
+                <Txt v="small" cor={colors.info} bold>
+                  {ml} ml
+                </Txt>
+              </Press>
+            ))}
+          </View>
+        </Card>
+      </Animated.View>
+
       {/* ── Recordes recentes ── */}
       {prs.length > 0 ? (
         <Animated.View entering={FadeInDown.delay(240).duration(300)} style={{ gap: spacing.md }}>
@@ -226,11 +351,7 @@ export default function Home() {
           label="Registrar peso"
           onPress={() => router.push('/evolucao')}
         />
-        <Atalho
-          icone="cart-outline"
-          label="Lista de compras"
-          onPress={() => router.push('/compras')}
-        />
+        <Atalho icone="water-outline" label="Água" onPress={() => router.push('/agua')} />
         <Atalho
           icone="trophy-outline"
           label="Medalhas"
@@ -342,6 +463,29 @@ const s = StyleSheet.create({
     backgroundColor: colors.warnSoft,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  semana: { flexDirection: 'row', justifyContent: 'space-between', marginTop: spacing.md },
+  diaCol: { alignItems: 'center', gap: 5 },
+  diaBox: {
+    width: 36,
+    height: 36,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceHigh,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  copos: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md },
+  copoRapido: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 3,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: colors.infoSoft,
   },
   atalhos: { flexDirection: 'row', gap: spacing.sm },
   atalho: {

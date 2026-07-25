@@ -3,17 +3,36 @@ import type { BodyMetric, Macros, NutritionTarget, Profile } from '@/db/types';
 import { hoje } from '@/shared/utils/date';
 import { idade } from '@/shared/utils/date';
 import { macros, metaCalorica, tdee, tmb } from './calculos';
+import { DEFICIT_RECOMPOSICAO, macrosRecomposicao } from './recomposicao';
+import { metaDiaria } from '../agua/api';
 
 export async function getPerfil(): Promise<Profile | null> {
   return first<Profile>('SELECT * FROM profile WHERE id = 1');
 }
 
-export async function salvarPerfil(p: Omit<Profile, 'id' | 'criado_em'>) {
+/** Campos da v2 são opcionais: telas antigas continuam salvando sem conhecê-los. */
+type CamposV2 =
+  | 'tmb_medido_kcal'
+  | 'usa_tmb_medido'
+  | 'meta_agua_ml'
+  | 'gordura_meta_pct'
+  | 'experiencia'
+  | 'dias_treino_semana'
+  | 'retomou_em'
+  | 'meses_parado'
+  | 'papel';
+
+type PerfilEntrada = Omit<Profile, 'id' | 'criado_em' | CamposV2> &
+  Partial<Pick<Profile, CamposV2>>;
+
+export async function salvarPerfil(p: PerfilEntrada) {
   await run(
     `INSERT INTO profile
        (id, nome, data_nascimento, genero, altura_cm, nivel_atividade, objetivo,
-        peso_meta_kg, onboarding_completo, criado_em)
-     VALUES (1,?,?,?,?,?,?,?,?,?)
+        peso_meta_kg, onboarding_completo, criado_em,
+        tmb_medido_kcal, usa_tmb_medido, meta_agua_ml, gordura_meta_pct,
+        experiencia, dias_treino_semana, retomou_em, meses_parado, papel)
+     VALUES (1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(id) DO UPDATE SET
        nome = excluded.nome,
        data_nascimento = excluded.data_nascimento,
@@ -22,7 +41,16 @@ export async function salvarPerfil(p: Omit<Profile, 'id' | 'criado_em'>) {
        nivel_atividade = excluded.nivel_atividade,
        objetivo = excluded.objetivo,
        peso_meta_kg = excluded.peso_meta_kg,
-       onboarding_completo = excluded.onboarding_completo`,
+       onboarding_completo = excluded.onboarding_completo,
+       tmb_medido_kcal = excluded.tmb_medido_kcal,
+       usa_tmb_medido = excluded.usa_tmb_medido,
+       meta_agua_ml = excluded.meta_agua_ml,
+       gordura_meta_pct = excluded.gordura_meta_pct,
+       experiencia = excluded.experiencia,
+       dias_treino_semana = excluded.dias_treino_semana,
+       retomou_em = excluded.retomou_em,
+       meses_parado = excluded.meses_parado,
+       papel = excluded.papel`,
     [
       p.nome,
       p.data_nascimento,
@@ -33,26 +61,42 @@ export async function salvarPerfil(p: Omit<Profile, 'id' | 'criado_em'>) {
       p.peso_meta_kg,
       p.onboarding_completo,
       Date.now(),
+      p.tmb_medido_kcal ?? null,
+      p.usa_tmb_medido ?? 0,
+      p.meta_agua_ml ?? null,
+      p.gordura_meta_pct ?? null,
+      p.experiencia ?? 'iniciante',
+      p.dias_treino_semana ?? 3,
+      p.retomou_em ?? null,
+      p.meses_parado ?? 0,
+      p.papel ?? 'aluno',
     ]
   );
 }
 
-/** Uma medição por dia: registrar de novo no mesmo dia sobrescreve. */
+/** Uma medição por dia: registrar de novo no mesmo dia complementa a anterior. */
 export async function salvarMedida(m: Partial<BodyMetric> & { medido_em?: string }) {
   const data = m.medido_em ?? hoje();
   await run(
     `INSERT INTO body_metrics
        (medido_em, peso_kg, gordura_pct, cintura_cm, peito_cm, quadril_cm,
-        braco_cm, coxa_cm, criado_em)
-     VALUES (?,?,?,?,?,?,?,?,?)
+        braco_cm, coxa_cm, gordura_visceral, musculo_pct, idade_corporal,
+        tmb_kcal, agua_pct, origem, criado_em)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(medido_em) DO UPDATE SET
-       peso_kg     = COALESCE(excluded.peso_kg,     body_metrics.peso_kg),
-       gordura_pct = COALESCE(excluded.gordura_pct, body_metrics.gordura_pct),
-       cintura_cm  = COALESCE(excluded.cintura_cm,  body_metrics.cintura_cm),
-       peito_cm    = COALESCE(excluded.peito_cm,    body_metrics.peito_cm),
-       quadril_cm  = COALESCE(excluded.quadril_cm,  body_metrics.quadril_cm),
-       braco_cm    = COALESCE(excluded.braco_cm,    body_metrics.braco_cm),
-       coxa_cm     = COALESCE(excluded.coxa_cm,     body_metrics.coxa_cm)`,
+       peso_kg          = COALESCE(excluded.peso_kg,          body_metrics.peso_kg),
+       gordura_pct      = COALESCE(excluded.gordura_pct,      body_metrics.gordura_pct),
+       cintura_cm       = COALESCE(excluded.cintura_cm,       body_metrics.cintura_cm),
+       peito_cm         = COALESCE(excluded.peito_cm,         body_metrics.peito_cm),
+       quadril_cm       = COALESCE(excluded.quadril_cm,       body_metrics.quadril_cm),
+       braco_cm         = COALESCE(excluded.braco_cm,         body_metrics.braco_cm),
+       coxa_cm          = COALESCE(excluded.coxa_cm,          body_metrics.coxa_cm),
+       gordura_visceral = COALESCE(excluded.gordura_visceral, body_metrics.gordura_visceral),
+       musculo_pct      = COALESCE(excluded.musculo_pct,      body_metrics.musculo_pct),
+       idade_corporal   = COALESCE(excluded.idade_corporal,   body_metrics.idade_corporal),
+       tmb_kcal         = COALESCE(excluded.tmb_kcal,         body_metrics.tmb_kcal),
+       agua_pct         = COALESCE(excluded.agua_pct,         body_metrics.agua_pct),
+       origem           = excluded.origem`,
     [
       data,
       m.peso_kg ?? null,
@@ -62,8 +106,30 @@ export async function salvarMedida(m: Partial<BodyMetric> & { medido_em?: string
       m.quadril_cm ?? null,
       m.braco_cm ?? null,
       m.coxa_cm ?? null,
+      m.gordura_visceral ?? null,
+      m.musculo_pct ?? null,
+      m.idade_corporal ?? null,
+      m.tmb_kcal ?? null,
+      m.agua_pct ?? null,
+      m.origem ?? 'manual',
       Date.now(),
     ]
+  );
+
+  // TMB medido substitui a estimativa por fórmula a partir de agora.
+  if (m.tmb_kcal) {
+    await run('UPDATE profile SET tmb_medido_kcal = ?, usa_tmb_medido = 1 WHERE id = 1', [
+      m.tmb_kcal,
+    ]);
+  }
+}
+
+/** Última medida com bioimpedância — traz gordura, visceral e músculo juntos. */
+export async function ultimaBioimpedancia(): Promise<BodyMetric | null> {
+  return first<BodyMetric>(
+    `SELECT * FROM body_metrics
+      WHERE gordura_pct IS NOT NULL
+      ORDER BY medido_em DESC LIMIT 1`
   );
 }
 
@@ -106,9 +172,16 @@ export interface Resumo {
   pesoKg: number;
   imcValor: number;
   tmbValor: number;
+  /** true quando o TMB vem da bioimpedância, não da fórmula. */
+  tmbMedido: boolean;
   tdeeValor: number;
   meta: Macros;
   idadeAnos: number;
+  gorduraPct: number | null;
+  visceral: number | null;
+  musculoPct: number | null;
+  massaMagraKg: number | null;
+  metaAguaMl: number;
 }
 
 export async function resumo(): Promise<Resumo | null> {
@@ -116,11 +189,19 @@ export async function resumo(): Promise<Resumo | null> {
   if (!perfil) return null;
 
   const medida = await ultimaMedida();
+  const bio = await ultimaBioimpedancia();
   const pesoKg = medida?.peso_kg ?? 70;
   const idadeAnos = idade(perfil.data_nascimento);
 
-  const basal = tmb(pesoKg, perfil.altura_cm, idadeAnos, perfil.genero);
+  // TMB medido por bioimpedância ganha da estimativa: a fórmula assume uma
+  // composição corporal média, e quem treina costuma estar longe da média.
+  const estimado = tmb(pesoKg, perfil.altura_cm, idadeAnos, perfil.genero);
+  const usaMedido = !!(perfil.usa_tmb_medido && perfil.tmb_medido_kcal);
+  const basal = usaMedido ? perfil.tmb_medido_kcal! : estimado;
   const gasto = tdee(basal, perfil.nivel_atividade);
+
+  const gorduraPct = bio?.gordura_pct ?? null;
+  const massaMagraKg = gorduraPct !== null ? Math.round(pesoKg * (1 - gorduraPct / 100) * 10) / 10 : null;
 
   const salva = await metaAtual();
   const meta: Macros = salva
@@ -130,23 +211,68 @@ export async function resumo(): Promise<Resumo | null> {
         carbo_g: salva.carbo_g,
         gordura_g: salva.gordura_g,
       }
-    : macros(metaCalorica(gasto, perfil.objetivo), pesoKg, perfil.objetivo);
+    : calcularMeta(gasto, pesoKg, perfil.objetivo, gorduraPct);
 
   return {
     perfil,
     pesoKg,
     imcValor: pesoKg / Math.pow(perfil.altura_cm / 100, 2),
     tmbValor: Math.round(basal),
+    tmbMedido: usaMedido,
     tdeeValor: Math.round(gasto),
     meta,
     idadeAnos,
+    gorduraPct,
+    visceral: bio?.gordura_visceral ?? null,
+    musculoPct: bio?.musculo_pct ?? null,
+    massaMagraKg,
+    metaAguaMl: perfil.meta_agua_ml ?? metaDiaria(pesoKg, true),
   };
+}
+
+/**
+ * Meta de macros conforme o objetivo.
+ * Recomposição tem regra própria: déficit leve e proteína calculada sobre a
+ * massa magra, não sobre o peso total.
+ */
+export function calcularMeta(
+  gasto: number,
+  pesoKg: number,
+  objetivo: Profile['objetivo'],
+  gorduraPct: number | null
+): Macros {
+  if (objetivo === 'recomposicao') {
+    return macrosRecomposicao(Math.round(gasto * DEFICIT_RECOMPOSICAO), pesoKg, gorduraPct);
+  }
+  return macros(metaCalorica(gasto, objetivo), pesoKg, objetivo);
 }
 
 /** Recalcula a meta a partir do peso atual — chamado ao registrar novo peso. */
 export async function recalcularMeta() {
   const r = await resumo();
   if (!r) return;
-  const nova = macros(metaCalorica(r.tdeeValor, r.perfil.objetivo), r.pesoKg, r.perfil.objetivo);
+  const nova = calcularMeta(r.tdeeValor, r.pesoKg, r.perfil.objetivo, r.gorduraPct);
   await salvarMeta(nova, 'auto');
+}
+
+/** Meta de calorias definida à mão — mantém os macros proporcionais. */
+export async function definirMetaCalorica(kcal: number) {
+  const r = await resumo();
+  if (!r) return;
+  const base = calcularMeta(r.tdeeValor, r.pesoKg, r.perfil.objetivo, r.gorduraPct);
+  // Proteína e gordura são pisos de saúde; o ajuste sai do carboidrato.
+  const restante = kcal - base.proteina_g * 4 - base.gordura_g * 9;
+  await salvarMeta(
+    {
+      kcal,
+      proteina_g: base.proteina_g,
+      gordura_g: base.gordura_g,
+      carbo_g: Math.max(0, Math.round(restante / 4)),
+    },
+    'manual'
+  );
+}
+
+export async function definirMetaAgua(ml: number) {
+  await run('UPDATE profile SET meta_agua_ml = ? WHERE id = 1', [ml]);
 }

@@ -20,6 +20,16 @@ import {
 } from '@/features/treino/api';
 import type { RoutineExerciseFull } from '@/db/types';
 import { nomeGrupo } from '@/shared/utils/format';
+import { getPerfil } from '@/features/perfil/api';
+import {
+  faseDaSemana,
+  LABEL_FASE,
+  planoRetorno,
+  RIR_POR_FASE,
+  semanaAtual as semanaDoPlano,
+} from '@/features/treino/periodizacao';
+import { Ajuda } from '@/shared/ui/Ajuda';
+import { AJUDA } from '@/shared/ajudas';
 
 export default function DiaDeTreino() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -30,19 +40,38 @@ export default function DiaDeTreino() {
   const [adicionando, setAdicionando] = useState(false);
   const [editando, setEditando] = useState<RoutineExerciseFull | null>(null);
   const [iniciando, setIniciando] = useState(false);
+  const [fazendoCheckin, setFazendoCheckin] = useState(false);
 
   const { dados, recarregar } = useDados(async () => {
-    const [dia, exs] = await Promise.all([getDia(diaId), exerciciosDoDia(diaId)]);
-    return { dia, exs };
+    const [dia, exs, perfil] = await Promise.all([
+      getDia(diaId),
+      exerciciosDoDia(diaId),
+      getPerfil(),
+    ]);
+    return { dia, exs, perfil };
   }, [diaId]);
 
-  async function comecar() {
+  // Fase do plano: define RIR e descanso sugeridos desta semana.
+  const semanaPlano = dados?.perfil?.retomou_em
+    ? semanaDoPlano(dados.perfil.retomou_em)
+    : null;
+  const plano = dados?.perfil ? planoRetorno(dados.perfil.meses_parado ?? 0) : null;
+  const fase = plano && semanaPlano ? faseDaSemana(plano, semanaPlano) : null;
+
+  async function comecar(energia?: number, local?: string) {
     if (!dados?.dia) return;
     setIniciando(true);
     try {
       // Se já existe treino aberto, retoma em vez de criar outro.
       const aberta = await sessaoAberta();
-      const sid = aberta?.id ?? (await iniciarSessao(diaId, dados.dia.nome));
+      const sid =
+        aberta?.id ??
+        (await iniciarSessao(diaId, dados.dia.nome, {
+          energia,
+          local,
+          semanaPlano: semanaPlano ?? undefined,
+        }));
+      setFazendoCheckin(false);
       router.replace(`/sessao/${sid}`);
     } finally {
       setIniciando(false);
@@ -150,10 +179,69 @@ export default function DiaDeTreino() {
             tam="lg"
             full
             carregando={iniciando}
-            onPress={comecar}
+            onPress={() => setFazendoCheckin(true)}
           />
         </View>
       ) : null}
+
+      {/* ── Check-in ── */}
+      <Sheet
+        aberto={fazendoCheckin}
+        onFechar={() => setFazendoCheckin(false)}
+        titulo="Como você chegou hoje?"
+        altura={0.72}
+      >
+        <View style={{ gap: spacing.xl }}>
+          {fase ? (
+            <Card faixa={colors.info}>
+              <Txt v="label" cor={colors.info}>
+                Semana {semanaPlano} · {LABEL_FASE[fase.fase]}
+              </Txt>
+              <Txt v="small">{fase.nota}</Txt>
+              <Txt v="small" cor={colors.textFaint} style={{ marginTop: 4 }}>
+                {RIR_POR_FASE[fase.fase].texto}
+              </Txt>
+            </Card>
+          ) : null}
+
+          <View style={{ gap: spacing.md }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <Txt v="label">Nível de energia</Txt>
+              <Ajuda conteudo={AJUDA.checkin} />
+            </View>
+            <View style={s.energias}>
+              {[
+                { n: 1, e: '🪫', t: 'Zerado' },
+                { n: 2, e: '😴', t: 'Cansado' },
+                { n: 3, e: '🙂', t: 'Normal' },
+                { n: 4, e: '💪', t: 'Bem' },
+                { n: 5, e: '⚡', t: 'Ótimo' },
+              ].map((o) => (
+                <Press
+                  key={o.n}
+                  onPress={() => comecar(o.n, 'academia')}
+                  style={s.energia}
+                  scale={0.9}
+                  haptic="medio"
+                >
+                  <Txt size={26}>{o.e}</Txt>
+                  <Txt v="small" size={10} cor={colors.textFaint}>
+                    {o.t}
+                  </Txt>
+                </Press>
+              ))}
+            </View>
+          </View>
+
+          <Button
+            titulo="Pular e começar"
+            variante="fantasma"
+            full
+            onPress={() => comecar()}
+            carregando={iniciando}
+          />
+        </View>
+      </Sheet>
 
       <Sheet
         aberto={adicionando}
@@ -336,5 +424,16 @@ const s = StyleSheet.create({
     backgroundColor: colors.surfaceHigh,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  energias: { flexDirection: 'row', gap: spacing.sm },
+  energia: {
+    flex: 1,
+    gap: 3,
+    paddingVertical: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
   },
 });

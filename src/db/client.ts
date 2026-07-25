@@ -1,5 +1,6 @@
 import * as SQLite from 'expo-sqlite';
 import { DDL, SCHEMA_VERSION } from './schema';
+import { MIGRACOES } from './migracoes';
 import { seedIfEmpty } from './seed';
 
 let dbRef: SQLite.SQLiteDatabase | null = null;
@@ -20,8 +21,34 @@ export function getDb(): Promise<SQLite.SQLiteDatabase> {
 
     const row = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
     const atual = row?.user_version ?? 0;
+
+    for (const m of MIGRACOES) {
+      if (m.versao <= atual) continue;
+      // Comando a comando: um ALTER TABLE de coluna que já existe (banco criado
+      // pelo DDL novo) não pode derrubar o resto da migração.
+      for (const cmd of m.sql.split(';')) {
+        // Tira as linhas de comentário ANTES de decidir se há comando.
+        // Testar `startsWith('--')` no bloco inteiro descartava todo comando
+        // que viesse logo abaixo de um comentário — que é quase todos.
+        const sql = cmd
+          .split('\n')
+          .filter((l) => !l.trim().startsWith('--'))
+          .join('\n')
+          .trim();
+        if (!sql) continue;
+        try {
+          await db.execAsync(sql);
+        } catch (e) {
+          const msg = String(e);
+          if (!/duplicate column|already exists/i.test(msg)) {
+            console.warn('[migração]', m.versao, sql.slice(0, 60), msg);
+          }
+        }
+      }
+      await db.execAsync(`PRAGMA user_version = ${m.versao}`);
+    }
+
     if (atual < SCHEMA_VERSION) {
-      // Migrações futuras entram aqui, em degraus de versão.
       await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     }
 

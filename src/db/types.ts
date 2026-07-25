@@ -1,5 +1,7 @@
 export type Genero = 'masculino' | 'feminino' | 'outro';
-export type Objetivo = 'hipertrofia' | 'emagrecimento' | 'manutencao';
+export type Objetivo = 'hipertrofia' | 'emagrecimento' | 'manutencao' | 'recomposicao';
+export type Experiencia = 'iniciante' | 'intermediario' | 'avancado';
+export type Papel = 'aluno' | 'personal';
 export type NivelAtividade = 'sedentario' | 'leve' | 'moderado' | 'intenso' | 'atleta';
 export type TipoCarga = 'peso_reps' | 'peso_corporal' | 'tempo' | 'distancia';
 export type TipoSerie = 'normal' | 'aquecimento' | 'drop' | 'falha';
@@ -24,6 +26,17 @@ export interface Profile {
   peso_meta_kg: number | null;
   onboarding_completo: number;
   criado_em: number;
+  /** TMB da bioimpedância. Quando existe, vale mais que a estimativa por fórmula. */
+  tmb_medido_kcal: number | null;
+  usa_tmb_medido: number;
+  meta_agua_ml: number | null;
+  gordura_meta_pct: number | null;
+  experiencia: Experiencia;
+  dias_treino_semana: number;
+  /** Data em que voltou a treinar — âncora do plano de readaptação. */
+  retomou_em: string | null;
+  meses_parado: number;
+  papel: Papel;
 }
 
 export interface BodyMetric {
@@ -37,6 +50,38 @@ export interface BodyMetric {
   braco_cm: number | null;
   coxa_cm: number | null;
   foto_uri: string | null;
+  criado_em: number;
+  /** Campos que só a bioimpedância fornece. */
+  gordura_visceral: number | null;
+  musculo_pct: number | null;
+  idade_corporal: number | null;
+  tmb_kcal: number | null;
+  agua_pct: number | null;
+  origem: string;
+}
+
+export interface FoodPref {
+  id: number;
+  tipo: 'gosta' | 'evita' | 'alergia';
+  categoria: string | null;
+  termo: string;
+}
+
+export interface DietConfig {
+  id: 1;
+  restricao: string;
+  tempo_max_preparo: number;
+  refeicoes_por_dia: number;
+  cozinha_de_verdade: number;
+  atualizado_em: number;
+}
+
+export interface Perfil {
+  id: number;
+  nome: string;
+  emoji: string;
+  papel: Papel;
+  ativo: number;
   criado_em: number;
 }
 

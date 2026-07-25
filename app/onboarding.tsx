@@ -25,13 +25,28 @@ import {
   tdee,
   tmb,
 } from '@/features/perfil/calculos';
-import type { Genero, NivelAtividade, Objetivo } from '@/db/types';
+import type { Experiencia, Genero, NivelAtividade, Objetivo } from '@/db/types';
+import {
+  DESC_OBJETIVO_V2,
+  LABEL_OBJETIVO_V2,
+  macrosRecomposicao,
+} from '@/features/perfil/recomposicao';
+import {
+  DESC_EXPERIENCIA,
+  divisaoRecomendada,
+  LABEL_EXPERIENCIA,
+  planoRetorno,
+} from '@/features/treino/periodizacao';
+import { metaDiaria as metaDiariaAgua } from '@/features/agua/api';
+import { hoje as hojeIso } from '@/shared/utils/date';
+import { Ajuda } from '@/shared/ui/Ajuda';
+import { AJUDA } from '@/shared/ajudas';
 import { avaliarConquistas } from '@/features/gamificacao/api';
 import { num } from '@/shared/utils/format';
 import { buzz } from '@/shared/utils/haptics';
 import { useApp } from '@/shared/estado';
 
-const PASSOS = 6;
+const PASSOS = 7;
 
 export default function Onboarding() {
   const router = useRouter();
@@ -47,7 +62,10 @@ export default function Onboarding() {
   const [altura, setAltura] = useState('');
   const [peso, setPeso] = useState('');
   const [nivel, setNivel] = useState<NivelAtividade>('moderado');
-  const [objetivo, setObjetivo] = useState<Objetivo>('hipertrofia');
+  const [objetivo, setObjetivo] = useState<Objetivo>('recomposicao');
+  const [experiencia, setExperiencia] = useState<Experiencia>('iniciante');
+  const [diasSemana, setDiasSemana] = useState(3);
+  const [mesesParado, setMesesParado] = useState(0);
 
   const prog = useSharedValue(0);
   const barra = useAnimatedStyle(() => ({ width: `${prog.value * 100}%` }));
@@ -70,12 +88,17 @@ export default function Onboarding() {
     true,
     true,
     true,
+    true,
   ][passo];
 
   const basal = pesoN && alturaN && idadeN ? tmb(pesoN, alturaN, idadeN, genero) : 0;
   const gasto = basal ? tdee(basal, nivel) : 0;
   const alvo = gasto ? metaCalorica(gasto, objetivo) : 0;
-  const m = alvo ? macros(alvo, pesoN, objetivo) : null;
+  const m = alvo
+    ? objetivo === 'recomposicao'
+      ? macrosRecomposicao(alvo, pesoN, null)
+      : macros(alvo, pesoN, objetivo)
+    : null;
 
   async function concluir() {
     setSalvando(true);
@@ -89,6 +112,12 @@ export default function Onboarding() {
         objetivo,
         peso_meta_kg: null,
         onboarding_completo: 1,
+        experiencia,
+        dias_treino_semana: diasSemana,
+        meses_parado: mesesParado,
+        // Âncora do plano de readaptação: a contagem de semanas parte daqui.
+        retomou_em: hojeIso(),
+        meta_agua_ml: metaDiariaAgua(pesoN, true),
       });
       await salvarMedida({ peso_kg: pesoN });
       if (m) await salvarMeta(m);
@@ -248,36 +277,112 @@ export default function Onboarding() {
         {passo === 4 && (
           <Bloco key="p4" titulo="Seu objetivo" sub="Define a meta calórica e a divisão de macros">
             <View style={{ gap: spacing.sm }}>
-              {(Object.keys(LABEL_OBJETIVO) as Objetivo[]).map((o) => (
-                <Card
-                  key={o}
-                  onPress={() => setObjetivo(o)}
-                  destaque={objetivo === o}
-                  padding={spacing.lg}
-                >
+              {(['recomposicao', 'hipertrofia', 'emagrecimento', 'manutencao'] as Objetivo[]).map(
+                (o) => (
+                  <Card
+                    key={o}
+                    onPress={() => setObjetivo(o)}
+                    destaque={objetivo === o}
+                    padding={spacing.lg}
+                  >
+                    <View style={s.entre}>
+                      <View style={{ flex: 1, gap: 2 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <Txt v="h3">{LABEL_OBJETIVO_V2[o]}</Txt>
+                          {o === 'recomposicao' ? (
+                            <View style={s.selo}>
+                              <Txt v="small" size={9} cor={colors.primary} bold>
+                                RECOMENDADO
+                              </Txt>
+                            </View>
+                          ) : null}
+                        </View>
+                        <Txt v="small">{DESC_OBJETIVO_V2[o]}</Txt>
+                      </View>
+                      {objetivo === o ? (
+                        <Ionicons name="checkmark-circle" size={24} color={colors.primary} />
+                      ) : null}
+                    </View>
+                  </Card>
+                )
+              )}
+            </View>
+            {objetivo === 'recomposicao' ? (
+              <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
+                <Ajuda conteudo={AJUDA.recomposicao} tam={20} />
+              </View>
+            ) : null}
+          </Bloco>
+        )}
+
+        {passo === 5 && (
+          <Bloco
+            key="p5b"
+            titulo="Sua experiência"
+            sub="Define o volume de treino e o plano de retorno"
+          >
+            <Txt v="label">Nível</Txt>
+            <View style={{ gap: spacing.sm }}>
+              {(['iniciante', 'intermediario', 'avancado'] as Experiencia[]).map((e) => (
+                <Card key={e} onPress={() => setExperiencia(e)} destaque={experiencia === e} padding={spacing.lg}>
                   <View style={s.entre}>
                     <View style={{ flex: 1, gap: 2 }}>
-                      <Txt v="h3">{LABEL_OBJETIVO[o]}</Txt>
-                      <Txt v="small">
-                        {o === 'hipertrofia'
-                          ? 'Superávit de 15% sobre o gasto'
-                          : o === 'emagrecimento'
-                            ? 'Déficit de 15% sobre o gasto'
-                            : 'Calorias iguais ao gasto'}
-                      </Txt>
+                      <Txt v="h3">{LABEL_EXPERIENCIA[e]}</Txt>
+                      <Txt v="small">{DESC_EXPERIENCIA[e]}</Txt>
                     </View>
-                    {objetivo === o ? (
-                      <Ionicons name="checkmark-circle" size={24} color={colors.primary} />
+                    {experiencia === e ? (
+                      <Ionicons name="checkmark-circle" size={22} color={colors.primary} />
                     ) : null}
                   </View>
                 </Card>
               ))}
             </View>
+
+            <View style={{ height: spacing.lg }} />
+            <Txt v="label">Quantos dias por semana você consegue treinar?</Txt>
+            <View style={s.linha}>
+              {[2, 3, 4, 5, 6].map((d) => (
+                <Chip key={d} label={`${d}`} ativo={diasSemana === d} onPress={() => setDiasSemana(d)} />
+              ))}
+            </View>
+            <Txt v="small" cor={colors.textFaint}>
+              {divisaoRecomendada(diasSemana).nome} — {divisaoRecomendada(diasSemana).motivo}
+            </Txt>
+
+            <View style={{ height: spacing.lg }} />
+            <Txt v="label">Há quanto tempo você está parado?</Txt>
+            <View style={s.linha}>
+              {[
+                { v: 0, l: 'Treinando' },
+                { v: 1, l: '1 mês' },
+                { v: 2, l: '2 meses' },
+                { v: 4, l: '3 a 6' },
+                { v: 12, l: 'Mais de 6' },
+              ].map((o) => (
+                <Chip
+                  key={o.v}
+                  label={o.l}
+                  ativo={mesesParado === o.v}
+                  onPress={() => setMesesParado(o.v)}
+                />
+              ))}
+            </View>
+            {mesesParado > 0 ? (
+              <Card style={{ marginTop: spacing.sm }}>
+                <Txt v="small" cor={colors.info}>
+                  {planoRetorno(mesesParado).resumo}
+                </Txt>
+                <Txt v="small" cor={colors.textFaint} style={{ marginTop: 4 }}>
+                  A memória muscular faz você recuperar bem mais rápido do que levou para construir.
+                  Voltar na carga de antes já na primeira semana é o erro que mais machuca.
+                </Txt>
+              </Card>
+            ) : null}
           </Bloco>
         )}
 
-        {passo === 5 && m && (
-          <Bloco key="p5" titulo="Tudo pronto" sub="Seus números, calculados a partir do que você informou">
+        {passo === 6 && m && (
+          <Bloco key="p6" titulo="Tudo pronto" sub="Seus números, calculados a partir do que você informou">
             <Card>
               <View style={s.entre}>
                 <View>
@@ -418,6 +523,12 @@ const s = StyleSheet.create({
   duplo: { flexDirection: 'row', gap: spacing.md },
   entre: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md },
   macro: { flex: 1, gap: 2 },
+  selo: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 999,
+    backgroundColor: colors.primarySoft,
+  },
   pontoMacro: { width: 22, height: 3, borderRadius: 2, marginBottom: 4 },
   rodape: {
     position: 'absolute',

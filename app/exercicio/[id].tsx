@@ -12,6 +12,13 @@ import {
   prsDoExercicio,
 } from '@/features/treino/api';
 import { nomeGrupo, num, peso } from '@/shared/utils/format';
+import {
+  abrir as abrirVideo,
+  COMO_AVALIAR_VIDEO,
+  urlInstagram,
+  urlShorts,
+  urlYoutube,
+} from '@/features/treino/video';
 import { dataCurta } from '@/shared/utils/date';
 
 const ROTULO_PR: Record<string, string> = {
@@ -69,6 +76,54 @@ export default function DetalheExercicio() {
     >
       <Animated.View entering={FadeInDown.duration(300)}>
         <ExerciseDemo mediaUrl={ex.media_url} altura={230} />
+      </Animated.View>
+
+      {/* ── Vídeos de execução ── */}
+      <Animated.View entering={FadeInDown.delay(40).duration(300)} style={{ gap: spacing.md }}>
+        <Txt v="label">Ver a execução em vídeo</Txt>
+        <View style={s.videos}>
+          <Press onPress={() => abrirVideo(urlShorts(ex.nome))} style={s.videoBtn} scale={0.95}>
+            <Ionicons name="logo-youtube" size={20} color="#FF0033" />
+            <Txt v="small" bold>
+              Shorts
+            </Txt>
+            <Txt v="small" size={10} cor={colors.textFaint}>
+              curto e direto
+            </Txt>
+          </Press>
+          <Press onPress={() => abrirVideo(urlYoutube(ex.nome))} style={s.videoBtn} scale={0.95}>
+            <Ionicons name="play-circle" size={20} color={colors.info} />
+            <Txt v="small" bold>
+              Explicação
+            </Txt>
+            <Txt v="small" size={10} cor={colors.textFaint}>
+              vídeo completo
+            </Txt>
+          </Press>
+          <Press onPress={() => abrirVideo(urlInstagram(ex.nome))} style={s.videoBtn} scale={0.95}>
+            <Ionicons name="logo-instagram" size={20} color="#E1306C" />
+            <Txt v="small" bold>
+              Instagram
+            </Txt>
+            <Txt v="small" size={10} cor={colors.textFaint}>
+              por hashtag
+            </Txt>
+          </Press>
+        </View>
+
+        <Card padding={spacing.md}>
+          <Txt v="label" size={10}>
+            Como saber se o vídeo presta
+          </Txt>
+          {COMO_AVALIAR_VIDEO.map((c, i) => (
+            <View key={i} style={s.criterio}>
+              <Ionicons name="checkmark" size={13} color={colors.success} />
+              <Txt v="small" size={12} style={{ flex: 1 }}>
+                {c}
+              </Txt>
+            </View>
+          ))}
+        </Card>
       </Animated.View>
 
       {ex.instrucoes ? (
@@ -206,4 +261,16 @@ const s = StyleSheet.create({
     borderColor: `${colors.warn}44`,
   },
   gridPR: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  videos: { flexDirection: 'row', gap: spacing.sm },
+  videoBtn: {
+    flex: 1,
+    gap: 2,
+    paddingVertical: spacing.lg,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+  },
+  criterio: { flexDirection: 'row', gap: 6, alignItems: 'flex-start', marginTop: 4 },
 });

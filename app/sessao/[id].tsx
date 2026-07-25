@@ -43,6 +43,9 @@ import type { RoutineExerciseFull } from '@/db/types';
 import { cronometro, duracao, num, peso as fmtPeso, volume } from '@/shared/utils/format';
 import { duracaoDe } from '@/shared/utils/sessao';
 import { buzz } from '@/shared/utils/haptics';
+import { alarmeAtraso, alarmeConclusao, alarmeFimDescanso, bipCurto, prepararAudio } from '@/shared/utils/alarme';
+import { AJUDA } from '@/shared/ajudas';
+import { Ajuda } from '@/shared/ui/Ajuda';
 
 interface Serie {
   peso: string;
@@ -72,11 +75,19 @@ export default function Execucao() {
   const [comemorar, setComemorar] = useState<Comemoracao | null>(null);
   const [confirmandoFim, setConfirmandoFim] = useState(false);
   const [salvando, setSalvando] = useState(false);
+  const [alarmouAos, setAlarmouAos] = useState<number | null>(null);
+  /** Exercício cuja série acabou de ser concluída — alimenta o aviso do descanso. */
+  const [ultimaAcao, setUltimaAcao] = useState<{ nome: string; feitas: number; total: number } | null>(
+    null
+  );
   const scroll = useRef<ScrollView>(null);
 
   // ── carga inicial ───────────────────────────────────────────────────────
   useEffect(() => {
     (async () => {
+      // Navegador só libera áudio após gesto; o toque em "iniciar treino" já
+      // aconteceu, então é aqui que o alarme do descanso fica destravado.
+      prepararAudio();
       const sessao = await getSessao(sessionId);
       if (!sessao) return router.back();
       setNome(sessao.nome);
@@ -117,13 +128,29 @@ export default function Execucao() {
     return () => clearInterval(t);
   }, []);
 
+  /**
+   * Contagem do descanso.
+   *
+   * Passa de zero para negativo em vez de sumir: saber que você está 40 s além
+   * do intervalo é informação útil — descanso esticado demais esfria a série e
+   * alonga o treino sem ganho nenhum.
+   */
   useEffect(() => {
     if (descanso === null) return;
-    if (descanso <= 0) {
-      buzz.forte();
-      setDescanso(null);
-      return;
+
+    if (descanso === 0) {
+      alarmeFimDescanso();
+      setAlarmouAos(0);
+    } else if (descanso === -60 || descanso === -180) {
+      // Reforço em 1 e 3 minutos de atraso — depois disso, silêncio.
+      alarmeAtraso();
+    } else if (descanso > 0 && descanso <= 3) {
+      bipCurto();
     }
+
+    // Para de contar em 5 minutos de atraso; a essa altura já virou intervalo.
+    if (descanso <= -300) return;
+
     const t = setTimeout(() => setDescanso((d) => (d === null ? null : d - 1)), 1000);
     return () => clearTimeout(t);
   }, [descanso]);
@@ -282,6 +309,8 @@ export default function Execucao() {
       duracaoSeg: porTempo ? repsN : null,
     });
 
+    const feitasAgora = (series[ex.id] ?? []).filter((x, i) => x.concluida || i === idx).length;
+    setUltimaAcao({ nome: ex.nome, feitas: feitasAgora, total: series[ex.id]?.length ?? 0 });
     setDescanso(ex.descanso_seg);
 
     if (prs.length > 0) mostrarPR(ex.nome, prs[0]);
@@ -308,6 +337,7 @@ export default function Execucao() {
         router.replace('/');
         return;
       }
+      alarmeConclusao();
       const novas = await avaliarConquistas();
       setConfirmandoFim(false);
       if (novas.length > 0) {
@@ -359,7 +389,13 @@ export default function Execucao() {
       </View>
 
       {/* ── Descanso ── */}
-      {descanso !== null ? <BarraDescanso segundos={descanso} onPular={() => setDescanso(null)} /> : null}
+      {descanso !== null ? (
+        <BarraDescanso
+          segundos={descanso}
+          acao={ultimaAcao}
+          onPular={() => setDescanso(null)}
+        />
+      ) : null}
 
       <ScrollView
         ref={scroll}
@@ -654,31 +690,67 @@ function LinhaSerie({
 
 // ─────────────────────────── Descanso ───────────────────────────
 
-function BarraDescanso({ segundos, onPular }: { segundos: number; onPular: () => void }) {
+function BarraDescanso({
+  segundos,
+  acao,
+  onPular,
+}: {
+  segundos: number;
+  acao: { nome: string; feitas: number; total: number } | null;
+  onPular: () => void;
+}) {
   const pulso = useSharedValue(1);
+  const acabou = segundos <= 0;
 
   useEffect(() => {
-    // Últimos 5 segundos pulsam: avisa sem exigir que você olhe o número.
-    if (segundos <= 5 && segundos > 0) {
+    if ((segundos <= 5 && segundos > 0) || segundos === 0) {
       pulso.value = withSequence(withTiming(1.06, { duration: 240 }), withTiming(1, { duration: 240 }));
-      buzz.leve();
     }
   }, [segundos, pulso]);
 
   const st = useAnimatedStyle(() => ({ transform: [{ scale: pulso.value }] }));
 
+  // O que fazer quando o descanso acabar — evita o "e agora?" olhando a tela.
+  const proximo = !acao
+    ? 'Pode seguir'
+    : acao.feitas >= acao.total
+      ? 'Exercício concluído — vá para o próximo'
+      : `Próxima série: ${acao.feitas + 1} de ${acao.total}`;
+
+  const cor = acabou ? colors.success : colors.primary;
+
   return (
-    <Animated.View entering={SlideInUp.duration(240)} style={[s.descanso, st]}>
-      <Ionicons name="timer-outline" size={18} color={colors.primary} />
-      <Txt v="h2" cor={colors.primary}>
-        {cronometro(segundos)}
-      </Txt>
-      <Txt v="small" style={{ flex: 1 }}>
-        Descanso
-      </Txt>
+    <Animated.View
+      entering={SlideInUp.duration(240)}
+      style={[
+        s.descanso,
+        st,
+        acabou && { backgroundColor: colors.successSoft, borderColor: colors.success },
+      ]}
+    >
+      <Ionicons name={acabou ? 'checkmark-circle' : 'timer-outline'} size={20} color={cor} />
+      <View style={{ minWidth: 62 }}>
+        <Txt v="h2" cor={cor}>
+          {cronometro(segundos)}
+        </Txt>
+      </View>
+      <View style={{ flex: 1 }}>
+        <Txt v="small" cor={cor} bold>
+          {acabou ? proximo : 'Descanso'}
+        </Txt>
+        {acabou && segundos < -30 ? (
+          <Txt v="small" size={11} cor={colors.textFaint}>
+            {Math.abs(Math.round(segundos / 60))} min além do intervalo
+          </Txt>
+        ) : !acabou && acao ? (
+          <Txt v="small" size={11} cor={colors.textFaint}>
+            {acao.nome} · {acao.feitas}/{acao.total}
+          </Txt>
+        ) : null}
+      </View>
       <Press onPress={onPular} style={s.pular} haptic="leve">
         <Txt v="small" cor={colors.textDim} bold>
-          Pular
+          {acabou ? 'Ok' : 'Pular'}
         </Txt>
       </Press>
     </Animated.View>

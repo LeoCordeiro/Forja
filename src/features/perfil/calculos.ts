@@ -33,6 +33,7 @@ export const DESC_ATIVIDADE: Record<NivelAtividade, string> = {
 };
 
 export const LABEL_OBJETIVO: Record<Objetivo, string> = {
+  recomposicao: 'Ganhar massa e perder gordura',
   hipertrofia: 'Ganhar massa',
   emagrecimento: 'Perder gordura',
   manutencao: 'Manter o peso',
@@ -85,6 +86,9 @@ export function tdee(taxaBasal: number, nivel: NivelAtividade): number {
 export function metaCalorica(gastoTotal: number, objetivo: Objetivo): number {
   if (objetivo === 'emagrecimento') return Math.round(gastoTotal * 0.85);
   if (objetivo === 'hipertrofia') return Math.round(gastoTotal * 1.15);
+  // Recomposição usa déficit leve — o cálculo completo vive em recomposicao.ts,
+  // porque a proteína lá sai da massa magra e não do peso total.
+  if (objetivo === 'recomposicao') return Math.round(gastoTotal * 0.85);
   return Math.round(gastoTotal);
 }
 
@@ -97,7 +101,14 @@ export function metaCalorica(gastoTotal: number, objetivo: Objetivo): number {
  * O carboidrato fica com o que sobrar.
  */
 export function macros(kcalAlvo: number, pesoKg: number, objetivo: Objetivo): Macros {
-  const gPorKg = objetivo === 'emagrecimento' ? 2.2 : objetivo === 'hipertrofia' ? 1.9 : 1.8;
+  const gPorKg =
+    objetivo === 'emagrecimento'
+      ? 2.2
+      : objetivo === 'recomposicao'
+        ? 2.4
+        : objetivo === 'hipertrofia'
+          ? 1.9
+          : 1.8;
   const proteina_g = Math.round(pesoKg * gPorKg);
 
   const gordura_g = Math.round((kcalAlvo * 0.25) / 9);

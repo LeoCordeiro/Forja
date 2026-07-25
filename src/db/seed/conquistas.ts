@@ -125,6 +125,75 @@ export const ROTINAS_PADRAO = [
     ],
   },
   {
+    nome: 'Retomada — 3 dias',
+    descricao: 'Full body para voltar depois de uma pausa. Volume menor, corpo todo 3× na semana.',
+    dias: [
+      {
+        nome: 'A — Corpo todo',
+        cor: '#00D68F',
+        exercicios: [
+          ['Agachamento livre', 3, 8, 12, 150],
+          ['Supino reto com halteres', 3, 8, 12, 120],
+          ['Remada curvada com barra', 3, 8, 12, 120],
+          ['Desenvolvimento com halteres', 2, 10, 12, 90],
+          ['Rosca direta com barra', 2, 10, 12, 60],
+          ['Prancha', 3, 0, 0, 60],
+          ['Bicicleta ergométrica', 1, 0, 0, 0],
+        ],
+      },
+      {
+        nome: 'B — Corpo todo',
+        cor: '#3B9EFF',
+        exercicios: [
+          ['Leg press', 3, 10, 15, 150],
+          ['Puxada frontal na polia', 3, 8, 12, 120],
+          ['Supino inclinado com halteres', 3, 8, 12, 120],
+          ['Elevação lateral', 3, 12, 15, 60],
+          ['Tríceps na polia com corda', 2, 10, 15, 60],
+          ['Mesa flexora', 3, 10, 15, 90],
+          ['Esteira', 1, 0, 0, 0],
+        ],
+      },
+      {
+        nome: 'C — Corpo todo',
+        cor: '#A97BFF',
+        exercicios: [
+          ['Levantamento terra romeno', 3, 8, 12, 150],
+          ['Remada baixa na polia', 3, 10, 12, 120],
+          ['Crossover na polia', 3, 12, 15, 90],
+          ['Cadeira extensora', 3, 12, 15, 60],
+          ['Rosca martelo', 2, 10, 12, 60],
+          ['Panturrilha em pé', 3, 12, 20, 45],
+          ['Elíptico', 1, 0, 0, 0],
+        ],
+      },
+    ],
+  },
+  {
+    nome: 'Cardio e condicionamento',
+    descricao: 'Sessões de cardio separadas, para fazer em dia alternado ao treino de força.',
+    dias: [
+      {
+        nome: 'Zona 2 — 35 min',
+        cor: '#FFB020',
+        exercicios: [
+          ['Bicicleta ergométrica', 1, 0, 0, 0],
+          ['Prancha', 3, 0, 0, 60],
+          ['Prancha lateral', 2, 0, 0, 45],
+        ],
+      },
+      {
+        nome: 'Intervalado — 20 min',
+        cor: '#FF4757',
+        exercicios: [
+          ['Esteira', 1, 0, 0, 0],
+          ['Escalador', 4, 0, 0, 60],
+          ['Abdominal supra', 3, 15, 20, 45],
+        ],
+      },
+    ],
+  },
+  {
     nome: 'Upper / Lower',
     descricao: 'Quatro dias. Superiores e inferiores alternados.',
     dias: [

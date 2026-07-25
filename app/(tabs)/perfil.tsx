@@ -20,6 +20,7 @@ import {
 import type { NivelAtividade, Objetivo } from '@/db/types';
 import { resetDb } from '@/db/client';
 import { useApp } from '@/shared/estado';
+import { classificarVisceral } from '@/features/perfil/recomposicao';
 import { num, volume } from '@/shared/utils/format';
 import { idade } from '@/shared/utils/date';
 import { buzz } from '@/shared/utils/haptics';
@@ -109,7 +110,28 @@ export default function Perfil() {
             legenda={classificacaoImc(r.imcValor).texto}
             cor={classificacaoImc(r.imcValor).cor}
           />
-          <Metrica label="Metabolismo basal" valor={num(r.tmbValor)} legenda="kcal em repouso" />
+          <Metrica
+            label="Metabolismo basal"
+            valor={num(r.tmbValor)}
+            legenda={r.tmbMedido ? 'medido na bioimpedância' : 'estimado por fórmula'}
+            cor={r.tmbMedido ? colors.success : undefined}
+          />
+          {r.gorduraPct !== null ? (
+            <Metrica
+              label="Gordura corporal"
+              valor={`${num(r.gorduraPct, 1)}%`}
+              legenda={r.massaMagraKg ? `${r.massaMagraKg} kg de massa magra` : 'da bioimpedância'}
+              cor={colors.warn}
+            />
+          ) : null}
+          {r.visceral !== null ? (
+            <Metrica
+              label="Gordura visceral"
+              valor={num(r.visceral)}
+              legenda={classificarVisceral(r.visceral).texto}
+              cor={classificarVisceral(r.visceral).cor}
+            />
+          ) : null}
           <Metrica label="Gasto diário" valor={num(r.tdeeValor)} legenda="kcal com atividade" />
           <Metrica
             label="Meta diária"
@@ -153,6 +175,26 @@ export default function Perfil() {
 
       {/* ── Ações ── */}
       <Animated.View entering={FadeInDown.delay(180).duration(300)} style={{ gap: spacing.sm }}>
+        <ItemMenu
+          icone="analytics-outline"
+          titulo="Bioimpedância e composição corporal"
+          onPress={() => router.push('/bioimpedancia')}
+        />
+        <ItemMenu
+          icone="nutrition-outline"
+          titulo="O que você come"
+          onPress={() => router.push('/preferencias')}
+        />
+        <ItemMenu
+          icone="water-outline"
+          titulo="Hidratação"
+          onPress={() => router.push('/agua')}
+        />
+        <ItemMenu
+          icone="share-social-outline"
+          titulo="Compartilhar treino"
+          onPress={() => router.push('/compartilhar')}
+        />
         <ItemMenu
           icone="trophy-outline"
           titulo="Medalhas e conquistas"

@@ -172,10 +172,29 @@ export async function sessaoAberta(): Promise<WorkoutSession | null> {
   );
 }
 
-export async function iniciarSessao(diaId: number | null, nome: string): Promise<number> {
+export interface CheckIn {
+  local?: string;
+  energia?: number;
+  semanaPlano?: number;
+}
+
+/**
+ * Abre a sessão com o check-in.
+ *
+ * Energia e local custam um toque e explicam muito depois: treino ruim quase
+ * sempre tem causa, e sem registrar o estado de chegada não dá para cruzar
+ * queda de desempenho com sono, comida ou intervalo curto entre sessões.
+ */
+export async function iniciarSessao(
+  diaId: number | null,
+  nome: string,
+  check: CheckIn = {}
+): Promise<number> {
   return run(
-    'INSERT INTO workout_sessions (routine_day_id, nome, iniciado_em) VALUES (?,?,?)',
-    [diaId, nome, Date.now()]
+    `INSERT INTO workout_sessions
+       (routine_day_id, nome, iniciado_em, local, energia_inicial, semana_plano)
+     VALUES (?,?,?,?,?,?)`,
+    [diaId, nome, Date.now(), check.local ?? null, check.energia ?? null, check.semanaPlano ?? null]
   );
 }
 
