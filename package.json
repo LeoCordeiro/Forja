@@ -36,7 +36,9 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "build:pwa": "expo export --platform web && node scripts/pwa.mjs",
+    "typecheck": "tsc --noEmit"
   },
   "private": true
 }
