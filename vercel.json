@@ -3,7 +3,6 @@
   "buildCommand": "npm run build:pwa",
   "outputDirectory": "dist",
   "framework": null,
-  "_comentario": "Sem COOP/COEP de propósito: o expo-sqlite web usa AccessHandlePoolVFS, que grava em OPFS sem precisar de SharedArrayBuffer. Validado com crossOriginIsolated=false. Isolar a origem só criaria atrito com as imagens de exercício servidas pelo GitHub.",
   "headers": [
     {
       "source": "/sw.js",

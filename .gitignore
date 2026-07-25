@@ -42,3 +42,5 @@ yarn-error.*
 
 # build do PWA
 /dist
+
+.vercel

@@ -55,11 +55,28 @@ src/
 6. **IMC, TMB e TDEE são calculados, nunca armazenados.** São função de peso,
    altura, idade e objetivo; congelar o valor cria histórico mentiroso.
 
+## PWA (é assim que o app roda no iPhone)
+
+O Expo Go só funciona na mesma rede do PC, o que não serve para a academia.
+A distribuição real é o PWA: `npm run build:pwa` e deploy do `dist/`.
+
+- As tags de PWA são injetadas por `scripts/pwa.mjs` **depois** do export.
+  Não adianta criar `app/+html.tsx`: ele só vale quando o Expo Router exporta
+  em modo `static`, e este app exporta como SPA (`output: "single"`) por causa
+  das rotas dinâmicas.
+- `public/` é copiado inteiro para `dist/` — é onde vivem manifest, ícones e SW.
+- **Sem COOP/COEP de propósito.** O `expo-sqlite` web usa `AccessHandlePoolVFS`
+  e grava em OPFS sem precisar de `SharedArrayBuffer`; validado rodando com
+  `crossOriginIsolated === false`. Isolar a origem só criaria atrito com as
+  imagens de exercício servidas pelo GitHub.
+- O `install` do service worker usa `Promise.allSettled`, não `cache.addAll`:
+  com `addAll`, uma única URL que falhe rejeita a instalação inteira e o app
+  fica sem nenhum cache offline.
+
 ## Detalhes de plataforma
 
-- **Web (preview):** `expo-sqlite` roda em WASM e exige `.wasm` registrado como
-  asset e headers COOP/COEP — ambos já em `metro.config.js`. Sem isso o bundle
-  web nem constrói.
+- **Web (preview):** `expo-sqlite` roda em WASM; o `.wasm` precisa estar
+  registrado como asset em `metro.config.js` ou o bundle web nem constrói.
 - **Haptics** não existe no web: sempre usar `buzz` de `shared/utils/haptics`,
   que já tem o guard.
 - **iOS sem Mac:** build pelo EAS (`eas build -p ios`).
