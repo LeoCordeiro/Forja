@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import Animated, { FadeInDown, LinearTransition } from 'react-native-reanimated';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { colors, radius, spacing } from '@/theme';
-import { Barra, Button, Card, Empty, Press, Screen, Txt } from '@/shared/ui';
+import { Barra, Button, Card, Empty, Press, Tela, Txt } from '@/shared/ui';
 import { useDados } from '@/shared/hooks/useDados';
 import {
   CATEGORIAS_COMPRA,
@@ -56,17 +56,12 @@ export default function Compras() {
   }
 
   return (
-    <Screen
+    <Tela
       titulo="Lista de compras"
       subtitulo={
         lista ? `${dataCurta(lista.periodo_inicio)} a ${dataCurta(lista.periodo_fim)}` : undefined
       }
       onRefresh={recarregar}
-      acaoTopo={
-        <Press onPress={() => router.back()} style={s.iconeBtn} scale={0.9}>
-          <Ionicons name="close" size={20} color={colors.textDim} />
-        </Press>
-      }
     >
       {lista && total > 0 ? (
         <>
@@ -90,6 +85,27 @@ export default function Compras() {
                 valor={pct(comprados, total)}
                 cor={comprados === total ? colors.success : colors.primary}
               />
+
+              {lista.custoTotal > 0 ? (
+                <View style={s.custoLinha}>
+                  <View>
+                    <Txt v="label" size={10}>
+                      Custo estimado
+                    </Txt>
+                    <Txt v="h2" cor={colors.success}>
+                      R$ {num(lista.custoTotal, 2)}
+                    </Txt>
+                  </View>
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <Txt v="small" cor={colors.textFaint} size={11}>
+                      por dia
+                    </Txt>
+                    <Txt v="h3" cor={colors.textDim}>
+                      R$ {num(lista.custoTotal / 7, 2)}
+                    </Txt>
+                  </View>
+                </View>
+              ) : null}
             </Card>
           </Animated.View>
 
@@ -141,10 +157,17 @@ export default function Compras() {
                         >
                           {item.nome}
                         </Txt>
-                        <Txt v="h3" cor={item.comprado ? colors.textFaint : colors.textDim}>
-                          {num(item.quantidade_total, item.unidade === 'kg' ? 2 : 0)}{' '}
-                          {item.unidade}
-                        </Txt>
+                        <View style={{ alignItems: 'flex-end' }}>
+                          <Txt v="h3" cor={item.comprado ? colors.textFaint : colors.textDim}>
+                            {num(item.quantidade_total, item.unidade === 'kg' ? 2 : 0)}{' '}
+                            {item.unidade}
+                          </Txt>
+                          {item.custo_estimado ? (
+                            <Txt v="small" size={10} cor={colors.textFaint}>
+                              ~R$ {num(item.custo_estimado, 2)}
+                            </Txt>
+                          ) : null}
+                        </View>
                       </Press>
                     </Animated.View>
                   ))}
@@ -176,13 +199,22 @@ export default function Compras() {
           }}
         />
       )}
-    </Screen>
+    </Tela>
   );
 }
 
 const s = StyleSheet.create({
   entre: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   catHead: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  custoLinha: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
   item: {
     flexDirection: 'row',
     alignItems: 'center',

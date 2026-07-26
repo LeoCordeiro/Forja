@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { colors, radius, spacing } from '@/theme';
-import { Button, Card, Empty, Input, Press, Screen, Txt } from '@/shared/ui';
+import { Button, Card, Empty, Input, Press, Tela, Txt } from '@/shared/ui';
 import { useDados } from '@/shared/hooks/useDados';
 import { listarDias } from '@/features/treino/api';
 import {
@@ -84,14 +84,9 @@ export default function Compartilhar() {
   }
 
   return (
-    <Screen
+    <Tela
       titulo="Compartilhar treino"
       subtitulo="Envie sua rotina para quem quiser"
-      acaoTopo={
-        <Press onPress={() => router.back()} style={s.iconeBtn} scale={0.9}>
-          <Ionicons name="close" size={20} color={colors.textDim} />
-        </Press>
-      }
     >
       <Card>
         <Txt v="label">Como funciona</Txt>
@@ -224,7 +219,7 @@ export default function Compartilhar() {
           treinos, medidas e a dieta de cada um ficam separados, no aparelho de cada um.
         </Txt>
       </Card>
-    </Screen>
+    </Tela>
   );
 }
 

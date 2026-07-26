@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { FadeInDown, FadeOut } from 'react-native-reanimated';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { colors, radius, spacing } from '@/theme';
-import { Button, Card, Empty, Press, Screen, Sheet, Txt } from '@/shared/ui';
+import { Button, Card, Empty, Press, Tela, Sheet, Txt } from '@/shared/ui';
 import { SeletorExercicio } from '@/features/treino/SeletorExercicio';
 import { useDados } from '@/shared/hooks/useDados';
 import {
@@ -16,6 +16,7 @@ import {
   getDia,
   iniciarSessao,
   removerExercicioDoDia,
+  reordenarPorPrioridade,
   sessaoAberta,
 } from '@/features/treino/api';
 import type { RoutineExerciseFull } from '@/db/types';
@@ -28,6 +29,8 @@ import {
   RIR_POR_FASE,
   semanaAtual as semanaDoPlano,
 } from '@/features/treino/periodizacao';
+import { prioridadeDe, REGRAS_ORDEM } from '@/features/treino/classificacao';
+import { buzz } from '@/shared/utils/haptics';
 import { Ajuda } from '@/shared/ui/Ajuda';
 import { AJUDA } from '@/shared/ajudas';
 
@@ -96,18 +99,19 @@ export default function DiaDeTreino() {
 
   const vazio = !dados?.exs.length;
 
+  // Detecta ordem fora do ideal: prioridade que cai depois de outra maior.
+  const desordenado = (() => {
+    const p = (dados?.exs ?? []).map((e) => prioridadeDe(e.nome, e.grupo_primario));
+    return p.some((v, i) => i > 0 && v < p[i - 1]);
+  })();
+
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
-      <Screen
+      <Tela
         titulo={dados?.dia?.nome ?? 'Treino'}
         subtitulo={dados?.dia ? `${dados.exs.length} exercícios` : undefined}
         onRefresh={recarregar}
         paddingBottom={160}
-        acaoTopo={
-          <Press onPress={() => router.back()} style={s.iconeBtn} scale={0.9}>
-            <Ionicons name="close" size={20} color={colors.textDim} />
-          </Press>
-        }
       >
         {vazio ? (
           <Empty
@@ -154,13 +158,66 @@ export default function DiaDeTreino() {
         )}
 
         {!vazio ? (
-          <Button
-            titulo="Adicionar exercício"
-            icone="add"
-            variante="secundario"
-            full
-            onPress={() => setAdicionando(true)}
-          />
+          <>
+            <Button
+              titulo="Adicionar exercício"
+              icone="add"
+              variante="secundario"
+              full
+              onPress={() => setAdicionando(true)}
+            />
+
+            {/* Ordem fora do ideal: avisa em vez de reordenar sozinho — pode
+                haver motivo (aparelho, lesão) que o app não conhece. */}
+            {desordenado ? (
+              <Card faixa={colors.warn} padding={spacing.md}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
+                  <Ionicons name="swap-vertical" size={18} color={colors.warn} />
+                  <View style={{ flex: 1 }}>
+                    <Txt v="h3" size={14} cor={colors.warn}>
+                      A ordem pode render mais
+                    </Txt>
+                    <Txt v="small" size={11}>
+                      Há isolador ou cardio antes de exercício composto. O que vem primeiro pega
+                      você inteiro — e é o composto que mais constrói.
+                    </Txt>
+                  </View>
+                </View>
+                <Button
+                  titulo="Reordenar pela ciência"
+                  variante="fantasma"
+                  tam="sm"
+                  full
+                  style={{ marginTop: spacing.sm }}
+                  onPress={async () => {
+                    await reordenarPorPrioridade(diaId);
+                    buzz.ok();
+                    recarregar();
+                  }}
+                />
+              </Card>
+            ) : null}
+
+            <Card padding={spacing.md}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Txt v="label">Ordem dos exercícios</Txt>
+                <Ajuda conteudo={AJUDA.ordemExercicios} />
+              </View>
+              {REGRAS_ORDEM.slice(0, 4).map((r) => (
+                <View key={r.titulo} style={s.regra}>
+                  <Ionicons name="checkmark-circle" size={14} color={colors.success} />
+                  <View style={{ flex: 1 }}>
+                    <Txt v="small" bold size={12}>
+                      {r.titulo}
+                    </Txt>
+                    <Txt v="small" size={11} cor={colors.textFaint}>
+                      {r.texto}
+                    </Txt>
+                  </View>
+                </View>
+              ))}
+            </Card>
+          </>
         ) : null}
 
         <Press onPress={apagarDia} style={s.excluir} haptic="medio">
@@ -169,7 +226,7 @@ export default function DiaDeTreino() {
             Excluir este dia de treino
           </Txt>
         </Press>
-      </Screen>
+      </Tela>
 
       {!vazio ? (
         <View style={[s.rodape, { paddingBottom: insets.bottom + spacing.lg }]}>
@@ -425,6 +482,7 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  regra: { flexDirection: 'row', gap: 6, alignItems: 'flex-start', marginTop: 6 },
   energias: { flexDirection: 'row', gap: spacing.sm },
   energia: {
     flex: 1,

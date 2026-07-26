@@ -2,6 +2,7 @@ import * as SQLite from 'expo-sqlite';
 import { DDL, SCHEMA_VERSION } from './schema';
 import { MIGRACOES } from './migracoes';
 import { seedIfEmpty } from './seed';
+import { normalizar } from './normalizar';
 
 let dbRef: SQLite.SQLiteDatabase | null = null;
 let opening: Promise<SQLite.SQLiteDatabase> | null = null;
@@ -53,6 +54,9 @@ export function getDb(): Promise<SQLite.SQLiteDatabase> {
     }
 
     await seedIfEmpty(db);
+    // Regras que dependem de listas em código (classificação de exercício e
+    // descanso derivado dela). Idempotente, roda a cada abertura.
+    await normalizar(db);
     dbRef = db;
     return db;
   })();

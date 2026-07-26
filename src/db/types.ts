@@ -37,6 +37,11 @@ export interface Profile {
   retomou_em: string | null;
   meses_parado: number;
   papel: Papel;
+  /** Horário do treino: define o timing das refeições. */
+  horario_treino: string;
+  hora_acorda: string;
+  hora_dorme: string;
+  hora_treino: string | null;
 }
 
 export interface BodyMetric {
@@ -74,6 +79,12 @@ export interface DietConfig {
   refeicoes_por_dia: number;
   cozinha_de_verdade: number;
   atualizado_em: number;
+  /** maxima | marmita | equilibrado | gosto_cozinhar */
+  praticidade: string;
+  /** apertado | medio | confortavel */
+  orcamento: string;
+  faz_marmita: number;
+  dias_marmita: number;
 }
 
 export interface Perfil {

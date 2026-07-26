@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { colors, spacing } from '@/theme';
-import { Card, Input, Press, Screen, Txt } from '@/shared/ui';
+import { Card, Input, Press, Tela, Txt } from '@/shared/ui';
 import { useDados } from '@/shared/hooks/useDados';
 import { listarReceitas } from '@/features/dieta/api';
 import { kcal, num } from '@/shared/utils/format';
@@ -17,14 +17,9 @@ export default function Receitas() {
   const { dados } = useDados(() => listarReceitas(busca), [busca]);
 
   return (
-    <Screen
+    <Tela
       titulo="Receitas"
       subtitulo="Passo a passo com timer em cada etapa"
-      acaoTopo={
-        <Press onPress={() => router.back()} style={s.iconeBtn} scale={0.9}>
-          <Ionicons name="close" size={20} color={colors.textDim} />
-        </Press>
-      }
     >
       <Input placeholder="Buscar receita…" value={busca} onChangeText={setBusca} />
 
@@ -49,7 +44,7 @@ export default function Receitas() {
           </Card>
         </Animated.View>
       ))}
-    </Screen>
+    </Tela>
   );
 }
 

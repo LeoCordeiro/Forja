@@ -35,11 +35,16 @@ import {
   getSessao,
   registrarSerie,
   seriesDaSessao,
+  substituirExercicio,
+  substitutosDisponiveis,
   ultimaExecucao,
   type SerieAnterior,
 } from '@/features/treino/api';
+import { descansoCorreto, MOTIVOS_TROCA, porqueDescanso } from '@/features/treino/classificacao';
+import { abrir as abrirVideo, urlShorts } from '@/features/treino/video';
+import { Chip } from '@/shared/ui';
 import { avaliarConquistas } from '@/features/gamificacao/api';
-import type { RoutineExerciseFull } from '@/db/types';
+import type { Exercise, RoutineExerciseFull } from '@/db/types';
 import { cronometro, duracao, num, peso as fmtPeso, volume } from '@/shared/utils/format';
 import { duracaoDe } from '@/shared/utils/sessao';
 import { buzz } from '@/shared/utils/haptics';
@@ -76,6 +81,9 @@ export default function Execucao() {
   const [confirmandoFim, setConfirmandoFim] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [alarmouAos, setAlarmouAos] = useState<number | null>(null);
+  const [trocando, setTrocando] = useState<RoutineExerciseFull | null>(null);
+  const [substitutos, setSubstitutos] = useState<Exercise[]>([]);
+  const [motivoTroca, setMotivoTroca] = useState('ocupado');
   /** Exercício cuja série acabou de ser concluída — alimenta o aviso do descanso. */
   const [ultimaAcao, setUltimaAcao] = useState<{ nome: string; feitas: number; total: number } | null>(
     null
@@ -359,6 +367,32 @@ export default function Execucao() {
     }
   }
 
+  async function abrirTroca(ex: RoutineExerciseFull) {
+    setTrocando(ex);
+    setSubstitutos([]);
+    setSubstitutos(await substitutosDisponiveis(ex.exercise_id));
+  }
+
+  async function confirmarTroca(novoId: number) {
+    if (!trocando) return;
+    await substituirExercicio(trocando.id, novoId, sessionId, motivoTroca);
+    setTrocando(null);
+    buzz.ok();
+
+    // Recarrega a lista e o histórico do exercício novo — o placeholder cinza
+    // precisa mostrar a última vez que ELE foi feito, não o que foi trocado.
+    const sessao = await getSessao(sessionId);
+    if (sessao?.routine_day_id) {
+      const lista = await exerciciosDoDia(sessao.routine_day_id);
+      setExercicios(lista);
+      const alvo = lista.find((e) => e.id === trocando.id);
+      if (alvo) {
+        const hist = await ultimaExecucao(alvo.exercise_id, sessionId);
+        setAnteriores((p) => ({ ...p, [alvo.id]: hist }));
+      }
+    }
+  }
+
   async function abandonar() {
     await cancelarSessao(sessionId);
     router.replace('/');
@@ -422,6 +456,7 @@ export default function Execucao() {
                   [ex.id]: [...(p[ex.id] ?? []), { peso: '', reps: '', concluida: false }],
                 }))
               }
+              onTrocar={() => abrirTroca(ex)}
             />
           </Animated.View>
         ))}
@@ -487,6 +522,62 @@ export default function Execucao() {
         </View>
       </Sheet>
 
+      {/* ── Trocar exercício ── */}
+      <Sheet
+        aberto={!!trocando}
+        onFechar={() => setTrocando(null)}
+        titulo={`Trocar ${trocando?.nome ?? ''}`}
+        altura={0.8}
+      >
+        <View style={{ gap: spacing.lg }}>
+          <Txt v="small" cor={colors.textFaint}>
+            A troca vale só para o treino de hoje. Sua rotina continua como está.
+          </Txt>
+
+          <View style={{ gap: spacing.sm }}>
+            <Txt v="label">Por quê?</Txt>
+            <View style={{ flexDirection: 'row', gap: spacing.sm, flexWrap: 'wrap' }}>
+              {MOTIVOS_TROCA.map((m) => (
+                <Chip
+                  key={m.chave}
+                  label={m.label}
+                  emoji={m.emoji}
+                  ativo={motivoTroca === m.chave}
+                  onPress={() => setMotivoTroca(m.chave)}
+                />
+              ))}
+            </View>
+          </View>
+
+          <View style={{ gap: spacing.sm }}>
+            <Txt v="label">Trocar por</Txt>
+            {substitutos.length === 0 ? (
+              <Txt v="small" cor={colors.textFaint}>
+                Buscando alternativas…
+              </Txt>
+            ) : (
+              substitutos.map((sub) => (
+                <Card key={sub.id} onPress={() => confirmarTroca(sub.id)} padding={spacing.md}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md }}>
+                    <View style={s.subIcone}>
+                      <Ionicons name="swap-horizontal" size={16} color={colors.info} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Txt v="h3">{sub.nome}</Txt>
+                      <Txt v="small" cor={colors.textFaint} size={11}>
+                        {sub.equipamento ?? 'livre'} · descanso{' '}
+                        {descansoCorreto(sub.nome, 10, sub.grupo_primario)}s
+                      </Txt>
+                    </View>
+                    <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
+                  </View>
+                </Card>
+              ))
+            )}
+          </View>
+        </View>
+      </Sheet>
+
       <Celebrar item={comemorar} onFechar={() => setComemorar(null)} />
     </View>
   );
@@ -502,6 +593,7 @@ function CardExercicio({
   onEditar,
   onConcluir,
   onAddSerie,
+  onTrocar,
 }: {
   ex: RoutineExerciseFull;
   series: Serie[];
@@ -510,6 +602,7 @@ function CardExercicio({
   onEditar: (exId: number, serie: number, campo: 'peso' | 'reps') => void;
   onConcluir: (idx: number) => void;
   onAddSerie: () => void;
+  onTrocar: () => void;
 }) {
   const [aberto, setAberto] = useState(false);
   const feitas = series.filter((s) => s.concluida).length;
@@ -521,9 +614,19 @@ function CardExercicio({
       <Press onPress={() => setAberto((a) => !a)} haptic="leve" style={s.exHead}>
         <View style={{ flex: 1, gap: 2 }}>
           <Txt v="h3">{ex.nome}</Txt>
-          <Txt v="small" cor={colors.textFaint}>
-            {ex.series_alvo} × {ex.reps_min}-{ex.reps_max} · descanso {ex.descanso_seg}s
-          </Txt>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+            <Txt v="small" cor={colors.textFaint}>
+              {ex.series_alvo} × {ex.reps_min}-{ex.reps_max}
+            </Txt>
+            <View style={s.descansoTag}>
+              <Ionicons name="timer-outline" size={11} color={colors.info} />
+              <Txt v="small" size={10} cor={colors.info} bold>
+                {ex.descanso_seg >= 60
+                  ? `${Math.round((ex.descanso_seg / 60) * 10) / 10}`.replace('.', ',') + ' min'
+                  : `${ex.descanso_seg}s`}
+              </Txt>
+            </View>
+          </View>
         </View>
         <View style={[s.contador, completo && { backgroundColor: colors.successSoft }]}>
           <Txt v="small" cor={completo ? colors.success : colors.textDim} bold>
@@ -539,6 +642,32 @@ function CardExercicio({
 
       {aberto ? (
         <Animated.View entering={FadeIn.duration(200)} style={{ gap: spacing.md }}>
+          <View style={s.acoesEx}>
+            <Press onPress={onTrocar} style={s.acaoEx} scale={0.95}>
+              <Ionicons name="swap-horizontal" size={17} color={colors.info} />
+              <Txt v="small" cor={colors.info} bold>
+                Trocar exercício
+              </Txt>
+            </Press>
+            <Press
+              onPress={() => abrirVideo(urlShorts(ex.nome))}
+              style={s.acaoEx}
+              scale={0.95}
+            >
+              <Ionicons name="logo-youtube" size={17} color="#FF0033" />
+              <Txt v="small" bold>
+                Ver execução
+              </Txt>
+            </Press>
+          </View>
+
+          <View style={s.explicaDescanso}>
+            <Ionicons name="information-circle-outline" size={15} color={colors.textFaint} />
+            <Txt v="small" size={11} cor={colors.textFaint} style={{ flex: 1 }}>
+              {porqueDescanso(ex.nome, ex.descanso_seg)}
+            </Txt>
+          </View>
+
           <ExerciseDemo mediaUrl={ex.media_url} altura={190} />
           {ex.instrucoes
             ? ex.instrucoes.split('|').map((p, i) => (
@@ -888,6 +1017,41 @@ const s = StyleSheet.create({
     backgroundColor: colors.warnSoft,
   },
   pad: { position: 'absolute', left: 0, right: 0, bottom: 0 },
+  descansoTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: radius.full,
+    backgroundColor: colors.infoSoft,
+  },
+  acoesEx: { flexDirection: 'row', gap: spacing.sm },
+  acaoEx: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceAlt,
+  },
+  explicaDescanso: {
+    flexDirection: 'row',
+    gap: 6,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceAlt,
+  },
+  subIcone: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: colors.infoSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   resumoFim: { flexDirection: 'row', gap: spacing.md },
   sensacoes: { flexDirection: 'row', gap: spacing.sm },
   sensacao: {

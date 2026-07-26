@@ -96,6 +96,7 @@ export const ALIMENTOS: F[] = [
   ['Cacau em pó 100%', 'mercearia', 228, 19.6, 57.9, 13.7, 33.2, '1 colher de sopa', 10],
   ['Sal', 'mercearia', 0, 0, 0, 0, 0, '1 pitada', 1],
   ['Canela em pó', 'mercearia', 261, 3.9, 79.8, 3.2, 54.3, '1 colher de chá', 2],
+  ['Repolho', 'hortifruti', 25, 1.3, 5.8, 0.1, 2.5, '1 xícara fatiada', 70],
 ];
 
 /** Receitas com passo a passo — os ingredientes casam por nome com ALIMENTOS. */

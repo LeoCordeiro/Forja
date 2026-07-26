@@ -2,6 +2,7 @@ import type * as SQLite from 'expo-sqlite';
 import { EXERCICIOS, MEDIA_BASE } from './exercicios';
 import { ALIMENTOS, RECEITAS, type SeedReceita } from './alimentos';
 import { RECEITAS_FIT } from './receitas-fit';
+import { CUSTO_100G, MARMITAS } from './marmitas';
 import { CONQUISTAS, ROTINAS_PADRAO } from './conquistas';
 
 /**
@@ -32,9 +33,9 @@ export async function seedIfEmpty(db: SQLite.SQLiteDatabase) {
       await db.runAsync(
         `INSERT INTO foods
            (nome, fonte, kcal, proteina_g, carbo_g, gordura_g, fibra_g,
-            categoria, medida_caseira, g_por_medida)
-         VALUES (?,'taco',?,?,?,?,?,?,?,?)`,
-        [nome, kcal, p, c, g, fib, cat, medida, gPor]
+            categoria, medida_caseira, g_por_medida, custo_100g)
+         VALUES (?,'taco',?,?,?,?,?,?,?,?,?)`,
+        [nome, kcal, p, c, g, fib, cat, medida, gPor, CUSTO_100G[nome] ?? null]
       );
     }
 
@@ -47,15 +48,20 @@ export async function seedIfEmpty(db: SQLite.SQLiteDatabase) {
 
     // As receitas fit entram junto com as básicas; as tags alimentam o filtro
     // por preferência alimentar no cardápio.
-    const todasReceitas: (SeedReceita & { tags?: string[]; viral?: string })[] = [
-      ...RECEITAS,
-      ...RECEITAS_FIT,
-    ];
+    const todasReceitas: (SeedReceita & {
+      tags?: string[];
+      viral?: string;
+      marmitavel?: boolean;
+      custoNivel?: string;
+      rendeDias?: number;
+    })[] = [...RECEITAS, ...RECEITAS_FIT, ...MARMITAS];
 
     for (const r of todasReceitas) {
       const res = await db.runAsync(
-        `INSERT INTO recipes (nome, rendimento_porcoes, tempo_preparo_min, dificuldade, tags, observacao)
-         VALUES (?,?,?,?,?,?)`,
+        `INSERT INTO recipes
+           (nome, rendimento_porcoes, tempo_preparo_min, dificuldade, tags, observacao,
+            marmitavel, custo_nivel, rende_dias)
+         VALUES (?,?,?,?,?,?,?,?,?)`,
         [
           r.nome,
           r.porcoes,
@@ -63,6 +69,9 @@ export async function seedIfEmpty(db: SQLite.SQLiteDatabase) {
           r.dificuldade,
           (r.tags ?? []).join(','),
           r.viral ?? null,
+          r.marmitavel ? 1 : 0,
+          r.custoNivel ?? 'medio',
+          r.rendeDias ?? null,
         ]
       );
       const rid = res.lastInsertRowId;

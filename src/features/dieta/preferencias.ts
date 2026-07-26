@@ -60,6 +60,9 @@ export async function salvarConfigDieta(cfg: Partial<DietConfig>) {
        tempo_max_preparo = COALESCE(?, tempo_max_preparo),
        refeicoes_por_dia = COALESCE(?, refeicoes_por_dia),
        cozinha_de_verdade = COALESCE(?, cozinha_de_verdade),
+       praticidade = COALESCE(?, praticidade),
+       orcamento = COALESCE(?, orcamento),
+       faz_marmita = COALESCE(?, faz_marmita),
        atualizado_em = ?
      WHERE id = 1`,
     [
@@ -67,6 +70,9 @@ export async function salvarConfigDieta(cfg: Partial<DietConfig>) {
       cfg.tempo_max_preparo ?? null,
       cfg.refeicoes_por_dia ?? null,
       cfg.cozinha_de_verdade ?? null,
+      cfg.praticidade ?? null,
+      cfg.orcamento ?? null,
+      cfg.faz_marmita ?? null,
       Date.now(),
     ]
   );

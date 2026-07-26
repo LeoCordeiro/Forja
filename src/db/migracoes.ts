@@ -119,9 +119,87 @@ CREATE TABLE IF NOT EXISTS lembretes (
 );
 `;
 
+/** v2 → v3: rotina diária, timing de treino, praticidade e custo da dieta. */
+export const V3 = `
+-- Horário do treino: muda o timing das refeições. Quem treina 6h da manhã não
+-- tem "pré-treino" separado — o café da manhã É o pré-treino.
+ALTER TABLE profile ADD COLUMN horario_treino TEXT NOT NULL DEFAULT 'manha';
+ALTER TABLE profile ADD COLUMN hora_acorda TEXT NOT NULL DEFAULT '06:30';
+ALTER TABLE profile ADD COLUMN hora_dorme TEXT NOT NULL DEFAULT '23:00';
+ALTER TABLE profile ADD COLUMN hora_treino TEXT;
+
+-- Praticidade e custo definem quais receitas entram no cardápio.
+ALTER TABLE diet_config ADD COLUMN praticidade TEXT NOT NULL DEFAULT 'equilibrado';
+ALTER TABLE diet_config ADD COLUMN orcamento TEXT NOT NULL DEFAULT 'medio';
+ALTER TABLE diet_config ADD COLUMN faz_marmita INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE diet_config ADD COLUMN dias_marmita INTEGER NOT NULL DEFAULT 5;
+
+-- Custo por 100 g, em reais. Alimenta a estimativa da lista de compras.
+ALTER TABLE foods ADD COLUMN custo_100g REAL;
+
+-- Receita: marmitável e faixa de custo.
+ALTER TABLE recipes ADD COLUMN marmitavel INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE recipes ADD COLUMN custo_nivel TEXT NOT NULL DEFAULT 'medio';
+ALTER TABLE recipes ADD COLUMN rende_dias INTEGER;
+
+-- Substituição feita durante o treino: registra o que foi trocado e por quê.
+CREATE TABLE IF NOT EXISTS substituicoes (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id    INTEGER REFERENCES workout_sessions(id) ON DELETE CASCADE,
+  de_exercise   INTEGER REFERENCES exercises(id),
+  para_exercise INTEGER REFERENCES exercises(id),
+  motivo        TEXT,
+  criado_em     INTEGER NOT NULL
+);
+
+-- Checklist diário: a tela de constância.
+CREATE TABLE IF NOT EXISTS rotina_itens (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  chave      TEXT    NOT NULL UNIQUE,
+  titulo     TEXT    NOT NULL,
+  emoji      TEXT    NOT NULL DEFAULT '✅',
+  horario    TEXT,
+  dias       TEXT    NOT NULL DEFAULT '0,1,2,3,4,5,6',
+  ativo      INTEGER NOT NULL DEFAULT 1,
+  automatico INTEGER NOT NULL DEFAULT 0,
+  ordem      INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS rotina_log (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  chave      TEXT NOT NULL,
+  data       TEXT NOT NULL,
+  concluido  INTEGER NOT NULL DEFAULT 1,
+  registrado_em INTEGER NOT NULL,
+  UNIQUE (chave, data)
+);
+CREATE INDEX IF NOT EXISTS ix_rotina_data ON rotina_log (data);
+
+-- Sono: entra na rotina porque é onde a hipertrofia de fato acontece.
+CREATE TABLE IF NOT EXISTS sono_log (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  data      TEXT NOT NULL UNIQUE,
+  horas     REAL NOT NULL,
+  qualidade INTEGER,
+  criado_em INTEGER NOT NULL
+);
+
+-- Sessões de mobilidade e alongamento.
+CREATE TABLE IF NOT EXISTS mobilidade_log (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  data        TEXT    NOT NULL,
+  rotina      TEXT    NOT NULL,
+  duracao_seg INTEGER NOT NULL,
+  criado_em   INTEGER NOT NULL
+);
+`;
+
 /**
  * Cada degrau: versão de destino e os comandos.
  * Falha em ALTER TABLE de coluna já existente é ignorada de propósito — deixa
  * a migração ser reaplicada sem quebrar bancos parcialmente migrados.
  */
-export const MIGRACOES: { versao: number; sql: string }[] = [{ versao: 2, sql: V2 }];
+export const MIGRACOES: { versao: number; sql: string }[] = [
+  { versao: 2, sql: V2 },
+  { versao: 3, sql: V3 },
+];

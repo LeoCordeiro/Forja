@@ -249,6 +249,95 @@ export const AJUDA: Record<string, ConteudoAjuda> = {
       'Depois de algumas semanas fica visível o padrão: treinos ruins costumam ter causa — sono, comida ou intervalo curto demais desde a última sessão.',
   },
 
+  ordemExercicios: {
+    titulo: 'Ordem dos exercícios',
+    resumo:
+      'O que vem primeiro pega você inteiro. Por isso a ordem não é detalhe — ela decide qual exercício recebe seu melhor esforço.',
+    passos: [
+      'Composto pesado primeiro: agachamento, terra, supino, desenvolvimento.',
+      'Compostos em geral depois.',
+      'Isoladores no fim: rosca, elevação lateral, extensora.',
+      'Abdômen perto do fim — ele estabiliza os compostos.',
+      'Cardio por último, ou em outro horário do dia.',
+    ],
+    dica: 'Se o aparelho do primeiro exercício estiver ocupado, troque por um substituto em vez de inverter a ordem.',
+    porque:
+      'Fazer isolador antes cansa o músculo que você precisa inteiro no composto — e é o composto que move mais carga e mais massa. Cardio antes derruba a força do treino todo.',
+  },
+
+  cardioNaHipertrofia: {
+    titulo: 'Cardio atrapalha ganhar massa?',
+    resumo:
+      'Não, desde que programado direito. A meta-análise de 2022 com 43 estudos não achou prejuízo relevante em hipertrofia nem em força máxima.',
+    passos: [
+      'Faça o cardio DEPOIS da musculação, ou separado por pelo menos 3 horas.',
+      'Bicicleta e elíptico interferem menos que corrida — menos dano muscular.',
+      'Zona 2 (consegue conversar) por 25 a 40 min é o melhor custo-benefício.',
+      'Evite cardio pesado de perna no dia anterior ao treino de perna.',
+    ],
+    dica: 'Quem realmente sofre com cardio é a potência explosiva — salto e sprint. Hipertrofia quase não.',
+    porque:
+      'Cardio melhora a recuperação entre séries, ajuda no déficit calórico e é saúde cardiovascular. Cortar cardio para "não perder massa" custa mais do que rende.',
+  },
+
+  marmita: {
+    titulo: 'Marmita da semana',
+    resumo:
+      'Cozinhar uma vez e comer a semana é o que faz dieta durar. O problema quase nunca é saber o que comer — é ter comida pronta na terça à noite.',
+    passos: [
+      'Escolha 2 ou 3 receitas que rendam 5 porções cada.',
+      'Faça tudo num bloco de 2 horas, de preferência no domingo.',
+      'Deixe esfriar COMPLETAMENTE antes de tampar — tampar quente cria água e estraga antes.',
+      'Geladeira aguenta 4 dias. O que passar disso, congele.',
+    ],
+    dica: 'Faça uma "base" de proteína (frango desfiado, carne moída) que vire pratos diferentes na semana. Cansa menos que comer a mesma coisa 5 dias.',
+    porque:
+      'Marmita pronta remove a decisão do momento de fome — que é onde a dieta costuma quebrar.',
+  },
+
+  custoDieta: {
+    titulo: 'Dieta boa e barata',
+    resumo:
+      'Não existe nutriente que só exista em comida cara. Proteína barata funciona igual à proteína cara.',
+    passos: [
+      'Proteína com melhor preço por grama: ovo, frango (coxa mais que peito), carne moída de acém, sardinha.',
+      'Carboidrato: arroz, batata, mandioca, aveia, feijão.',
+      'Vegetal barato que rende: repolho, cenoura, abobrinha, couve.',
+      'Compre proteína em quantidade e congele em porções.',
+    ],
+    dica: 'Whey é conveniência, não necessidade. A mesma proteína sai mais barata em ovo e frango.',
+    porque:
+      'O que muda composição corporal é o total de proteína e caloria, não o preço do ingrediente. Salmão e tilápia constroem o mesmo músculo.',
+  },
+
+  preTreino: {
+    titulo: 'O que comer antes de treinar',
+    resumo:
+      'Se você treina cedo, o café da manhã É o seu pré-treino — e ele precisa ser diferente de um café comum.',
+    passos: [
+      'Carboidrato de digestão fácil é o principal: banana, pão, tapioca, aveia.',
+      'Pouca gordura e pouca fibra — atrasam o esvaziamento do estômago e viram desconforto na primeira série.',
+      'Proteína moderada. Muita proteína antes também pesa.',
+      'Refeição completa: 60 a 90 min antes. Lanche leve: 20 a 30 min antes.',
+    ],
+    dica: 'Treinar 6h da manhã sem tempo? Uma banana 20 minutos antes já muda o treino.',
+    porque:
+      'Treinar em jejum não queima mais gordura no fim do dia — o balanço calórico decide. Mas costuma custar desempenho, e desempenho é o que gera o estímulo que constrói músculo.',
+  },
+
+  sono: {
+    titulo: 'Sono e resultado',
+    resumo:
+      'É durante o sono que o músculo cresce. Treino é o estímulo; a construção acontece deitado.',
+    passos: [
+      'Sete a nove horas é a faixa em que a recuperação acontece.',
+      'Menos de 6 h derruba força, aumenta fome e atrapalha a perda de gordura.',
+      'Horário regular importa tanto quanto a quantidade.',
+    ],
+    porque:
+      'Privação de sono reduz testosterona, aumenta cortisol e piora a sensibilidade à insulina. Dormir mal sabota dieta e treino ao mesmo tempo.',
+  },
+
   imc: {
     titulo: 'IMC',
     resumo:

@@ -4,7 +4,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { colors, radius, spacing } from '@/theme';
-import { Button, Card, Chip, Press, Screen, Sheet, Txt } from '@/shared/ui';
+import { Button, Card, Chip, Press, Tela, Sheet, Txt } from '@/shared/ui';
 import { useDados } from '@/shared/hooks/useDados';
 import {
   getReceita,
@@ -47,7 +47,7 @@ export default function DetalheReceita() {
     return () => clearTimeout(t);
   }, [timer]);
 
-  if (!dados?.rec) return <Screen titulo="Carregando…">{null}</Screen>;
+  if (!dados?.rec) return <Tela titulo="Carregando…">{null}</Tela>;
   const { rec, ings, passos } = dados;
 
   function alternarPasso(i: number) {
@@ -61,16 +61,11 @@ export default function DetalheReceita() {
   }
 
   return (
-    <Screen
+    <Tela
       titulo={rec.nome}
       subtitulo={`${rec.tempo_preparo_min} min · rende ${num(rec.rendimento_porcoes)} ${
         rec.rendimento_porcoes > 1 ? 'porções' : 'porção'
       }`}
-      acaoTopo={
-        <Press onPress={() => router.back()} style={s.iconeBtn} scale={0.9}>
-          <Ionicons name="close" size={20} color={colors.textDim} />
-        </Press>
-      }
     >
       {/* ── Macros por porção ── */}
       <Animated.View entering={FadeInDown.duration(280)}>
@@ -215,7 +210,7 @@ export default function DetalheReceita() {
           ))}
         </View>
       </Sheet>
-    </Screen>
+    </Tela>
   );
 }
 

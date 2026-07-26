@@ -382,6 +382,7 @@ export interface ItemCompra {
   unidade: string;
   categoria: string | null;
   comprado: number;
+  custo_estimado: number | null;
 }
 
 /**
@@ -474,16 +475,51 @@ export async function listaAtual(): Promise<{
   periodo_inicio: string;
   periodo_fim: string;
   itens: ItemCompra[];
+  custoTotal: number;
 } | null> {
   const l = await first<{ id: number; periodo_inicio: string; periodo_fim: string }>(
     'SELECT id, periodo_inicio, periodo_fim FROM shopping_lists ORDER BY gerada_em DESC LIMIT 1'
   );
   if (!l) return null;
+
+  // O custo é calculado na leitura, a partir do preço atual do catálogo —
+  // assim atualizar um preço reflete nas listas já geradas.
   const itens = await all<ItemCompra>(
-    'SELECT * FROM shopping_list_items WHERE lista_id = ? ORDER BY categoria, nome',
+    `SELECT sli.*,
+            CASE WHEN f.custo_100g IS NULL THEN NULL
+                 ELSE f.custo_100g *
+                      (CASE WHEN sli.unidade = 'kg' THEN sli.quantidade_total * 10
+                            ELSE sli.quantidade_total / 100.0 END)
+            END AS custo_estimado
+       FROM shopping_list_items sli
+       LEFT JOIN foods f ON f.id = sli.food_id
+      WHERE sli.lista_id = ?
+      ORDER BY sli.categoria, sli.nome`,
     [l.id]
   );
-  return { ...l, itens };
+
+  const custoTotal = itens.reduce((a, i) => a + (i.custo_estimado ?? 0), 0);
+  return { ...l, itens, custoTotal };
+}
+
+/** Receitas de marmita, ordenadas pelo que rende mais dias. */
+export async function receitasMarmita(orcamento?: string) {
+  const cond = orcamento === 'apertado' ? `AND custo_nivel = 'barato'` : '';
+  return all<ReceitaComMacros & { rende_dias: number; custo_nivel: string; observacao: string | null }>(
+    `SELECT r.*,
+            COALESCE(SUM(f.kcal       * ri.quantidade / 100.0), 0) / r.rendimento_porcoes AS kcal,
+            COALESCE(SUM(f.proteina_g * ri.quantidade / 100.0), 0) / r.rendimento_porcoes AS proteina_g,
+            COALESCE(SUM(f.carbo_g    * ri.quantidade / 100.0), 0) / r.rendimento_porcoes AS carbo_g,
+            COALESCE(SUM(f.gordura_g  * ri.quantidade / 100.0), 0) / r.rendimento_porcoes AS gordura_g,
+            COALESCE(SUM(f.custo_100g * ri.quantidade / 100.0), 0) AS custo_total,
+            COUNT(ri.id) AS qtd_ingredientes
+       FROM recipes r
+       LEFT JOIN recipe_ingredients ri ON ri.recipe_id = r.id
+       LEFT JOIN foods f ON f.id = ri.food_id
+      WHERE r.marmitavel = 1 ${cond}
+      GROUP BY r.id
+      ORDER BY r.rende_dias DESC, r.tempo_preparo_min`
+  );
 }
 
 export async function alternarComprado(itemId: number) {

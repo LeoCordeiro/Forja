@@ -1,0 +1,348 @@
+import type { ReceitaFit } from './receitas-fit';
+
+/**
+ * Marmitas e refeições práticas.
+ *
+ * Critério de entrada: aguenta 3 a 4 dias na geladeira, é feita em lote e usa
+ * ingrediente de mercado comum. Receita fit que exige ingrediente caro ou
+ * preparo diário não sobrevive à terça-feira — e dieta que não sobrevive à
+ * terça-feira não muda composição corporal.
+ *
+ * `custo_nivel`: barato (proteína de menor preço por grama), medio, caro.
+ */
+
+export const MARMITAS: (ReceitaFit & {
+  marmitavel: true;
+  custoNivel: 'barato' | 'medio' | 'caro';
+  rendeDias: number;
+})[] = [
+  {
+    nome: 'Marmita de frango com arroz e legumes',
+    porcoes: 5,
+    tempoMin: 45,
+    dificuldade: 1,
+    marmitavel: true,
+    custoNivel: 'barato',
+    rendeDias: 5,
+    tags: ['frango', 'hortifruti', 'marmita', 'sem-lactose', 'barato'],
+    viral: 'A marmita padrão de quem treina. Um domingo à tarde resolve a semana.',
+    ingredientes: [
+      ['Peito de frango grelhado', 900, 'g'],
+      ['Arroz integral cozido', 750, 'g'],
+      ['Brócolis cozido', 400, 'g'],
+      ['Cenoura crua', 300, 'g'],
+      ['Azeite de oliva extra virgem', 30, 'g'],
+      ['Alho', 15, 'g'],
+      ['Sal', 6, 'g'],
+    ],
+    passos: [
+      ['Tempere todo o frango de uma vez com sal e alho. Deixe 20 min.', 1200],
+      ['Enquanto isso, cozinhe o arroz integral e corte os legumes.', 1500],
+      ['Grelhe o frango em duas levas — panela cheia demais cozinha em vez de dourar.', 1200],
+      ['Cozinhe os legumes no vapor por 5 min. Devem continuar firmes.', 300],
+      ['Monte 5 potes: arroz de um lado, frango do outro, legumes por cima.', null],
+      ['Espere esfriar ANTES de tampar. Tampar quente cria água e estraga antes.', 1800],
+    ],
+  },
+  {
+    nome: 'Marmita de carne moída com batata doce',
+    porcoes: 5,
+    tempoMin: 40,
+    dificuldade: 1,
+    marmitavel: true,
+    custoNivel: 'medio',
+    rendeDias: 5,
+    tags: ['carne', 'hortifruti', 'marmita', 'sem-lactose'],
+    viral: 'Carne moída rende mais que bife e aceita legume picado sem ninguém perceber.',
+    ingredientes: [
+      ['Patinho moído', 800, 'g'],
+      ['Batata doce cozida', 900, 'g'],
+      ['Abobrinha cozida', 300, 'g'],
+      ['Cenoura crua', 200, 'g'],
+      ['Cebola', 150, 'g'],
+      ['Alho', 15, 'g'],
+      ['Tomate', 200, 'g'],
+      ['Azeite de oliva extra virgem', 26, 'g'],
+      ['Sal', 6, 'g'],
+    ],
+    passos: [
+      ['Cozinhe a batata doce em cubos grandes até ficar firme, não desmanchando.', 1200],
+      ['Doure a carne em fogo alto sem mexer nos primeiros 2 min — a crosta é sabor.', 600],
+      ['Tire a carne, refogue alho e cebola na mesma panela.', 240],
+      ['Junte os legumes picados pequenos e cozinhe 6 min.', 360],
+      ['Devolva a carne e o tomate, cozinhe até secar o líquido.', 420],
+      ['Monte os potes e deixe esfriar destampado.', 1800],
+    ],
+  },
+  {
+    nome: 'Panqueca de frango para congelar',
+    porcoes: 6,
+    tempoMin: 50,
+    dificuldade: 2,
+    marmitavel: true,
+    custoNivel: 'barato',
+    rendeDias: 6,
+    tags: ['frango', 'ovo', 'marmita', 'congela'],
+    viral: 'Faz 12, come 2 por vez. Congela cru e vai direto do freezer para a frigideira.',
+    ingredientes: [
+      ['Peito de frango grelhado', 700, 'g'],
+      ['Ovo de galinha cozido', 200, 'g'],
+      ['Leite desnatado', 300, 'g'],
+      ['Aveia em flocos', 150, 'g'],
+      ['Tomate', 150, 'g'],
+      ['Cebola', 100, 'g'],
+      ['Alho', 12, 'g'],
+      ['Sal', 5, 'g'],
+    ],
+    passos: [
+      ['Massa: bata ovos, leite, aveia e sal. Deixe descansar 5 min.', 300],
+      ['Recheio: refogue alho, cebola e tomate, junte o frango desfiado.', 600],
+      ['Faça as panquecas finas em frigideira antiaderente.', 900],
+      ['Recheie e enrole. Deixe esfriar completamente.', 900],
+      ['Congele separadas por filme plástico. Duram 3 meses.', null],
+    ],
+  },
+  {
+    nome: 'Pão com frango e salada de repolho',
+    porcoes: 1,
+    tempoMin: 7,
+    dificuldade: 1,
+    marmitavel: true,
+    custoNivel: 'barato',
+    rendeDias: 1,
+    tags: ['frango', 'hortifruti', 'rapido', 'barato', 'sem-cozinhar'],
+    viral: 'Sanduíche de 7 minutos com 40 g de proteína. Repolho custa quase nada e rende dias.',
+    ingredientes: [
+      ['Pão integral de forma', 50, 'g'],
+      ['Peito de frango grelhado', 130, 'g'],
+      ['Repolho', 80, 'g'],
+      ['Cenoura crua', 40, 'g'],
+      ['Requeijão cremoso', 20, 'g'],
+      ['Tomate', 40, 'g'],
+    ],
+    passos: [
+      ['Desfie o frango já pronto (do lote da semana).', null],
+      ['Salada de repolho: fatie bem fino e misture com a cenoura ralada.', null],
+      ['Passe o requeijão no pão, monte com o frango, a salada e o tomate.', null],
+    ],
+  },
+  {
+    nome: 'Carne fit de panela para a semana',
+    porcoes: 5,
+    tempoMin: 60,
+    dificuldade: 2,
+    marmitavel: true,
+    custoNivel: 'medio',
+    rendeDias: 5,
+    tags: ['carne', 'hortifruti', 'marmita', 'sem-lactose'],
+    viral: 'Corte barato cozido devagar fica macio como corte caro.',
+    ingredientes: [
+      ['Carne moída (acém)', 900, 'g'],
+      ['Cebola', 200, 'g'],
+      ['Alho', 18, 'g'],
+      ['Tomate', 300, 'g'],
+      ['Cenoura crua', 250, 'g'],
+      ['Pimentão verde', 150, 'g'],
+      ['Azeite de oliva extra virgem', 26, 'g'],
+      ['Sal', 7, 'g'],
+    ],
+    passos: [
+      ['Sele a carne em cubos, em levas, até dourar dos dois lados.', 720],
+      ['Refogue cebola e alho, junte tomate e deixe virar molho.', 480],
+      ['Devolva a carne, cubra com água e cozinhe em fogo baixo tampado.', 2400],
+      ['Nos últimos 15 min, junte cenoura e pimentão.', 900],
+      ['Divida em potes e deixe esfriar antes de tampar.', 1800],
+    ],
+  },
+  {
+    nome: 'Omelete de forno em cubos',
+    porcoes: 6,
+    tempoMin: 35,
+    dificuldade: 1,
+    marmitavel: true,
+    custoNivel: 'barato',
+    rendeDias: 4,
+    tags: ['ovo', 'hortifruti', 'marmita', 'barato', 'sem-lactose'],
+    viral: 'Ovo é a proteína mais barata por grama. Uma forma rende lanche de 4 dias.',
+    ingredientes: [
+      ['Ovo de galinha cozido', 500, 'g'],
+      ['Clara de ovo', 200, 'g'],
+      ['Abobrinha cozida', 200, 'g'],
+      ['Tomate', 150, 'g'],
+      ['Cebola', 100, 'g'],
+      ['Espinafre cozido', 100, 'g'],
+      ['Azeite de oliva extra virgem', 15, 'g'],
+      ['Sal', 5, 'g'],
+    ],
+    passos: [
+      ['Pique todos os legumes bem pequenos — pedaço grande solta água.', null],
+      ['Bata ovos e claras com sal.', null],
+      ['Misture os legumes crus e despeje na forma untada.', null],
+      ['Forno a 180°C por 25 min, até firmar no centro.', 1500],
+      ['Deixe esfriar, corte em quadrados e guarde em pote.', 1200],
+    ],
+  },
+  {
+    nome: 'Frango desfiado base (rende a semana)',
+    porcoes: 8,
+    tempoMin: 40,
+    dificuldade: 1,
+    marmitavel: true,
+    custoNivel: 'barato',
+    rendeDias: 4,
+    tags: ['frango', 'marmita', 'barato', 'base', 'sem-lactose'],
+    viral: 'A base que vira sanduíche, tapioca, escondidinho ou salada. Faça uma vez, use a semana.',
+    ingredientes: [
+      ['Peito de frango grelhado', 1200, 'g'],
+      ['Cebola', 150, 'g'],
+      ['Alho', 18, 'g'],
+      ['Tomate', 200, 'g'],
+      ['Azeite de oliva extra virgem', 20, 'g'],
+      ['Sal', 8, 'g'],
+    ],
+    passos: [
+      ['Cozinhe o peito inteiro em água com sal e alho por 25 min.', 1500],
+      ['Desfie ainda morno — frio ele resiste e fica em pedaços grandes.', null],
+      ['Refogue cebola, alho e tomate, junte o frango desfiado.', 480],
+      ['Divida em potes de 150 g. Geladeira 4 dias, freezer 3 meses.', null],
+    ],
+  },
+];
+
+/** Perfis de praticidade. Muda quais receitas entram no cardápio. */
+export const PRATICIDADE = [
+  {
+    chave: 'maxima',
+    label: 'Máxima praticidade',
+    emoji: '⚡',
+    desc: 'Nada acima de 15 min. Sanduíches, shakes, receitas de montar.',
+    tempoMax: 15,
+  },
+  {
+    chave: 'marmita',
+    label: 'Marmita da semana',
+    emoji: '🍱',
+    desc: 'Cozinho uma vez no domingo e como a semana toda.',
+    tempoMax: 60,
+  },
+  {
+    chave: 'equilibrado',
+    label: 'Equilibrado',
+    emoji: '⚖️',
+    desc: 'Algumas receitas rápidas, outras preparadas na hora.',
+    tempoMax: 35,
+  },
+  {
+    chave: 'gosto_cozinhar',
+    label: 'Gosto de cozinhar',
+    emoji: '👨‍🍳',
+    desc: 'Sem pressa. Aceito receitas mais elaboradas.',
+    tempoMax: 90,
+  },
+] as const;
+
+export const ORCAMENTOS = [
+  {
+    chave: 'apertado',
+    label: 'Apertado',
+    emoji: '💰',
+    desc: 'Ovo, frango, arroz, feijão, repolho, batata. O básico que funciona.',
+  },
+  {
+    chave: 'medio',
+    label: 'Médio',
+    emoji: '💵',
+    desc: 'Frango e carne moída, variedade de legumes, alguns suplementos.',
+  },
+  {
+    chave: 'confortavel',
+    label: 'Confortável',
+    emoji: '💳',
+    desc: 'Cortes variados, peixe, castanhas, iogurte grego.',
+  },
+] as const;
+
+/**
+ * Custo aproximado por 100 g, em reais (referência São Paulo, meados de 2026).
+ *
+ * Serve para ordem de grandeza na lista de compras — preço varia por região e
+ * por semana, então o número exato importa menos que a comparação entre itens.
+ */
+export const CUSTO_100G: Record<string, number> = {
+  'Peito de frango grelhado': 2.2,
+  'Coxa de frango sem pele': 1.4,
+  'Patinho moído': 4.5,
+  'Carne moída (acém)': 3.4,
+  'Alcatra grelhada': 6.0,
+  'Contrafilé grelhado': 6.5,
+  'Lombo suíno assado': 3.0,
+  'Tilápia grelhada': 5.5,
+  'Salmão grelhado': 12.0,
+  'Atum em água (lata)': 6.0,
+  'Sardinha em conserva': 3.0,
+  'Ovo de galinha cozido': 1.4,
+  'Clara de ovo': 1.4,
+  'Peito de peru defumado': 5.5,
+
+  'Arroz branco cozido': 0.35,
+  'Arroz integral cozido': 0.55,
+  'Feijão carioca cozido': 0.6,
+  'Feijão preto cozido': 0.6,
+  'Batata inglesa cozida': 0.5,
+  'Batata doce cozida': 0.6,
+  'Mandioca cozida': 0.5,
+  'Macarrão cozido': 0.45,
+  'Pão francês': 1.2,
+  'Pão integral de forma': 1.8,
+  'Aveia em flocos': 1.2,
+  'Goma de tapioca': 1.0,
+  'Cuscuz de milho cozido': 0.5,
+  'Quinoa cozida': 4.0,
+
+  'Leite integral': 0.6,
+  'Leite desnatado': 0.6,
+  'Iogurte natural integral': 1.2,
+  'Iogurte grego natural': 3.5,
+  'Queijo minas frescal': 4.5,
+  'Queijo mussarela': 5.0,
+  'Queijo cottage': 3.5,
+  'Requeijão cremoso': 3.0,
+  'Whey protein concentrado': 12.0,
+
+  'Banana prata': 0.5,
+  Maçã: 1.0,
+  'Mamão papaia': 0.7,
+  'Laranja pera': 0.4,
+  Abacate: 0.9,
+  Morango: 3.0,
+  Melancia: 0.3,
+  Uva: 2.0,
+  Manga: 0.7,
+  Abacaxi: 0.6,
+
+  'Brócolis cozido': 1.5,
+  Alface: 1.0,
+  Tomate: 0.9,
+  'Cenoura crua': 0.5,
+  'Abobrinha cozida': 0.7,
+  'Couve refogada': 0.8,
+  'Espinafre cozido': 1.5,
+  Pepino: 0.6,
+  'Beterraba cozida': 0.6,
+  Cebola: 0.5,
+  'Pimentão verde': 1.0,
+  Alho: 3.0,
+  Repolho: 0.35,
+
+  'Azeite de oliva extra virgem': 5.0,
+  'Óleo de soja': 1.0,
+  'Castanha de caju': 9.0,
+  'Castanha do Pará': 8.0,
+  'Amendoim torrado': 2.5,
+  'Pasta de amendoim integral': 4.5,
+  'Semente de chia': 5.0,
+  'Linhaça dourada': 2.5,
+  Mel: 4.0,
+  'Chocolate 70% cacau': 8.0,
+  'Cacau em pó 100%': 6.0,
+};

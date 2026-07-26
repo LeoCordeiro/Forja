@@ -38,6 +38,7 @@ import {
   planoRetorno,
 } from '@/features/treino/periodizacao';
 import { metaDiaria as metaDiariaAgua } from '@/features/agua/api';
+import { DESC_HORARIO, LABEL_HORARIO, type HorarioTreino } from '@/features/dieta/timing';
 import { hoje as hojeIso } from '@/shared/utils/date';
 import { Ajuda } from '@/shared/ui/Ajuda';
 import { AJUDA } from '@/shared/ajudas';
@@ -66,6 +67,7 @@ export default function Onboarding() {
   const [experiencia, setExperiencia] = useState<Experiencia>('iniciante');
   const [diasSemana, setDiasSemana] = useState(3);
   const [mesesParado, setMesesParado] = useState(0);
+  const [horarioTreino, setHorarioTreino] = useState<HorarioTreino>('manha');
 
   const prog = useSharedValue(0);
   const barra = useAnimatedStyle(() => ({ width: `${prog.value * 100}%` }));
@@ -118,6 +120,9 @@ export default function Onboarding() {
         // Âncora do plano de readaptação: a contagem de semanas parte daqui.
         retomou_em: hojeIso(),
         meta_agua_ml: metaDiariaAgua(pesoN, true),
+        horario_treino: horarioTreino,
+        // Quem treina em jejum acorda mais cedo; muda os horários das refeições.
+        hora_acorda: horarioTreino === 'jejum' ? '05:30' : '06:30',
       });
       await salvarMedida({ peso_kg: pesoN });
       if (m) await salvarMeta(m);
@@ -348,6 +353,48 @@ export default function Onboarding() {
             <Txt v="small" cor={colors.textFaint}>
               {divisaoRecomendada(diasSemana).nome} — {divisaoRecomendada(diasSemana).motivo}
             </Txt>
+
+            <View style={{ height: spacing.lg }} />
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <Txt v="label">Quando você treina?</Txt>
+              <Ajuda conteudo={AJUDA.preTreino} />
+            </View>
+            <View style={{ gap: spacing.sm }}>
+              {(['jejum', 'manha', 'almoco', 'tarde', 'noite'] as HorarioTreino[]).map((h) => (
+                <Card
+                  key={h}
+                  onPress={() => setHorarioTreino(h)}
+                  destaque={horarioTreino === h}
+                  padding={spacing.md}
+                >
+                  <View style={s.entre}>
+                    <View style={{ flex: 1 }}>
+                      <Txt v="h3" size={15}>
+                        {LABEL_HORARIO[h]}
+                      </Txt>
+                      <Txt v="small" size={11} cor={colors.textFaint}>
+                        {DESC_HORARIO[h]}
+                      </Txt>
+                    </View>
+                    {horarioTreino === h ? (
+                      <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
+                    ) : null}
+                  </View>
+                </Card>
+              ))}
+            </View>
+            {horarioTreino === 'jejum' || horarioTreino === 'manha' ? (
+              <Card style={{ marginTop: spacing.sm }} faixa={colors.warn}>
+                <Txt v="small" cor={colors.warn} bold>
+                  Seu café da manhã vira o pré-treino
+                </Txt>
+                <Txt v="small" style={{ marginTop: 4 }}>
+                  {horarioTreino === 'jejum'
+                    ? 'Treinando tão cedo, o app vai sugerir um pré-treino leve (banana, pão com mel) 20 min antes, e o café completo como pós-treino.'
+                    : 'O app vai montar seu café da manhã como refeição pré-treino: carboidrato de digestão fácil, pouca gordura e pouca fibra.'}
+                </Txt>
+              </Card>
+            ) : null}
 
             <View style={{ height: spacing.lg }} />
             <Txt v="label">Há quanto tempo você está parado?</Txt>

@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { colors, radius, spacing } from '@/theme';
-import { Ajuda, Button, Card, Input, Press, Screen, Txt } from '@/shared/ui';
+import { Ajuda, Button, Card, Input, Press, Tela, Txt } from '@/shared/ui';
 import { TituloComAjuda } from '@/shared/ui/Ajuda';
 import { AJUDA } from '@/shared/ajudas';
 import { useDados } from '@/shared/hooks/useDados';
@@ -88,15 +88,10 @@ export default function Bioimpedancia() {
       : null;
 
   return (
-    <Screen
+    <Tela
       titulo="Bioimpedância"
       subtitulo="O exame que mostra o que a balança esconde"
       onRefresh={recarregar}
-      acaoTopo={
-        <Press onPress={() => router.back()} style={s.iconeBtn} scale={0.9}>
-          <Ionicons name="close" size={20} color={colors.textDim} />
-        </Press>
-      }
     >
       {/* ── Última medição ── */}
       {ultima ? (
@@ -249,7 +244,7 @@ export default function Bioimpedancia() {
           </Txt>
         </Card>
       </Animated.View>
-    </Screen>
+    </Tela>
   );
 }
 

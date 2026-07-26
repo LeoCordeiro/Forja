@@ -20,7 +20,11 @@ type CamposV2 =
   | 'dias_treino_semana'
   | 'retomou_em'
   | 'meses_parado'
-  | 'papel';
+  | 'papel'
+  | 'horario_treino'
+  | 'hora_acorda'
+  | 'hora_dorme'
+  | 'hora_treino';
 
 type PerfilEntrada = Omit<Profile, 'id' | 'criado_em' | CamposV2> &
   Partial<Pick<Profile, CamposV2>>;
@@ -31,8 +35,9 @@ export async function salvarPerfil(p: PerfilEntrada) {
        (id, nome, data_nascimento, genero, altura_cm, nivel_atividade, objetivo,
         peso_meta_kg, onboarding_completo, criado_em,
         tmb_medido_kcal, usa_tmb_medido, meta_agua_ml, gordura_meta_pct,
-        experiencia, dias_treino_semana, retomou_em, meses_parado, papel)
-     VALUES (1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        experiencia, dias_treino_semana, retomou_em, meses_parado, papel,
+        horario_treino, hora_acorda, hora_dorme, hora_treino)
+     VALUES (1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(id) DO UPDATE SET
        nome = excluded.nome,
        data_nascimento = excluded.data_nascimento,
@@ -50,7 +55,11 @@ export async function salvarPerfil(p: PerfilEntrada) {
        dias_treino_semana = excluded.dias_treino_semana,
        retomou_em = excluded.retomou_em,
        meses_parado = excluded.meses_parado,
-       papel = excluded.papel`,
+       papel = excluded.papel,
+       horario_treino = excluded.horario_treino,
+       hora_acorda = excluded.hora_acorda,
+       hora_dorme = excluded.hora_dorme,
+       hora_treino = excluded.hora_treino`,
     [
       p.nome,
       p.data_nascimento,
@@ -70,6 +79,10 @@ export async function salvarPerfil(p: PerfilEntrada) {
       p.retomou_em ?? null,
       p.meses_parado ?? 0,
       p.papel ?? 'aluno',
+      p.horario_treino ?? 'manha',
+      p.hora_acorda ?? '06:30',
+      p.hora_dorme ?? '23:00',
+      p.hora_treino ?? null,
     ]
   );
 }

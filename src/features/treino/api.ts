@@ -10,6 +10,7 @@ import type {
 } from '@/db/types';
 import { e1rm } from '../perfil/calculos';
 import { darPontos, registrarAtividade } from '../gamificacao/api';
+import { descansoCorreto, ehComposto, prioridadeDe, substitutosDe } from './classificacao';
 
 // ─────────────────────────── CATÁLOGO ───────────────────────────
 
@@ -162,6 +163,96 @@ export async function atualizarExercicioDoDia(
 
 export async function excluirDia(id: number) {
   await run('DELETE FROM routine_days WHERE id = ?', [id]);
+}
+
+/**
+ * Troca um exercício por outro no meio do treino.
+ *
+ * Aparelho ocupado é o motivo nº 1 de treino furado. A troca vale só para a
+ * sessão de hoje — a rotina continua como está, porque amanhã o aparelho pode
+ * estar livre.
+ */
+export async function substituirExercicio(
+  routineExerciseId: number,
+  novoExercicioId: number,
+  sessionId: number | null,
+  motivo: string
+): Promise<void> {
+  const atual = await first<{ exercise_id: number; reps_max: number | null }>(
+    'SELECT exercise_id, reps_max FROM routine_exercises WHERE id = ?',
+    [routineExerciseId]
+  );
+  if (!atual) return;
+
+  const novo = await first<{ nome: string; grupo_primario: string }>(
+    'SELECT nome, grupo_primario FROM exercises WHERE id = ?',
+    [novoExercicioId]
+  );
+
+  await run(
+    `INSERT INTO substituicoes (session_id, de_exercise, para_exercise, motivo, criado_em)
+     VALUES (?,?,?,?,?)`,
+    [sessionId, atual.exercise_id, novoExercicioId, motivo, Date.now()]
+  );
+
+  // Descanso acompanha o exercício novo: trocar composto por isolador (ou o
+  // contrário) muda o intervalo correto.
+  const descanso = novo
+    ? descansoCorreto(novo.nome, atual.reps_max ?? 10, novo.grupo_primario)
+    : null;
+
+  await run(
+    `UPDATE routine_exercises
+        SET exercise_id = ?, eh_composto = ?, descanso_seg = COALESCE(?, descanso_seg)
+      WHERE id = ?`,
+    [novoExercicioId, novo && ehComposto(novo.nome) ? 1 : 0, descanso, routineExerciseId]
+  );
+}
+
+/**
+ * Reordena o dia pela prioridade de cada exercício.
+ *
+ * Composto pesado primeiro, cardio por último. Não roda sozinho: pode haver
+ * motivo que o app não conhece (aparelho, lesão, preferência), então a
+ * reordenação é sempre uma escolha da pessoa.
+ */
+export async function reordenarPorPrioridade(diaId: number) {
+  const exs = await exerciciosDoDia(diaId);
+  const ordenados = [...exs].sort((a, b) => {
+    const pa = prioridadeDe(a.nome, a.grupo_primario);
+    const pb = prioridadeDe(b.nome, b.grupo_primario);
+    return pa - pb || a.ordem - b.ordem; // empate mantém a ordem original
+  });
+  for (let i = 0; i < ordenados.length; i++) {
+    await run('UPDATE routine_exercises SET ordem = ? WHERE id = ?', [i, ordenados[i].id]);
+  }
+}
+
+/** Substitutos do exercício, já resolvidos para ids do catálogo local. */
+export async function substitutosDisponiveis(exercicioId: number): Promise<Exercise[]> {
+  const ex = await getExercicio(exercicioId);
+  if (!ex) return [];
+
+  const nomes = substitutosDe(ex.nome);
+  const out: Exercise[] = [];
+
+  for (const nome of nomes) {
+    const e = await first<Exercise>('SELECT * FROM exercises WHERE nome = ?', [nome]);
+    if (e) out.push(e);
+  }
+
+  // Sem mapeamento próprio, cai para o mesmo grupo muscular e equipamento
+  // parecido — melhor que devolver lista vazia no meio do treino.
+  if (out.length === 0) {
+    return all<Exercise>(
+      `SELECT * FROM exercises
+        WHERE grupo_primario = ? AND id <> ?
+        ORDER BY (equipamento = ?) DESC, nome
+        LIMIT 6`,
+      [ex.grupo_primario, exercicioId, ex.equipamento ?? '']
+    );
+  }
+  return out;
 }
 
 // ─────────────────────────── SESSÃO ───────────────────────────

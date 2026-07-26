@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import Animated, { FadeIn, FadeInDown, FadeOut } from 'react-native-reanimated';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { colors, radius, spacing } from '@/theme';
-import { Ajuda, Anel, Barras, Button, Card, Empty, Input, Press, Screen, Sheet, Txt } from '@/shared/ui';
+import { Ajuda, Anel, Barras, Button, Card, Empty, Input, Press, Tela, Sheet, Txt } from '@/shared/ui';
 import { TituloComAjuda } from '@/shared/ui/Ajuda';
 import { AJUDA } from '@/shared/ajudas';
 import { useDados } from '@/shared/hooks/useDados';
@@ -50,25 +50,18 @@ export default function Agua() {
     recarregar();
   }
 
-  if (!dados?.r) return <Screen titulo="Carregando…">{null}</Screen>;
+  if (!dados?.r) return <Tela
+      ajuda={AJUDA.agua} titulo="Carregando…">{null}</Tela>;
   const { r, consumido, regs, hist, meta, streak } = dados;
   const status = statusHidratacao(consumido, meta);
   const restante = Math.max(0, meta - consumido);
   const lembretes = planoDeLembretes(meta);
 
   return (
-    <Screen
+    <Tela
       titulo="Hidratação"
       subtitulo={`Meta de ${(meta / 1000).toFixed(1).replace('.', ',')} L por dia`}
       onRefresh={recarregar}
-      acaoTopo={
-        <View style={{ flexDirection: 'row', gap: spacing.sm, alignItems: 'center' }}>
-          <Ajuda conteudo={AJUDA.agua} tam={20} />
-          <Press onPress={() => router.back()} style={s.iconeBtn} scale={0.9}>
-            <Ionicons name="close" size={20} color={colors.textDim} />
-          </Press>
-        </View>
-      }
     >
       {/* ── Anel do dia ── */}
       <Animated.View entering={FadeInDown.duration(300)}>
@@ -285,7 +278,7 @@ export default function Agua() {
           />
         </View>
       </Sheet>
-    </Screen>
+    </Tela>
   );
 }
 

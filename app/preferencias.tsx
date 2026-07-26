@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { colors, radius, spacing } from '@/theme';
-import { Button, Card, Chip, Press, Screen, Txt } from '@/shared/ui';
+import { Button, Card, Chip, Press, Tela, Txt } from '@/shared/ui';
 import { useDados } from '@/shared/hooks/useDados';
 import {
   categoriasQueCome,
@@ -13,6 +13,7 @@ import {
   salvarConfigDieta,
 } from '@/features/dieta/preferencias';
 import { CATEGORIAS_PREFERENCIA, RESTRICOES } from '@/db/seed/receitas-fit';
+import { ORCAMENTOS, PRATICIDADE } from '@/db/seed/marmitas';
 import { buzz } from '@/shared/utils/haptics';
 
 /**
@@ -27,6 +28,8 @@ export default function Preferencias() {
   const [restricao, setRestricao] = useState('nenhuma');
   const [tempoMax, setTempoMax] = useState(45);
   const [refeicoes, setRefeicoes] = useState(5);
+  const [praticidade, setPraticidade] = useState<string>('equilibrado');
+  const [orcamento, setOrcamento] = useState<string>('medio');
   const [salvando, setSalvando] = useState(false);
 
   const { dados } = useDados(async () => {
@@ -41,6 +44,8 @@ export default function Preferencias() {
     setRestricao(dados.cfg.restricao);
     setTempoMax(dados.cfg.tempo_max_preparo);
     setRefeicoes(dados.cfg.refeicoes_por_dia);
+    setPraticidade(dados.cfg.praticidade ?? 'equilibrado');
+    setOrcamento(dados.cfg.orcamento ?? 'medio');
   }, [dados]);
 
   function alternar(chave: string) {
@@ -56,6 +61,8 @@ export default function Preferencias() {
         restricao,
         tempo_max_preparo: tempoMax,
         refeicoes_por_dia: refeicoes,
+        praticidade,
+        orcamento,
       });
       buzz.ok();
       router.back();
@@ -65,14 +72,9 @@ export default function Preferencias() {
   }
 
   return (
-    <Screen
+    <Tela
       titulo="O que você come"
       subtitulo="O cardápio é montado a partir daqui"
-      acaoTopo={
-        <Press onPress={() => router.back()} style={s.iconeBtn} scale={0.9}>
-          <Ionicons name="close" size={20} color={colors.textDim} />
-        </Press>
-      }
     >
       <Animated.View entering={FadeInDown.duration(300)} style={{ gap: spacing.md }}>
         <Txt v="label">Alimentos que você come sem problema</Txt>
@@ -117,6 +119,73 @@ export default function Preferencias() {
         </View>
       </Animated.View>
 
+      {/* ── Praticidade ── */}
+      <Animated.View entering={FadeInDown.delay(90).duration(300)} style={{ gap: spacing.md }}>
+        <Txt v="label">Como você quer cozinhar</Txt>
+        <View style={{ gap: spacing.sm }}>
+          {PRATICIDADE.map((p) => (
+            <Card
+              key={p.chave}
+              onPress={() => {
+                setPraticidade(p.chave);
+                setTempoMax(p.tempoMax);
+              }}
+              destaque={praticidade === p.chave}
+              padding={spacing.md}
+            >
+              <View style={s.linha}>
+                <Txt size={22}>{p.emoji}</Txt>
+                <View style={{ flex: 1 }}>
+                  <Txt v="h3" size={15}>
+                    {p.label}
+                  </Txt>
+                  <Txt v="small" size={11} cor={colors.textFaint}>
+                    {p.desc}
+                  </Txt>
+                </View>
+                {praticidade === p.chave ? (
+                  <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
+                ) : null}
+              </View>
+            </Card>
+          ))}
+        </View>
+      </Animated.View>
+
+      {/* ── Orçamento ── */}
+      <Animated.View entering={FadeInDown.delay(105).duration(300)} style={{ gap: spacing.md }}>
+        <Txt v="label">Orçamento do mercado</Txt>
+        <View style={{ gap: spacing.sm }}>
+          {ORCAMENTOS.map((o) => (
+            <Card
+              key={o.chave}
+              onPress={() => setOrcamento(o.chave)}
+              destaque={orcamento === o.chave}
+              padding={spacing.md}
+            >
+              <View style={s.linha}>
+                <Txt size={22}>{o.emoji}</Txt>
+                <View style={{ flex: 1 }}>
+                  <Txt v="h3" size={15}>
+                    {o.label}
+                  </Txt>
+                  <Txt v="small" size={11} cor={colors.textFaint}>
+                    {o.desc}
+                  </Txt>
+                </View>
+                {orcamento === o.chave ? (
+                  <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
+                ) : null}
+              </View>
+            </Card>
+          ))}
+        </View>
+        <Txt v="small" cor={colors.textFaint}>
+          A lista de compras mostra o custo estimado, e o cardápio prioriza receitas dentro da sua
+          faixa. Proteína barata que funciona: ovo, frango e carne moída de acém.
+        </Txt>
+      </Animated.View>
+
       <Animated.View entering={FadeInDown.delay(120).duration(300)} style={{ gap: spacing.md }}>
         <Txt v="label">Tempo máximo de preparo</Txt>
         <View style={s.chips}>
@@ -149,7 +218,7 @@ export default function Preferencias() {
       </Animated.View>
 
       <Button titulo="Salvar preferências" full tam="lg" onPress={salvar} carregando={salvando} />
-    </Screen>
+    </Tela>
   );
 }
 

@@ -3,7 +3,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { colors, radius, spacing } from '@/theme';
-import { Card, Empty, ExerciseDemo, Linha, Press, Screen, Txt } from '@/shared/ui';
+import { Card, Empty, ExerciseDemo, Linha, Press, Tela, Txt } from '@/shared/ui';
 import { useDados } from '@/shared/hooks/useDados';
 import {
   alternarFavorito,
@@ -42,37 +42,16 @@ export default function DetalheExercicio() {
     return { ex, prs, evo };
   }, [exId]);
 
-  if (!dados?.ex) return <Screen titulo="Carregando…">{null}</Screen>;
+  if (!dados?.ex) return <Tela titulo="Carregando…">{null}</Tela>;
   const { ex, prs, evo } = dados;
 
   const serie = evo.map((e) => ({ x: dataCurta(e.dia), y: Math.round(e.e1rm * 10) / 10 }));
 
   return (
-    <Screen
+    <Tela
       titulo={ex.nome}
       subtitulo={`${nomeGrupo(ex.grupo_primario)}${ex.equipamento ? ` · ${ex.equipamento}` : ''}`}
       onRefresh={recarregar}
-      acaoTopo={
-        <View style={{ flexDirection: 'row', gap: spacing.sm }}>
-          <Press
-            onPress={async () => {
-              await alternarFavorito(exId);
-              recarregar();
-            }}
-            style={s.iconeBtn}
-            scale={0.9}
-          >
-            <Ionicons
-              name={ex.favorito ? 'star' : 'star-outline'}
-              size={19}
-              color={ex.favorito ? colors.warn : colors.textDim}
-            />
-          </Press>
-          <Press onPress={() => router.back()} style={s.iconeBtn} scale={0.9}>
-            <Ionicons name="close" size={20} color={colors.textDim} />
-          </Press>
-        </View>
-      }
     >
       <Animated.View entering={FadeInDown.duration(300)}>
         <ExerciseDemo mediaUrl={ex.media_url} altura={230} />
@@ -226,7 +205,7 @@ export default function DetalheExercicio() {
           ))}
         </Animated.View>
       ) : null}
-    </Screen>
+    </Tela>
   );
 }
 

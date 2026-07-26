@@ -3,7 +3,7 @@ import { useRouter } from 'expo-router';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { colors, radius, spacing } from '@/theme';
-import { Barra, Card, Press, Screen, Txt } from '@/shared/ui';
+import { Barra, Card, Press, Tela, Txt } from '@/shared/ui';
 import { useDados } from '@/shared/hooks/useDados';
 import {
   getStats,
@@ -42,21 +42,16 @@ export default function Conquistas() {
     return { lista, stats, pontos };
   }, []);
 
-  if (!dados) return <Screen titulo="Carregando…">{null}</Screen>;
+  if (!dados) return <Tela titulo="Carregando…">{null}</Tela>;
   const { lista, stats, pontos } = dados;
   const nivel = progressoNivel(stats.xp_total);
   const desbloqueadas = lista.filter((a) => a.desbloqueado_em);
 
   return (
-    <Screen
+    <Tela
       titulo="Conquistas"
       subtitulo={`${desbloqueadas.length} de ${lista.length} medalhas`}
       onRefresh={recarregar}
-      acaoTopo={
-        <Press onPress={() => router.back()} style={s.iconeBtn} scale={0.9}>
-          <Ionicons name="close" size={20} color={colors.textDim} />
-        </Press>
-      }
     >
       {/* ── Nível ── */}
       <Animated.View entering={FadeInDown.duration(300)}>
@@ -180,7 +175,7 @@ export default function Conquistas() {
           </Card>
         </Animated.View>
       ) : null}
-    </Screen>
+    </Tela>
   );
 }
 

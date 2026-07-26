@@ -347,11 +347,21 @@ export default function Home() {
       {/* ── Atalhos ── */}
       <Animated.View entering={FadeInDown.delay(300).duration(300)} style={s.atalhos}>
         <Atalho
-          icone="add-circle-outline"
-          label="Registrar peso"
-          onPress={() => router.push('/evolucao')}
+          icone="checkbox-outline"
+          label="Rotina do dia"
+          onPress={() => router.push('/rotina')}
         />
+        <Atalho icone="body-outline" label="Mobilidade" onPress={() => router.push('/mobilidade')} />
         <Atalho icone="water-outline" label="Água" onPress={() => router.push('/agua')} />
+      </Animated.View>
+
+      <Animated.View entering={FadeInDown.delay(320).duration(300)} style={s.atalhos}>
+        <Atalho
+          icone="analytics-outline"
+          label="Bioimpedância"
+          onPress={() => router.push('/bioimpedancia')}
+        />
+        <Atalho icone="cart-outline" label="Compras" onPress={() => router.push('/compras')} />
         <Atalho
           icone="trophy-outline"
           label="Medalhas"

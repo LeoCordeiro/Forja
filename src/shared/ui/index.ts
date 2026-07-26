@@ -3,6 +3,7 @@ export { Press } from './Press';
 export { Button } from './Button';
 export { Card } from './Card';
 export { Screen } from './Screen';
+export { Tela, BotaoVoltar } from './Tela';
 export { Barra, Anel } from './Progress';
 export { Chip } from './Chip';
 export { Empty } from './Empty';
