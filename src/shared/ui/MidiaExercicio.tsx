@@ -8,7 +8,7 @@ import { Txt } from './Txt';
 import { Press } from './Press';
 import { Sheet } from './Sheet';
 import { ExerciseDemo } from './ExerciseDemo';
-import { VIDEOS, thumb } from '@/db/seed/videos';
+import { VIDEOS, duracaoCurta, thumb } from '@/db/seed/videos';
 import { abrir, urlShorts, urlVideo } from '@/features/treino/video';
 
 interface Props {
@@ -33,8 +33,8 @@ export function MidiaExercicio({ nome, mediaUrl, altura = 168, parado }: Props) 
   const [modo, setModo] = useState<'video' | 'demo'>('video');
   const [thumbQuebrou, setThumbQuebrou] = useState(false);
 
-  const videoId = VIDEOS[nome];
-  const temVideo = !!videoId && !thumbQuebrou;
+  const video = VIDEOS[nome];
+  const temVideo = !!video && !thumbQuebrou;
 
   // Trocar de exercício (troca de aparelho, ou o pager andando) precisa voltar
   // ao estado padrão — senão o próximo exercício herda "modo demo" sem motivo.
@@ -77,7 +77,7 @@ export function MidiaExercicio({ nome, mediaUrl, altura = 168, parado }: Props) 
         style={[s.capa, { height: altura }]}
       >
         <Image
-          source={{ uri: thumb(videoId) }}
+          source={{ uri: thumb(video.id) }}
           style={StyleSheet.absoluteFill}
           contentFit="cover"
           transition={180}
@@ -89,8 +89,9 @@ export function MidiaExercicio({ nome, mediaUrl, altura = 168, parado }: Props) 
         </View>
         <View style={s.selo}>
           <Ionicons name="logo-youtube" size={12} color="#FF0033" />
+          {/* A duração na capa é o que decide se dá tempo antes da próxima série. */}
           <Txt v="small" size={10} cor="#FFFFFF" bold>
-            Shorts
+            {duracaoCurta(video.seg)}
           </Txt>
         </View>
       </Press>
@@ -113,7 +114,7 @@ export function MidiaExercicio({ nome, mediaUrl, altura = 168, parado }: Props) 
       <PlayerSheet
         aberto={assistindo}
         onFechar={() => setAssistindo(false)}
-        videoId={videoId}
+        videoId={video.id}
         nome={nome}
       />
     </View>

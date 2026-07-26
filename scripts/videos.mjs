@@ -23,8 +23,29 @@ const refazerTudo = process.argv.includes('--tudo');
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36';
 
-/** Filtro "Shorts" da busca do YouTube. */
-const SP_SHORTS = 'EgIYAQ%3D%3D';
+/**
+ * Filtro de duração "menos de 4 minutos" da busca do YouTube.
+ *
+ * Não é o filtro de Shorts — não existe um confiável na URL. Serve só para
+ * reduzir a pilha; quem decide de verdade é o `LIMITE_SEG` abaixo, lido da
+ * duração que vem em cada resultado.
+ */
+const SP_CURTOS = 'EgIYAQ%3D%3D';
+
+/**
+ * Teto de duração. Um Short de 40 segundos mostra o movimento e os dois erros
+ * comuns; um vídeo de três minutos gasta o primeiro falando de canal e patrocínio.
+ * Ninguém assiste isso entre duas séries.
+ */
+const LIMITE_SEG = 100;
+const IDEAL_SEG = 60;
+
+/**
+ * Piso de duração. Abaixo disso é clipe solto: mostra o movimento e acaba,
+ * sem dizer onde a pessoa erra. O pedido era breve E explicativo — nove
+ * segundos não explicam nada.
+ */
+const MINIMO_SEG = 18;
 
 // ── nomes dos exercícios, lidos direto do seed ────────────────────────────
 function nomesDeExercicios() {
@@ -69,7 +90,15 @@ async function buscarHtml(url, tentativa = 0) {
 }
 
 // ── busca ─────────────────────────────────────────────────────────────────
-async function buscar(termo, sp = SP_SHORTS) {
+/** "2:21" → 141. Retorna null para transmissão ao vivo, que não tem duração. */
+function emSegundos(txt) {
+  if (!txt) return null;
+  const p = txt.split(':').map(Number);
+  if (p.some(Number.isNaN)) return null;
+  return p.reduce((a, n) => a * 60 + n, 0);
+}
+
+async function buscar(termo, sp = SP_CURTOS) {
   const url =
     `https://www.youtube.com/results?search_query=${encodeURIComponent(termo)}` +
     (sp ? `&sp=${sp}` : '');
@@ -104,7 +133,7 @@ async function buscar(termo, sp = SP_SHORTS) {
         null;
       if (titulo) {
         vistos.add(id);
-        achados.push({ id, titulo });
+        achados.push({ id, titulo, seg: emSegundos(no.lengthText?.simpleText) });
       }
     }
     for (const v of Object.values(no)) anda(v);
@@ -139,13 +168,29 @@ function relevancia(nomeEx, titulo) {
 
 /** Título que promete técnica vale mais que título que promete resultado. */
 const BOM = ['execu', 'tecnica', 'técnica', 'como fazer', 'erro', 'forma correta', 'certo'];
-const RUIM = ['challenge', 'motivation', 'shorts virais', 'humor', 'meme', 'prank'];
+const RUIM = [
+  'challenge', 'motivation', 'shorts virais', 'humor', 'meme', 'prank',
+  // A busca por aparelho traz manutenção e venda antes de execução —
+  // "Troca Cinta Carga Freio Bicicleta Ergométrica" passou por relevante.
+  'troca', 'manutenc', 'conserto', 'reparo', 'montagem', 'unboxing',
+  'review', 'comprar', 'preco', 'barato', 'promocao',
+];
 
-function nota(nomeEx, titulo, posicao) {
-  const t = normalizar(titulo);
-  let n = relevancia(nomeEx, titulo) * 100;
+function nota(nomeEx, c, posicao) {
+  const t = normalizar(c.titulo);
+  let n = relevancia(nomeEx, c.titulo) * 100;
   if (BOM.some((b) => t.includes(normalizar(b)))) n += 18;
-  if (RUIM.some((b) => t.includes(normalizar(b)))) n -= 40;
+
+  // Corte seco, não desconto. Com penalidade de pontos, "Troca Cinta Carga
+  // Freio Bicicleta Ergométrica" sobrevivia: o nome do aparelho aparece duas
+  // vezes e a relevância pagava a multa sozinha.
+  if (RUIM.some((b) => t.includes(normalizar(b)))) return -1;
+
+  // Duração pesa quase tanto quanto o título: entre um vídeo perfeito de 2min
+  // e um bom de 40s, o de 40s ganha — é o que dá para ver na academia.
+  if (c.seg === null || c.seg > LIMITE_SEG || c.seg < MINIMO_SEG) return -1;
+  n += c.seg <= IDEAL_SEG ? 25 : 25 * ((LIMITE_SEG - c.seg) / (LIMITE_SEG - IDEAL_SEG));
+
   n -= posicao * 1.5; // empate desempata pela ordem do YouTube
   return n;
 }
@@ -169,7 +214,9 @@ function carregarExistente() {
   if (refazerTudo || !existsSync(SAIDA)) return {};
   const src = readFileSync(SAIDA, 'utf8');
   const mapa = {};
-  for (const m of src.matchAll(/^\s*'([^']+)':\s*'([\w-]{11})'/gm)) mapa[m[1]] = m[2];
+  for (const m of src.matchAll(/^\s*'([^']+)':\s*\{ id: '([\w-]{11})', seg: (\d+) \}/gm)) {
+    mapa[m[1]] = { id: m[2], seg: Number(m[3]) };
+  }
   return mapa;
 }
 
@@ -185,23 +232,31 @@ for (const { nome } of exercicios) {
   if (mapa[nome]) continue;
 
   try {
-    // Shorts primeiro (formato certo: 40 segundos direto ao movimento). Se o
-    // filtro não devolver nada aproveitável, tenta a busca comum — vídeo longo
-    // resolve melhor que exercício sem vídeo nenhum.
-    let escolhido = await melhorDe(nome, await buscar(`${nome} execução correta academia`));
-    if (!escolhido) {
+    // Três formas de perguntar a mesma coisa. Antes existia um plano B que
+    // buscava sem filtro de duração e aceitava vídeo longo — era isso que
+    // enfiava aula de três minutos no meio do treino. Agora, se nenhuma
+    // variação achar algo curto, o exercício fica sem vídeo mesmo: o app cai
+    // na demonstração em imagens, que é melhor que o vídeo errado.
+    let escolhido = null;
+    for (const q of [
+      `${nome} execução correta`,
+      `como fazer ${nome} shorts`,
+      `${nome} técnica erros`,
+    ]) {
+      escolhido = await melhorDe(nome, await buscar(q));
+      if (escolhido) break;
       await espera(1200);
-      escolhido = await melhorDe(nome, await buscar(`${nome} como fazer execução`, ''));
     }
 
     if (escolhido) {
-      mapa[nome] = escolhido.id;
+      mapa[nome] = { id: escolhido.id, seg: escolhido.seg };
       novos++;
-      console.log(`  ✓ ${nome} → ${escolhido.id}  "${escolhido.titulo.slice(0, 52)}"`);
+      const mmss = `${Math.floor(escolhido.seg / 60)}:${String(escolhido.seg % 60).padStart(2, '0')}`;
+      console.log(`  ✓ ${nome} → ${escolhido.id} (${mmss})  "${escolhido.titulo.slice(0, 46)}"`);
       salvar(mapa); // grava a cada acerto: rate limit no meio não apaga o resto
     } else {
       falhas.push(nome);
-      console.log(`  · ${nome} — nada relevante`);
+      console.log(`  · ${nome} — nada curto e relevante`);
     }
   } catch (e) {
     falhas.push(nome);
@@ -213,8 +268,8 @@ for (const { nome } of exercicios) {
 
 async function melhorDe(nome, candidatos) {
   const ranqueados = candidatos
-    .map((c, i) => ({ ...c, n: nota(nome, c.titulo, i) }))
-    .filter((c) => c.n > 45)
+    .map((c, i) => ({ ...c, n: nota(nome, c, i) }))
+    .filter((c) => c.n > 60)
     .sort((a, b) => b.n - a.n);
 
   for (const c of ranqueados.slice(0, 4)) {
@@ -226,7 +281,7 @@ async function melhorDe(nome, candidatos) {
 function salvar(mapa) {
   const linhas = Object.keys(mapa)
     .sort((a, b) => a.localeCompare(b, 'pt-BR'))
-    .map((k) => `  '${k}': '${mapa[k]}',`)
+    .map((k) => `  '${k}': { id: '${mapa[k].id}', seg: ${mapa[k].seg} },`)
     .join('\n');
 
   writeFileSync(
@@ -238,18 +293,30 @@ function salvar(mapa) {
  * a próxima execução do script preserva o que já está aqui, então um ID
  * corrigido manualmente sobrevive.
  *
- * Todos foram validados via oEmbed no momento da coleta — quer dizer que o
- * vídeo era público E permitia ser embutido. Se algum sair do ar depois, o app
- * cai na demonstração em imagens e oferece a busca no YouTube.
+ * Dois critérios foram aplicados na coleta e valem para tudo que está aqui:
+ * o vídeo é público E permite ser embutido (validado via oEmbed), e dura no
+ * máximo ${LIMITE_SEG} segundos. Exercício sem vídeo curto ficou sem vídeo — o app cai
+ * na demonstração em imagens, que serve melhor que uma aula de três minutos
+ * no meio de um descanso.
  */
 
-export const VIDEOS: Record<string, string> = {
+export interface VideoExercicio {
+  id: string;
+  /** Duração em segundos — vira o selo na miniatura. */
+  seg: number;
+}
+
+export const VIDEOS: Record<string, VideoExercicio> = {
 ${linhas}
 };
 
 /** Miniatura sem custo de player — carrega antes de decidir assistir. */
 export function thumb(videoId: string): string {
   return \`https://i.ytimg.com/vi/\${videoId}/hqdefault.jpg\`;
+}
+
+export function duracaoCurta(seg: number): string {
+  return \`\${Math.floor(seg / 60)}:\${String(seg % 60).padStart(2, '0')}\`;
 }
 `,
     'utf8'
