@@ -71,6 +71,19 @@ export function nomeGrupo(g: string): string {
   return GRUPOS[g] ?? capitalizar(g);
 }
 
+/**
+ * Descanso legível de relance: "3 min", "2min30", "45s".
+ *
+ * Decimal não serve aqui — "2,5 min" obriga a converter de cabeça no meio da
+ * série para saber que são dois minutos e meio.
+ */
+export function descansoLegivel(seg: number): string {
+  if (seg < 60) return `${seg}s`;
+  const min = Math.floor(seg / 60);
+  const resto = seg % 60;
+  return resto === 0 ? `${min} min` : `${min}min${String(resto).padStart(2, '0')}`;
+}
+
 const REFEICOES: Record<string, string> = {
   cafe: 'Café da manhã',
   lanche_manha: 'Lanche da manhã',

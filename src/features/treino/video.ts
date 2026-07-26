@@ -22,6 +22,11 @@ export function urlShorts(nomeExercicio: string): string {
   return `https://www.youtube.com/results?search_query=${q}&sp=EgIYAQ%253D%253D`;
 }
 
+/** Link direto de um vídeo já conhecido — usado pelo botão "abrir no YouTube". */
+export function urlVideo(videoId: string): string {
+  return `https://www.youtube.com/watch?v=${videoId}`;
+}
+
 /** Busca comum, quando a pessoa quer explicação mais longa. */
 export function urlYoutube(nomeExercicio: string): string {
   const q = encodeURIComponent(`${nomeExercicio} como fazer execução`);

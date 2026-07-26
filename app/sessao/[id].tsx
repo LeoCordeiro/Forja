@@ -1,26 +1,34 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import {
+  NativeScrollEvent,
+  NativeSyntheticEvent,
+  ScrollView,
+  StyleSheet,
+  View,
+  useWindowDimensions,
+} from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useKeepAwake } from 'expo-keep-awake';
 import Animated, {
   FadeIn,
-  FadeInDown,
-  SlideInUp,
+  FadeOut,
+  SlideInDown,
   useAnimatedStyle,
   useSharedValue,
-  withRepeat,
   withSequence,
+  withSpring,
   withTiming,
 } from 'react-native-reanimated';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { colors, motion, radius, spacing } from '@/theme';
+import { colors, radius, spacing } from '@/theme';
 import {
   Button,
   Card,
   Celebrar,
+  Chip,
   Comemoracao,
-  ExerciseDemo,
+  MidiaExercicio,
   NumberPad,
   Press,
   Sheet,
@@ -41,16 +49,25 @@ import {
   type SerieAnterior,
 } from '@/features/treino/api';
 import { descansoCorreto, MOTIVOS_TROCA, porqueDescanso } from '@/features/treino/classificacao';
-import { abrir as abrirVideo, urlShorts } from '@/features/treino/video';
-import { Chip } from '@/shared/ui';
 import { avaliarConquistas } from '@/features/gamificacao/api';
 import type { Exercise, RoutineExerciseFull } from '@/db/types';
-import { cronometro, duracao, num, peso as fmtPeso, volume } from '@/shared/utils/format';
+import {
+  cronometro,
+  descansoLegivel,
+  duracao,
+  peso as fmtPeso,
+  nomeGrupo,
+  volume,
+} from '@/shared/utils/format';
 import { duracaoDe } from '@/shared/utils/sessao';
 import { buzz } from '@/shared/utils/haptics';
-import { alarmeAtraso, alarmeConclusao, alarmeFimDescanso, bipCurto, prepararAudio } from '@/shared/utils/alarme';
-import { AJUDA } from '@/shared/ajudas';
-import { Ajuda } from '@/shared/ui/Ajuda';
+import {
+  alarmeAtraso,
+  alarmeConclusao,
+  alarmeFimDescanso,
+  bipCurto,
+  prepararAudio,
+} from '@/shared/utils/alarme';
 
 interface Serie {
   peso: string;
@@ -61,11 +78,16 @@ interface Serie {
 
 type Foco = { exId: number; serie: number; campo: 'peso' | 'reps' } | null;
 
+/** Diâmetro da bolinha da trilha + o traço que liga uma na outra. */
+const BOLA = 30;
+const PASSO = BOLA + 16;
+
 export default function Execucao() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const sessionId = Number(id);
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
   useKeepAwake(); // tela apagando no meio do treino = treino abandonado
 
   const [nome, setNome] = useState('');
@@ -73,6 +95,7 @@ export default function Execucao() {
   const [exercicios, setExercicios] = useState<RoutineExerciseFull[]>([]);
   const [anteriores, setAnteriores] = useState<Record<number, SerieAnterior[]>>({});
   const [series, setSeries] = useState<Record<number, Serie[]>>({});
+  const [atual, setAtual] = useState(0);
   const [foco, setFoco] = useState<Foco>(null);
   const [buffer, setBuffer] = useState('');
   const [descanso, setDescanso] = useState<number | null>(null);
@@ -80,15 +103,30 @@ export default function Execucao() {
   const [comemorar, setComemorar] = useState<Comemoracao | null>(null);
   const [confirmandoFim, setConfirmandoFim] = useState(false);
   const [salvando, setSalvando] = useState(false);
-  const [alarmouAos, setAlarmouAos] = useState<number | null>(null);
   const [trocando, setTrocando] = useState<RoutineExerciseFull | null>(null);
   const [substitutos, setSubstitutos] = useState<Exercise[]>([]);
   const [motivoTroca, setMotivoTroca] = useState('ocupado');
+  const [detalhe, setDetalhe] = useState<RoutineExerciseFull | null>(null);
   /** Exercício cuja série acabou de ser concluída — alimenta o aviso do descanso. */
-  const [ultimaAcao, setUltimaAcao] = useState<{ nome: string; feitas: number; total: number } | null>(
-    null
-  );
-  const scroll = useRef<ScrollView>(null);
+  const [ultimaAcao, setUltimaAcao] = useState<{
+    nome: string;
+    feitas: number;
+    total: number;
+    proximo?: string;
+  } | null>(null);
+
+  const pager = useRef<ScrollView>(null);
+  const trilha = useRef<ScrollView>(null);
+  /**
+   * Ignora o onScroll durante a animação de um salto programado — senão a
+   * trilha volta pelas páginas intermediárias no caminho.
+   *
+   * É um prazo, não uma trava esperando o destino: uma versão anterior guardava
+   * o índice alvo e só destravava ao chegar nele. Bastava o scroll ser
+   * interrompido no meio para o destino nunca chegar, e aí a trilha ficava
+   * presa num exercício e a página em outro.
+   */
+  const travadoAte = useRef(0);
 
   // ── carga inicial ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -127,7 +165,27 @@ export default function Execucao() {
       }
       setSeries(estado);
       setAnteriores(hist);
+
+      // Retomar um treino interrompido abre onde ele parou, não no começo.
+      // Posicionar aqui e não via `irPara`: naquele momento o callback ainda
+      // enxerga a lista vazia e não sairia do lugar.
+      const retomar = lista.findIndex((ex) => {
+        const arr = estado[ex.id] ?? [];
+        return arr.length === 0 || arr.some((x) => !x.concluida);
+      });
+      if (retomar > 0) {
+        travadoAte.current = Date.now() + 900;
+        setAtual(retomar);
+        setTimeout(() => {
+          pager.current?.scrollTo({ x: retomar * width, animated: false });
+          trilha.current?.scrollTo({
+            x: Math.max(0, retomar * PASSO - width / 2 + PASSO / 2),
+            animated: false,
+          });
+        }, 80);
+      }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, router]);
 
   // ── relógio: cronômetro do treino e contagem do descanso ────────────────
@@ -148,7 +206,6 @@ export default function Execucao() {
 
     if (descanso === 0) {
       alarmeFimDescanso();
-      setAlarmouAos(0);
     } else if (descanso === -60 || descanso === -180) {
       // Reforço em 1 e 3 minutos de atraso — depois disso, silêncio.
       alarmeAtraso();
@@ -184,12 +241,43 @@ export default function Execucao() {
     [series]
   );
 
+  // ── navegação lateral ───────────────────────────────────────────────────
+  const irPara = useCallback(
+    (i: number, animado = true) => {
+      if (i < 0 || i >= exercicios.length) return;
+      travadoAte.current = Date.now() + (animado ? 650 : 200);
+      setAtual(i);
+      pager.current?.scrollTo({ x: i * width, animated: animado });
+      trilha.current?.scrollTo({
+        x: Math.max(0, i * PASSO - width / 2 + PASSO / 2),
+        animated: animado,
+      });
+    },
+    [exercicios.length, width]
+  );
+
+  function aoRolar(e: NativeSyntheticEvent<NativeScrollEvent>) {
+    if (Date.now() < travadoAte.current) return;
+    const i = Math.round(e.nativeEvent.contentOffset.x / width);
+    if (i !== atual && i >= 0 && i < exercicios.length) {
+      setAtual(i);
+      trilha.current?.scrollTo({
+        x: Math.max(0, i * PASSO - width / 2 + PASSO / 2),
+        animated: true,
+      });
+    }
+  }
+
+  const completoDe = useCallback((arr: Serie[] | undefined) => {
+    return !!arr && arr.length > 0 && arr.every((x) => x.concluida);
+  }, []);
+
   // ── edição de campo ─────────────────────────────────────────────────────
   const abrirCampo = useCallback(
     (exId: number, serie: number, campo: 'peso' | 'reps') => {
-      const atual = series[exId]?.[serie];
-      if (!atual) return;
-      let valor = campo === 'peso' ? atual.peso : atual.reps;
+      const atualS = series[exId]?.[serie];
+      if (!atualS) return;
+      let valor = campo === 'peso' ? atualS.peso : atualS.reps;
 
       // Campo vazio herda o da última sessão: é o gesto que faz a progressão
       // de carga acontecer sem digitar nada.
@@ -250,9 +338,9 @@ export default function Execucao() {
 
     // Peso preenchido pula direto para reps — o fluxo natural de quem registra.
     if (foco.campo === 'peso') {
-      const atual = series[foco.exId]?.[foco.serie];
+      const atualS = series[foco.exId]?.[foco.serie];
       setFoco({ ...foco, campo: 'reps' });
-      setBuffer(atual?.reps ?? '');
+      setBuffer(atualS?.reps ?? '');
     } else {
       setFoco(null);
     }
@@ -300,12 +388,11 @@ export default function Execucao() {
       return;
     }
 
-    setSeries((p) => {
-      const arr = [...p[ex.id]];
-      arr[idx] = { ...arr[idx], concluida: true };
-      return { ...p, [ex.id]: arr };
-    });
+    const arrNova = [...(series[ex.id] ?? [])];
+    arrNova[idx] = { ...arrNova[idx], concluida: true };
+    setSeries((p) => ({ ...p, [ex.id]: arrNova }));
     buzz.ok();
+    setFoco(null);
 
     const prs = await registrarSerie({
       sessionId,
@@ -317,17 +404,26 @@ export default function Execucao() {
       duracaoSeg: porTempo ? repsN : null,
     });
 
-    const feitasAgora = (series[ex.id] ?? []).filter((x, i) => x.concluida || i === idx).length;
-    setUltimaAcao({ nome: ex.nome, feitas: feitasAgora, total: series[ex.id]?.length ?? 0 });
+    const feitasAgora = arrNova.filter((x) => x.concluida).length;
+    const projetado = { ...series, [ex.id]: arrNova };
+    const iAtual = exercicios.findIndex((e) => e.id === ex.id);
+    const iProximo = proximoPendente(iAtual, projetado);
+
+    setUltimaAcao({
+      nome: ex.nome,
+      feitas: feitasAgora,
+      total: arrNova.length,
+      // Saber o que vem depois vale mais durante três minutos de descanso do
+      // que depois deles, quando já dá para ver na tela.
+      proximo: iProximo >= 0 && iProximo !== iAtual ? exercicios[iProximo].nome : undefined,
+    });
     setDescanso(ex.descanso_seg);
 
     if (prs.length > 0) mostrarPR(ex.nome, prs[0]);
 
     // Guarda o id gravado para permitir corrigir esta série depois.
     const salvas = await seriesDaSessao(sessionId);
-    const gravada = salvas.find(
-      (x) => x.exercise_id === ex.exercise_id && x.serie_index === idx
-    );
+    const gravada = salvas.find((x) => x.exercise_id === ex.exercise_id && x.serie_index === idx);
     if (gravada) {
       setSeries((p) => {
         const arr = [...p[ex.id]];
@@ -335,6 +431,23 @@ export default function Execucao() {
         return { ...p, [ex.id]: arr };
       });
     }
+
+    // Exercício fechado: leva para o próximo que ainda falta. A pausa é para
+    // dar tempo de ver a bolinha ficar verde — sem ela a tela "pula" sozinha
+    // e a sensação é de erro, não de progresso.
+    if (feitasAgora >= arrNova.length && iProximo >= 0 && iProximo !== iAtual) {
+      setTimeout(() => irPara(iProximo), 850);
+    }
+  }
+
+  function proximoPendente(depoisDe: number, mapa: Record<number, Serie[]>) {
+    for (let k = depoisDe + 1; k < exercicios.length; k++) {
+      if (!completoDe(mapa[exercicios[k].id])) return k;
+    }
+    for (let k = 0; k < depoisDe; k++) {
+      if (!completoDe(mapa[exercicios[k].id])) return k;
+    }
+    return -1;
   }
 
   async function encerrar(sensacao: number) {
@@ -368,6 +481,7 @@ export default function Execucao() {
   }
 
   async function abrirTroca(ex: RoutineExerciseFull) {
+    setDetalhe(null);
     setTrocando(ex);
     setSubstitutos([]);
     setSubstitutos(await substitutosDisponiveis(ex.exercise_id));
@@ -399,6 +513,7 @@ export default function Execucao() {
   }
 
   const decorrido = duracaoDe(inicio, null);
+  const concluidos = exercicios.filter((e) => completoDe(series[e.id])).length;
 
   return (
     <View style={s.root}>
@@ -422,52 +537,82 @@ export default function Execucao() {
         </Press>
       </View>
 
-      {/* ── Descanso ── */}
-      {descanso !== null ? (
-        <BarraDescanso
-          segundos={descanso}
-          acao={ultimaAcao}
-          onPular={() => setDescanso(null)}
+      {/* ── Trilha de exercícios ── */}
+      {exercicios.length > 0 ? (
+        <Trilha
+          ref={trilha}
+          exercicios={exercicios}
+          series={series}
+          atual={atual}
+          concluidos={concluidos}
+          completoDe={completoDe}
+          onIr={irPara}
         />
       ) : null}
 
+      {/* ── Um exercício por tela ── */}
       <ScrollView
-        ref={scroll}
-        contentContainerStyle={{
-          padding: spacing.lg,
-          paddingBottom: foco ? 420 : 140,
-          gap: spacing.lg,
-        }}
-        showsVerticalScrollIndicator={false}
+        ref={pager}
+        horizontal
+        pagingEnabled
+        showsHorizontalScrollIndicator={false}
+        onScroll={aoRolar}
+        scrollEventThrottle={16}
         keyboardShouldPersistTaps="handled"
+        style={{ flex: 1 }}
       >
         {exercicios.map((ex, i) => (
-          <Animated.View key={ex.id} entering={FadeInDown.delay(i * 40).duration(280)}>
-            <CardExercicio
-              ex={ex}
-              series={series[ex.id] ?? []}
-              anteriores={anteriores[ex.id] ?? []}
-              foco={foco}
-              onEditar={abrirCampo}
-              onConcluir={(idx) => concluirSerie(ex, idx)}
-              onAddSerie={() =>
-                setSeries((p) => ({
-                  ...p,
-                  [ex.id]: [...(p[ex.id] ?? []), { peso: '', reps: '', concluida: false }],
-                }))
-              }
-              onTrocar={() => abrirTroca(ex)}
-            />
-          </Animated.View>
+          <PaginaExercicio
+            key={ex.id}
+            largura={width}
+            ex={ex}
+            ativo={i === atual}
+            posicao={i}
+            total={exercicios.length}
+            series={series[ex.id] ?? []}
+            anteriores={anteriores[ex.id] ?? []}
+            foco={foco}
+            compacto={!!foco}
+            // Teclado aberto: folga suficiente para a linha em edição subir
+            // acima dele. Descansando: espaço para a barra flutuante, que
+            // senão cobre os botões de navegação.
+            paddingBottom={
+              foco ? 360 : Math.max(insets.bottom, spacing.md) + (descanso !== null ? 76 : 8)
+            }
+            onEditar={abrirCampo}
+            onConcluir={(idx) => concluirSerie(ex, idx)}
+            onAddSerie={() =>
+              setSeries((p) => ({
+                ...p,
+                [ex.id]: [...(p[ex.id] ?? []), { peso: '', reps: '', concluida: false }],
+              }))
+            }
+            onTrocar={() => abrirTroca(ex)}
+            onDetalhe={() => setDetalhe(ex)}
+            onProximo={() => irPara(i + 1)}
+            onAnterior={() => irPara(i - 1)}
+          />
         ))}
 
         {exercicios.length === 0 ? (
-          <Card>
-            <Txt v="h3">Este treino não tem exercícios</Txt>
-            <Txt v="small">Volte e adicione exercícios ao dia antes de treinar.</Txt>
-          </Card>
+          <View style={{ width, padding: spacing.lg }}>
+            <Card>
+              <Txt v="h3">Este treino não tem exercícios</Txt>
+              <Txt v="small">Volte e adicione exercícios ao dia antes de treinar.</Txt>
+            </Card>
+          </View>
         ) : null}
       </ScrollView>
+
+      {/* ── Descanso: flutua sobre a página para não empurrar o conteúdo ── */}
+      {descanso !== null && !foco ? (
+        <BarraDescanso
+          segundos={descanso}
+          acao={ultimaAcao}
+          bottom={Math.max(insets.bottom, spacing.md)}
+          onPular={() => setDescanso(null)}
+        />
+      ) : null}
 
       {/* ── Teclado numérico ── */}
       {foco ? (
@@ -484,6 +629,61 @@ export default function Execucao() {
           />
         </View>
       ) : null}
+
+      {/* ── Detalhes do exercício ── */}
+      <Sheet
+        aberto={!!detalhe}
+        onFechar={() => setDetalhe(null)}
+        titulo={detalhe?.nome ?? ''}
+        altura={0.85}
+      >
+        {detalhe ? (
+          <ScrollView showsVerticalScrollIndicator={false}>
+            <View style={{ gap: spacing.lg }}>
+              <View style={s.explicaDescanso}>
+                <Ionicons name="timer-outline" size={16} color={colors.info} />
+                <Txt v="small" cor={colors.textDim} style={{ flex: 1 }}>
+                  {porqueDescanso(detalhe.nome, detalhe.descanso_seg)}
+                </Txt>
+              </View>
+
+              {detalhe.instrucoes ? (
+                <View style={{ gap: spacing.md }}>
+                  <Txt v="label">Execução</Txt>
+                  {detalhe.instrucoes.split('|').map((p, i) => (
+                    <View key={i} style={s.passo}>
+                      <View style={s.passoNum}>
+                        <Txt v="small" cor={colors.primary} size={11} bold>
+                          {i + 1}
+                        </Txt>
+                      </View>
+                      <Txt v="small" style={{ flex: 1 }}>
+                        {p}
+                      </Txt>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
+
+              {detalhe.dica ? (
+                <View style={s.dica}>
+                  <Ionicons name="bulb" size={15} color={colors.warn} />
+                  <Txt v="small" cor={colors.warn} style={{ flex: 1 }}>
+                    {detalhe.dica}
+                  </Txt>
+                </View>
+              ) : null}
+
+              <Button
+                titulo="Trocar exercício"
+                variante="secundario"
+                full
+                onPress={() => abrirTroca(detalhe)}
+              />
+            </View>
+          </ScrollView>
+        ) : null}
+      </Sheet>
 
       {/* ── Finalizar ── */}
       <Sheet
@@ -583,142 +783,243 @@ export default function Execucao() {
   );
 }
 
-// ─────────────────────────── Card de exercício ───────────────────────────
+// ─────────────────────────── Trilha ───────────────────────────
 
-function CardExercicio({
+/**
+ * Linha do tempo do treino.
+ *
+ * Serve a duas perguntas que aparecem sozinhas no meio de uma série: quanto
+ * falta, e o que vem depois. Cada bolinha é um exercício; verde é o que já
+ * fechou. Tocar pula direto — útil quando o aparelho está ocupado e você faz
+ * outro antes de voltar.
+ */
+const Trilha = ({
+  ref,
+  exercicios,
+  series,
+  atual,
+  concluidos,
+  completoDe,
+  onIr,
+}: {
+  ref: React.RefObject<ScrollView | null>;
+  exercicios: RoutineExerciseFull[];
+  series: Record<number, Serie[]>;
+  atual: number;
+  concluidos: number;
+  completoDe: (arr: Serie[] | undefined) => boolean;
+  onIr: (i: number) => void;
+}) => {
+  return (
+    <View style={s.trilhaBox}>
+      <ScrollView
+        ref={ref}
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={s.trilha}
+      >
+        {exercicios.map((ex, i) => {
+          const arr = series[ex.id] ?? [];
+          const feitas = arr.filter((x) => x.concluida).length;
+          const pronto = completoDe(arr);
+          const ativo = i === atual;
+
+          return (
+            <View key={ex.id} style={{ flexDirection: 'row', alignItems: 'center' }}>
+              {i > 0 ? (
+                <View
+                  style={[
+                    s.traco,
+                    (pronto || completoDe(series[exercicios[i - 1].id])) && {
+                      backgroundColor: colors.success,
+                    },
+                  ]}
+                />
+              ) : null}
+              <Press onPress={() => onIr(i)} scale={0.88} haptic="selecao">
+                <View
+                  style={[
+                    s.bola,
+                    pronto && s.bolaPronta,
+                    ativo && s.bolaAtiva,
+                    ativo && pronto && { borderColor: colors.success },
+                  ]}
+                >
+                  {pronto ? (
+                    <Ionicons name="checkmark" size={16} color="#00251A" />
+                  ) : (
+                    <Txt
+                      v="small"
+                      size={11}
+                      bold
+                      cor={ativo ? colors.primary : colors.textFaint}
+                    >
+                      {feitas > 0 ? `${feitas}/${arr.length}` : i + 1}
+                    </Txt>
+                  )}
+                </View>
+              </Press>
+            </View>
+          );
+        })}
+      </ScrollView>
+
+      <View style={s.contagem}>
+        <Txt v="small" size={11} cor={colors.textFaint}>
+          {concluidos}/{exercicios.length}
+        </Txt>
+      </View>
+    </View>
+  );
+};
+
+// ─────────────────────────── Página do exercício ───────────────────────────
+
+function PaginaExercicio({
+  largura,
   ex,
+  ativo,
+  posicao,
+  total,
   series,
   anteriores,
   foco,
+  compacto,
+  paddingBottom,
   onEditar,
   onConcluir,
   onAddSerie,
   onTrocar,
+  onDetalhe,
+  onProximo,
+  onAnterior,
 }: {
+  largura: number;
   ex: RoutineExerciseFull;
+  ativo: boolean;
+  posicao: number;
+  total: number;
   series: Serie[];
   anteriores: SerieAnterior[];
   foco: Foco;
+  compacto: boolean;
+  paddingBottom: number;
   onEditar: (exId: number, serie: number, campo: 'peso' | 'reps') => void;
   onConcluir: (idx: number) => void;
   onAddSerie: () => void;
   onTrocar: () => void;
+  onDetalhe: () => void;
+  onProximo: () => void;
+  onAnterior: () => void;
 }) {
-  const [aberto, setAberto] = useState(false);
-  const feitas = series.filter((s) => s.concluida).length;
+  const feitas = series.filter((x) => x.concluida).length;
   const completo = feitas === series.length && series.length > 0;
   const porTempo = ex.tipo_carga === 'tempo';
 
+  const rolagem = useRef<ScrollView>(null);
+  const yTabela = useRef(0);
+  const yLinha = useRef<number[]>([]);
+  const editando = foco?.exId === ex.id ? foco.serie : null;
+
+  /**
+   * Traz a linha em edição para cima do teclado.
+   *
+   * O NumberPad come mais de metade da tela; a partir da terceira série a linha
+   * que você acabou de tocar fica atrás dele — você digita às cegas.
+   */
+  useEffect(() => {
+    if (editando === null) return;
+    const y = yLinha.current[editando];
+    if (y === undefined) return;
+    const t = setTimeout(
+      () => rolagem.current?.scrollTo({ y: Math.max(0, yTabela.current + y - 90), animated: true }),
+      60
+    );
+    return () => clearTimeout(t);
+  }, [editando]);
+
   return (
-    <Card style={completo ? { borderColor: colors.success } : undefined}>
-      <Press onPress={() => setAberto((a) => !a)} haptic="leve" style={s.exHead}>
-        <View style={{ flex: 1, gap: 2 }}>
-          <Txt v="h3">{ex.nome}</Txt>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-            <Txt v="small" cor={colors.textFaint}>
-              {ex.series_alvo} × {ex.reps_min}-{ex.reps_max}
+    <View style={{ width: largura }}>
+      <ScrollView
+        ref={rolagem}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={[s.pagina, { paddingBottom }]}
+      >
+        {/* Mídia — sai de cena quando o teclado abre, para a tabela não sumir. */}
+        {!compacto ? (
+          <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(120)}>
+            <MidiaExercicio nome={ex.nome} mediaUrl={ex.media_url} altura={162} parado={!ativo} />
+          </Animated.View>
+        ) : null}
+
+        {/* Identificação */}
+        <View style={s.tituloLinha}>
+          <View style={{ flex: 1, gap: 4 }}>
+            <Txt v="h2" numberOfLines={2} size={20}>
+              {ex.nome}
             </Txt>
-            <View style={s.descansoTag}>
-              <Ionicons name="timer-outline" size={11} color={colors.info} />
-              <Txt v="small" size={10} cor={colors.info} bold>
-                {ex.descanso_seg >= 60
-                  ? `${Math.round((ex.descanso_seg / 60) * 10) / 10}`.replace('.', ',') + ' min'
-                  : `${ex.descanso_seg}s`}
+            <View style={s.metaLinha}>
+              <Txt v="small" cor={colors.textFaint} size={11}>
+                {posicao + 1} de {total} · {nomeGrupo(ex.grupo_primario)}
               </Txt>
-            </View>
-          </View>
-        </View>
-        <View style={[s.contador, completo && { backgroundColor: colors.successSoft }]}>
-          <Txt v="small" cor={completo ? colors.success : colors.textDim} bold>
-            {feitas}/{series.length}
-          </Txt>
-        </View>
-        <Ionicons
-          name={aberto ? 'chevron-up' : 'information-circle-outline'}
-          size={19}
-          color={colors.textFaint}
-        />
-      </Press>
-
-      {aberto ? (
-        <Animated.View entering={FadeIn.duration(200)} style={{ gap: spacing.md }}>
-          <View style={s.acoesEx}>
-            <Press onPress={onTrocar} style={s.acaoEx} scale={0.95}>
-              <Ionicons name="swap-horizontal" size={17} color={colors.info} />
-              <Txt v="small" cor={colors.info} bold>
-                Trocar exercício
-              </Txt>
-            </Press>
-            <Press
-              onPress={() => abrirVideo(urlShorts(ex.nome))}
-              style={s.acaoEx}
-              scale={0.95}
-            >
-              <Ionicons name="logo-youtube" size={17} color="#FF0033" />
-              <Txt v="small" bold>
-                Ver execução
-              </Txt>
-            </Press>
-          </View>
-
-          <View style={s.explicaDescanso}>
-            <Ionicons name="information-circle-outline" size={15} color={colors.textFaint} />
-            <Txt v="small" size={11} cor={colors.textFaint} style={{ flex: 1 }}>
-              {porqueDescanso(ex.nome, ex.descanso_seg)}
-            </Txt>
-          </View>
-
-          <ExerciseDemo mediaUrl={ex.media_url} altura={190} />
-          {ex.instrucoes
-            ? ex.instrucoes.split('|').map((p, i) => (
-                <View key={i} style={s.passo}>
-                  <View style={s.passoNum}>
-                    <Txt v="small" cor={colors.primary} size={11} bold>
-                      {i + 1}
-                    </Txt>
-                  </View>
-                  <Txt v="small" style={{ flex: 1 }}>
-                    {p}
+              <View style={s.tag}>
+                <Ionicons name="repeat" size={10} color={colors.textDim} />
+                <Txt v="small" size={10} cor={colors.textDim} bold>
+                  {ex.series_alvo} × {ex.reps_min}-{ex.reps_max}
+                </Txt>
+              </View>
+              {ex.descanso_seg > 0 ? (
+                <View style={[s.tag, { backgroundColor: colors.infoSoft }]}>
+                  <Ionicons name="timer-outline" size={10} color={colors.info} />
+                  <Txt v="small" size={10} cor={colors.info} bold>
+                    {descansoLegivel(ex.descanso_seg)}
                   </Txt>
                 </View>
-              ))
-            : null}
-          {ex.dica ? (
-            <View style={s.dica}>
-              <Ionicons name="bulb" size={14} color={colors.warn} />
-              <Txt v="small" cor={colors.warn} style={{ flex: 1 }}>
-                {ex.dica}
-              </Txt>
+              ) : null}
             </View>
-          ) : null}
-        </Animated.View>
-      ) : null}
+          </View>
 
-      <View style={s.tabela}>
-        <View style={s.thead}>
-          <Txt v="label" style={{ width: 28 }}>
-            #
-          </Txt>
-          <Txt v="label" style={{ flex: 1 }}>
-            Anterior
-          </Txt>
-          <Txt v="label" style={{ width: 74, textAlign: 'center' }}>
-            {porTempo ? 'Seg' : 'Kg'}
-          </Txt>
-          <Txt v="label" style={{ width: 60, textAlign: 'center' }}>
-            {porTempo ? '—' : 'Reps'}
-          </Txt>
-          <View style={{ width: 38 }} />
+          <Press onPress={onTrocar} style={s.iconeMini} scale={0.9}>
+            <Ionicons name="swap-horizontal" size={18} color={colors.info} />
+          </Press>
+          <Press onPress={onDetalhe} style={s.iconeMini} scale={0.9}>
+            <Ionicons name="information-circle-outline" size={19} color={colors.textDim} />
+          </Press>
         </View>
 
-        {series.map((serie, i) => {
-          const ant = anteriores[i];
-          return (
+        {/* Séries */}
+        <View
+          style={[s.tabela, completo && s.tabelaPronta]}
+          onLayout={(e) => {
+            yTabela.current = e.nativeEvent.layout.y;
+          }}
+        >
+          <View style={s.thead}>
+            <Txt v="label" style={{ width: 24 }}>
+              #
+            </Txt>
+            <Txt v="label" style={{ flex: 1 }}>
+              Anterior
+            </Txt>
+            <Txt v="label" style={{ width: 74, textAlign: 'center' }}>
+              {porTempo ? 'Seg' : 'Kg'}
+            </Txt>
+            <Txt v="label" style={{ width: 58, textAlign: 'center' }}>
+              {porTempo ? '—' : 'Reps'}
+            </Txt>
+            <View style={{ width: 36 }} />
+          </View>
+
+          {series.map((serie, i) => (
             <LinhaSerie
               key={i}
               idx={i}
+              onMedir={(y) => {
+                yLinha.current[i] = y;
+              }}
               serie={serie}
-              anterior={ant}
+              anterior={anteriores[i]}
               porTempo={porTempo}
               focoPeso={foco?.exId === ex.id && foco.serie === i && foco.campo === 'peso'}
               focoReps={foco?.exId === ex.id && foco.serie === i && foco.campo === 'reps'}
@@ -726,17 +1027,74 @@ function CardExercicio({
               onEditarReps={() => onEditar(ex.id, i, 'reps')}
               onConcluir={() => onConcluir(i)}
             />
-          );
-        })}
-      </View>
+          ))}
 
-      <Press onPress={onAddSerie} style={s.addSerie} haptic="leve">
-        <Ionicons name="add" size={16} color={colors.textDim} />
-        <Txt v="small" cor={colors.textDim}>
-          Adicionar série
-        </Txt>
-      </Press>
-    </Card>
+          <Press onPress={onAddSerie} style={s.addSerie} haptic="leve">
+            <Ionicons name="add" size={15} color={colors.textFaint} />
+            <Txt v="small" size={12} cor={colors.textFaint}>
+              Adicionar série
+            </Txt>
+          </Press>
+        </View>
+
+        {/* Navegação explícita — deslizar funciona, mas nem todo mundo descobre */}
+        {!compacto ? (
+          <View style={s.navLinha}>
+            <Press
+              onPress={onAnterior}
+              style={[s.navBtn, posicao === 0 && s.navOff]}
+              disabled={posicao === 0}
+              scale={0.94}
+            >
+              <Ionicons
+                name="chevron-back"
+                size={17}
+                color={posicao === 0 ? colors.textFaint : colors.textDim}
+              />
+              <Txt v="small" size={12} cor={posicao === 0 ? colors.textFaint : colors.textDim}>
+                Anterior
+              </Txt>
+            </Press>
+            <Press
+              onPress={onProximo}
+              style={[
+                s.navBtn,
+                posicao >= total - 1 && s.navOff,
+                completo && posicao < total - 1 && s.navPronto,
+              ]}
+              disabled={posicao >= total - 1}
+              scale={0.94}
+            >
+              <Txt
+                v="small"
+                size={12}
+                bold={completo}
+                cor={
+                  posicao >= total - 1
+                    ? colors.textFaint
+                    : completo
+                      ? colors.success
+                      : colors.textDim
+                }
+              >
+                Próximo
+              </Txt>
+              <Ionicons
+                name="chevron-forward"
+                size={17}
+                color={
+                  posicao >= total - 1
+                    ? colors.textFaint
+                    : completo
+                      ? colors.success
+                      : colors.textDim
+                }
+              />
+            </Press>
+          </View>
+        ) : null}
+      </ScrollView>
+    </View>
   );
 }
 
@@ -750,6 +1108,7 @@ function LinhaSerie({
   onEditarPeso,
   onEditarReps,
   onConcluir,
+  onMedir,
 }: {
   idx: number;
   serie: Serie;
@@ -760,13 +1119,14 @@ function LinhaSerie({
   onEditarPeso: () => void;
   onEditarReps: () => void;
   onConcluir: () => void;
+  onMedir: (y: number) => void;
 }) {
   return (
-    <Animated.View
-      entering={FadeIn.duration(200)}
+    <View
       style={[s.linha, serie.concluida && { backgroundColor: colors.successSoft }]}
+      onLayout={(e) => onMedir(e.nativeEvent.layout.y)}
     >
-      <Txt v="small" cor={colors.textFaint} style={{ width: 28 }}>
+      <Txt v="small" cor={colors.textFaint} style={{ width: 24 }}>
         {idx + 1}
       </Txt>
 
@@ -779,12 +1139,7 @@ function LinhaSerie({
       </Txt>
 
       <Press onPress={onEditarPeso} haptic={false} style={[s.campo, focoPeso && s.campoFoco]}>
-        <Txt
-          v="h3"
-          center
-          cor={serie.peso ? colors.text : colors.textFaint}
-          style={{ width: '100%' }}
-        >
+        <Txt v="h3" center cor={serie.peso ? colors.text : colors.textFaint} style={{ width: '100%' }}>
           {serie.peso || (anterior?.peso_kg ? fmtPeso(anterior.peso_kg) : '—')}
         </Txt>
       </Press>
@@ -792,28 +1147,19 @@ function LinhaSerie({
       <Press
         onPress={onEditarReps}
         haptic={false}
-        style={[s.campo, { width: 60 }, focoReps && s.campoFoco]}
+        style={[s.campo, { width: 58 }, focoReps && s.campoFoco]}
       >
-        <Txt
-          v="h3"
-          center
-          cor={serie.reps ? colors.text : colors.textFaint}
-          style={{ width: '100%' }}
-        >
+        <Txt v="h3" center cor={serie.reps ? colors.text : colors.textFaint} style={{ width: '100%' }}>
           {serie.reps || (anterior?.reps ? String(anterior.reps) : '—')}
         </Txt>
       </Press>
 
       <Press onPress={onConcluir} haptic={false} scale={0.85} style={s.check}>
         <View style={[s.checkBox, serie.concluida && s.checkOn]}>
-          <Ionicons
-            name="checkmark"
-            size={17}
-            color={serie.concluida ? '#00251A' : colors.textFaint}
-          />
+          <Ionicons name="checkmark" size={17} color={serie.concluida ? '#00251A' : colors.textFaint} />
         </View>
       </Press>
-    </Animated.View>
+    </View>
   );
 }
 
@@ -822,10 +1168,12 @@ function LinhaSerie({
 function BarraDescanso({
   segundos,
   acao,
+  bottom,
   onPular,
 }: {
   segundos: number;
-  acao: { nome: string; feitas: number; total: number } | null;
+  acao: { nome: string; feitas: number; total: number; proximo?: string } | null;
+  bottom: number;
   onPular: () => void;
 }) {
   const pulso = useSharedValue(1);
@@ -833,28 +1181,32 @@ function BarraDescanso({
 
   useEffect(() => {
     if ((segundos <= 5 && segundos > 0) || segundos === 0) {
-      pulso.value = withSequence(withTiming(1.06, { duration: 240 }), withTiming(1, { duration: 240 }));
+      pulso.value = withSequence(withTiming(1.06, { duration: 240 }), withSpring(1));
     }
   }, [segundos, pulso]);
 
   const st = useAnimatedStyle(() => ({ transform: [{ scale: pulso.value }] }));
 
   // O que fazer quando o descanso acabar — evita o "e agora?" olhando a tela.
+  const fechou = !!acao && acao.feitas >= acao.total;
   const proximo = !acao
     ? 'Pode seguir'
-    : acao.feitas >= acao.total
-      ? 'Exercício concluído — vá para o próximo'
+    : fechou
+      ? acao.proximo
+        ? `Agora: ${acao.proximo}`
+        : 'Exercício concluído'
       : `Próxima série: ${acao.feitas + 1} de ${acao.total}`;
 
   const cor = acabou ? colors.success : colors.primary;
 
   return (
     <Animated.View
-      entering={SlideInUp.duration(240)}
+      entering={SlideInDown.duration(240)}
       style={[
         s.descanso,
         st,
-        acabou && { backgroundColor: colors.successSoft, borderColor: colors.success },
+        { bottom },
+        acabou && { backgroundColor: '#0D2A22', borderColor: colors.success },
       ]}
     >
       <Ionicons name={acabou ? 'checkmark-circle' : 'timer-outline'} size={20} color={cor} />
@@ -872,8 +1224,10 @@ function BarraDescanso({
             {Math.abs(Math.round(segundos / 60))} min além do intervalo
           </Txt>
         ) : !acabou && acao ? (
-          <Txt v="small" size={11} cor={colors.textFaint}>
-            {acao.nome} · {acao.feitas}/{acao.total}
+          <Txt v="small" size={11} cor={colors.textFaint} numberOfLines={1}>
+            {fechou && acao.proximo
+              ? `Fechou ${acao.nome}. Depois: ${acao.proximo}`
+              : `${acao.nome} · ${acao.feitas}/${acao.total}`}
           </Txt>
         ) : null}
       </View>
@@ -923,51 +1277,88 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  descanso: {
+
+  // Trilha
+  trilhaBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.md,
-    marginHorizontal: spacing.lg,
-    marginTop: spacing.md,
-    paddingHorizontal: spacing.lg,
+    backgroundColor: colors.bgElevated,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  trilha: { alignItems: 'center', paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
+  traco: { width: 16, height: 2, backgroundColor: colors.border },
+  bola: {
+    width: BOLA,
+    height: BOLA,
+    borderRadius: BOLA / 2,
+    backgroundColor: colors.surfaceAlt,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bolaPronta: { backgroundColor: colors.success, borderColor: colors.success },
+  bolaAtiva: { borderColor: colors.primary, borderWidth: 2, backgroundColor: colors.primarySoft },
+  contagem: {
+    paddingHorizontal: spacing.md,
     paddingVertical: spacing.md,
+    borderLeftWidth: 1,
+    borderLeftColor: colors.border,
+  },
+
+  // Página
+  // flexGrow em vez de flex: a página ocupa a tela inteira quando cabe, e vira
+  // rolagem vertical quando não cabe (celular baixo, exercício com 6 séries).
+  pagina: { flexGrow: 1, paddingHorizontal: spacing.lg, paddingTop: spacing.md, gap: spacing.md },
+  tituloLinha: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
+  metaLinha: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+  tag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: radius.full,
+    backgroundColor: colors.surfaceHigh,
+  },
+  iconeMini: {
+    width: 36,
+    height: 36,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceAlt,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // Séries
+  tabela: {
+    gap: 4,
+    padding: spacing.sm,
     borderRadius: radius.lg,
-    backgroundColor: colors.primarySoft,
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: colors.primary,
+    borderColor: colors.border,
   },
-  pular: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: 6,
-    borderRadius: radius.full,
-    backgroundColor: colors.surfaceHigh,
-  },
-  exHead: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
-  contador: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: 4,
-    borderRadius: radius.full,
-    backgroundColor: colors.surfaceHigh,
-  },
-  tabela: { gap: 4, marginTop: spacing.sm },
+  tabelaPronta: { borderColor: colors.success },
   thead: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
     paddingHorizontal: spacing.sm,
-    paddingBottom: 4,
+    paddingBottom: 2,
   },
   linha: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
     paddingHorizontal: spacing.sm,
-    paddingVertical: 5,
+    paddingVertical: 4,
     borderRadius: radius.md,
   },
   campo: {
     width: 74,
-    height: 42,
+    height: 44,
     borderRadius: radius.md,
     backgroundColor: colors.surfaceAlt,
     borderWidth: 1.5,
@@ -976,7 +1367,7 @@ const s = StyleSheet.create({
     justifyContent: 'center',
   },
   campoFoco: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
-  check: { width: 38, alignItems: 'flex-end' },
+  check: { width: 36, alignItems: 'flex-end' },
   checkBox: {
     width: 34,
     height: 34,
@@ -992,13 +1383,57 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
+    gap: 5,
+    paddingVertical: spacing.sm,
+    marginTop: 2,
+  },
+
+  // Navegação
+  navLinha: { flexDirection: 'row', gap: spacing.sm, marginTop: 'auto' },
+  navBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
     paddingVertical: spacing.md,
-    marginTop: spacing.xs,
     borderRadius: radius.md,
+    backgroundColor: colors.surfaceAlt,
+  },
+  navOff: { opacity: 0.4 },
+  navPronto: { backgroundColor: colors.successSoft },
+
+  // Descanso flutuante
+  descanso: {
+    position: 'absolute',
+    left: spacing.lg,
+    right: spacing.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: '#2A1206',
     borderWidth: 1,
-    borderStyle: 'dashed',
-    borderColor: colors.border,
+    borderColor: colors.primary,
+  },
+  pular: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    borderRadius: radius.full,
+    backgroundColor: colors.surfaceHigh,
+  },
+
+  pad: { position: 'absolute', left: 0, right: 0, bottom: 0 },
+
+  // Sheets
+  explicaDescanso: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceAlt,
   },
   passo: { flexDirection: 'row', gap: spacing.sm, alignItems: 'flex-start' },
   passoNum: {
@@ -1015,34 +1450,6 @@ const s = StyleSheet.create({
     padding: spacing.md,
     borderRadius: radius.md,
     backgroundColor: colors.warnSoft,
-  },
-  pad: { position: 'absolute', left: 0, right: 0, bottom: 0 },
-  descansoTag: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: radius.full,
-    backgroundColor: colors.infoSoft,
-  },
-  acoesEx: { flexDirection: 'row', gap: spacing.sm },
-  acaoEx: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 5,
-    paddingVertical: spacing.md,
-    borderRadius: radius.md,
-    backgroundColor: colors.surfaceAlt,
-  },
-  explicaDescanso: {
-    flexDirection: 'row',
-    gap: 6,
-    padding: spacing.md,
-    borderRadius: radius.md,
-    backgroundColor: colors.surfaceAlt,
   },
   subIcone: {
     width: 32,
