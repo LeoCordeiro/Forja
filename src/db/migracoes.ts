@@ -260,9 +260,26 @@ CREATE TABLE IF NOT EXISTS checkin_log (
 CREATE INDEX IF NOT EXISTS ix_checkin_data ON checkin_log (data DESC);
 `;
 
+/**
+ * v5 → v6: notas de configuração do aparelho.
+ *
+ * "Banco no furo 3", "pino 7", "pegada na marca de fora". É o que o personal
+ * anota no papel e o que se perde toda vez que a pessoa troca de academia ou
+ * volta de férias — e sem isso a primeira série sai errada, ou pior, sai numa
+ * altura que machuca.
+ */
+const V6 = `
+CREATE TABLE IF NOT EXISTS notas_exercicio (
+  exercise_id INTEGER PRIMARY KEY REFERENCES exercises(id) ON DELETE CASCADE,
+  nota        TEXT NOT NULL,
+  atualizado_em INTEGER NOT NULL
+);
+`;
+
 export const MIGRACOES: { versao: number; sql: string }[] = [
   { versao: 2, sql: V2 },
   { versao: 3, sql: V3 },
   { versao: 4, sql: V4 },
   { versao: 5, sql: V5 },
+  { versao: 6, sql: V6 },
 ];

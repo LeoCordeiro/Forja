@@ -619,3 +619,43 @@ export async function prsRecentes(limite = 10) {
     [limite]
   );
 }
+
+// ─────────────────────────── NOTAS DE SETUP ───────────────────────────
+
+/**
+ * "Banco no furo 3", "pino 7", "pegada na marca de fora".
+ *
+ * É o que o personal anota no papel e o que se perde toda vez que a pessoa
+ * volta de férias ou troca de academia. Sem isso a primeira série sai errada —
+ * ou, pior, sai numa altura que machuca o ombro.
+ */
+export async function getNota(exerciseId: number): Promise<string> {
+  const r = await first<{ nota: string }>(
+    'SELECT nota FROM notas_exercicio WHERE exercise_id = ?',
+    [exerciseId]
+  );
+  return r?.nota ?? '';
+}
+
+export async function salvarNota(exerciseId: number, nota: string) {
+  if (!nota.trim()) {
+    await run('DELETE FROM notas_exercicio WHERE exercise_id = ?', [exerciseId]);
+    return;
+  }
+  await run(
+    `INSERT INTO notas_exercicio (exercise_id, nota, atualizado_em) VALUES (?,?,?)
+     ON CONFLICT(exercise_id) DO UPDATE SET nota = excluded.nota, atualizado_em = excluded.atualizado_em`,
+    [exerciseId, nota.trim(), Date.now()]
+  );
+}
+
+/** Todas as notas de uma vez — a sessão carrega junto com os exercícios. */
+export async function notasDoDia(exerciseIds: number[]): Promise<Record<number, string>> {
+  if (!exerciseIds.length) return {};
+  const marcas = exerciseIds.map(() => '?').join(',');
+  const rows = await all<{ exercise_id: number; nota: string }>(
+    `SELECT exercise_id, nota FROM notas_exercicio WHERE exercise_id IN (${marcas})`,
+    exerciseIds
+  );
+  return Object.fromEntries(rows.map((r) => [r.exercise_id, r.nota]));
+}

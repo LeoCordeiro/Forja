@@ -116,6 +116,31 @@ export default function Treino() {
             </Card>
           </View>
 
+          <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+            <Card
+              onPress={() => router.push('/diagnostico-treino')}
+              padding={spacing.md}
+              style={{ flex: 1 }}
+            >
+              <Ionicons name="pulse" size={22} color={colors.success} />
+              <Txt v="h3" size={14} style={{ marginTop: 6 }}>
+                Como vai o treino
+              </Txt>
+              <Txt v="small" size={10} cor={colors.textFaint}>
+                O que travou e o backup
+              </Txt>
+            </Card>
+            <Card onPress={() => router.push('/liga')} padding={spacing.md} style={{ flex: 1 }}>
+              <Ionicons name="trophy-outline" size={22} color={colors.xp} />
+              <Txt v="h3" size={14} style={{ marginTop: 6 }}>
+                Liga
+              </Txt>
+              <Txt v="small" size={10} cor={colors.textFaint}>
+                Check-in e ranking
+              </Txt>
+            </Card>
+          </View>
+
           {dados?.dias.length ? (
             dados.dias.map((d, i) => (
               <Animated.View key={d.id} entering={FadeInDown.delay(i * 45).duration(280)}>

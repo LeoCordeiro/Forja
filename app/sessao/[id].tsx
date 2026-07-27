@@ -28,6 +28,7 @@ import {
   Celebrar,
   Chip,
   Comemoracao,
+  Input,
   MidiaExercicio,
   NumberPad,
   Press,
@@ -43,6 +44,8 @@ import {
   getSessao,
   registrarSerie,
   seriesDaSessao,
+  notasDoDia,
+  salvarNota,
   substituirExercicio,
   substitutosDisponiveis,
   ultimaExecucao,
@@ -123,6 +126,10 @@ export default function Execucao() {
   const [substitutos, setSubstitutos] = useState<Exercise[]>([]);
   const [motivoTroca, setMotivoTroca] = useState('ocupado');
   const [detalhe, setDetalhe] = useState<RoutineExerciseFull | null>(null);
+  /** "Banco no furo 3", "pino 7" — o que se perde ao voltar de férias. */
+  const [notas, setNotas] = useState<Record<number, string>>({});
+  const [editandoNota, setEditandoNota] = useState<RoutineExerciseFull | null>(null);
+  const [textoNota, setTextoNota] = useState('');
   /** Já alarmou este descanso? Sem isso o alarme repete a cada segundo. */
   const alarmado = useRef<number | null>(null);
 
@@ -180,6 +187,7 @@ export default function Execucao() {
       }
       setSeries(estado);
       setAnteriores(hist);
+      setNotas(await notasDoDia(lista.map((e) => e.exercise_id)));
 
       // Retomar um treino interrompido abre onde ele parou, não no começo.
       // Posicionar aqui e não via `irPara`: naquele momento o callback ainda
@@ -636,6 +644,11 @@ export default function Execucao() {
             ex={ex}
             ativo={i === atual}
             perto={Math.abs(i - atual) <= 1}
+            nota={notas[ex.exercise_id] ?? ''}
+            onNota={() => {
+              setTextoNota(notas[ex.exercise_id] ?? '');
+              setEditandoNota(ex);
+            }}
             posicao={i}
             total={exercicios.length}
             series={series[ex.id] ?? []}
@@ -817,6 +830,40 @@ export default function Execucao() {
               onPress={abandonar}
             />
           </View>
+        </View>
+      </Sheet>
+
+      {/* ── Nota de setup ── */}
+      <Sheet
+        aberto={!!editandoNota}
+        onFechar={() => setEditandoNota(null)}
+        titulo={editandoNota?.nome ?? ''}
+        altura={0.62}
+      >
+        <View style={{ gap: spacing.lg }}>
+          <Txt v="small" cor={colors.textFaint}>
+            Altura do banco, número do pino, largura da pegada. É o que o personal anota no papel —
+            e o que some quando você volta de férias ou troca de academia.
+          </Txt>
+          <Input
+            rotulo="Como você monta este exercício"
+            value={textoNota}
+            onChangeText={setTextoNota}
+            placeholder="Banco no furo 3, pegada na marca de fora"
+            multiline
+          />
+          <Button
+            titulo="Salvar"
+            full
+            tam="lg"
+            onPress={async () => {
+              if (!editandoNota) return;
+              await salvarNota(editandoNota.exercise_id, textoNota);
+              setNotas((p) => ({ ...p, [editandoNota.exercise_id]: textoNota.trim() }));
+              buzz.ok();
+              setEditandoNota(null);
+            }}
+          />
         </View>
       </Sheet>
 
@@ -1008,6 +1055,8 @@ function PaginaExercicio({
   ex,
   ativo,
   perto,
+  nota,
+  onNota,
   posicao,
   total,
   series,
@@ -1028,6 +1077,8 @@ function PaginaExercicio({
   ativo: boolean;
   /** Página visível ou vizinha — só essas carregam mídia. */
   perto: boolean;
+  nota: string;
+  onNota: () => void;
   posicao: number;
   total: number;
   series: Serie[];
@@ -1128,6 +1179,23 @@ function PaginaExercicio({
                   </View>
                 ) : null}
               </View>
+
+              <Press onPress={onNota} style={nota ? s.notaCheia : s.notaVazia} scale={0.97}>
+                <Ionicons
+                  name={nota ? 'bookmark' : 'bookmark-outline'}
+                  size={13}
+                  color={nota ? colors.warn : colors.textFaint}
+                />
+                <Txt
+                  v="small"
+                  size={11}
+                  cor={nota ? colors.warn : colors.textFaint}
+                  numberOfLines={2}
+                  style={{ flex: 1 }}
+                >
+                  {nota || 'Anotar altura do banco, pino, pegada…'}
+                </Txt>
+              </Press>
 
               <Press onPress={onTrocar} style={s.trocar} scale={0.95}>
                 <Ionicons name="swap-horizontal" size={15} color={colors.info} />
@@ -1462,6 +1530,26 @@ const s = StyleSheet.create({
   pagina: { flexGrow: 1, paddingHorizontal: spacing.lg, paddingTop: spacing.md, gap: spacing.md },
   cabecalho: { flexDirection: 'row', gap: spacing.md, alignItems: 'flex-start' },
   metaLinha: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+  notaVazia: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: colors.border,
+  },
+  notaCheia: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    borderRadius: radius.md,
+    backgroundColor: colors.warnSoft,
+  },
   trocar: {
     flexDirection: 'row',
     alignItems: 'center',
