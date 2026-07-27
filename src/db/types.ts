@@ -32,6 +32,15 @@ export interface Profile {
   meta_agua_ml: number | null;
   /** 'livre' | 'maquina' | 'ambos' — inclina a seleção, não filtra. */
   preferencia_equipamento: string | null;
+  /** Diagnóstico — cada campo altera a prescrição. */
+  incomodo: string | null;
+  onde_acumula: string | null;
+  desistencia: string | null;
+  /** CSV de regiões com dor. */
+  dores: string | null;
+  minutos_sessao: number | null;
+  passos_alvo: number | null;
+  cardio_sessoes: number | null;
   gordura_meta_pct: number | null;
   experiencia: Experiencia;
   dias_treino_semana: number;

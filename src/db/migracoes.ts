@@ -210,6 +210,24 @@ CREATE TABLE IF NOT EXISTS mobilidade_log (
  */
 const V4 = `
 ALTER TABLE profile ADD COLUMN preferencia_equipamento TEXT NOT NULL DEFAULT 'ambos';
+
+-- Diagnóstico: o que incomoda, o que já fez parar, onde dói. Cada campo aqui
+-- muda algo na prescrição — não existe pergunta guardada só para constar.
+ALTER TABLE profile ADD COLUMN incomodo TEXT;
+ALTER TABLE profile ADD COLUMN onde_acumula TEXT;
+ALTER TABLE profile ADD COLUMN desistencia TEXT;
+ALTER TABLE profile ADD COLUMN dores TEXT;
+ALTER TABLE profile ADD COLUMN minutos_sessao INTEGER;
+ALTER TABLE profile ADD COLUMN passos_alvo INTEGER;
+ALTER TABLE profile ADD COLUMN cardio_sessoes INTEGER;
+
+-- Passos do dia: a variável que mais move gasto diário sem cobrar recuperação.
+CREATE TABLE IF NOT EXISTS passos_log (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  data      TEXT NOT NULL UNIQUE,
+  passos    INTEGER NOT NULL,
+  criado_em INTEGER NOT NULL
+);
 `;
 
 export const MIGRACOES: { versao: number; sql: string }[] = [

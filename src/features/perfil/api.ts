@@ -25,7 +25,14 @@ type CamposV2 =
   | 'hora_acorda'
   | 'hora_dorme'
   | 'hora_treino'
-  | 'preferencia_equipamento';
+  | 'preferencia_equipamento'
+  | 'incomodo'
+  | 'onde_acumula'
+  | 'desistencia'
+  | 'dores'
+  | 'minutos_sessao'
+  | 'passos_alvo'
+  | 'cardio_sessoes';
 
 type PerfilEntrada = Omit<Profile, 'id' | 'criado_em' | CamposV2> &
   Partial<Pick<Profile, CamposV2>>;
@@ -293,4 +300,29 @@ export async function definirMetaAgua(ml: number) {
 
 export async function definirPreferenciaEquipamento(pref: string) {
   await run('UPDATE profile SET preferencia_equipamento = ? WHERE id = 1', [pref]);
+}
+
+export async function salvarDiagnostico(d: {
+  incomodo: string | null;
+  onde_acumula: string | null;
+  desistencia: string | null;
+  dores: string;
+  minutos_sessao: number;
+  passos_alvo: number | null;
+  cardio_sessoes: number;
+}) {
+  await run(
+    `UPDATE profile SET incomodo = ?, onde_acumula = ?, desistencia = ?, dores = ?,
+            minutos_sessao = ?, passos_alvo = ?, cardio_sessoes = ?
+      WHERE id = 1`,
+    [
+      d.incomodo,
+      d.onde_acumula,
+      d.desistencia,
+      d.dores,
+      d.minutos_sessao,
+      d.passos_alvo,
+      d.cardio_sessoes,
+    ]
+  );
 }
