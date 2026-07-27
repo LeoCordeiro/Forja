@@ -13,6 +13,7 @@ import { colors, radius, spacing } from '@/theme';
 import { Txt } from './Txt';
 import { Press } from './Press';
 import { buzz } from '../utils/haptics';
+import { calcularAnilhas, resumoAnilhas } from '@/features/treino/anilhas';
 
 interface Props {
   valor: string;
@@ -26,6 +27,8 @@ interface Props {
   unidade?: string;
   /** O outro campo da mesma série, para não perder o par de vista. */
   contexto?: { rotulo: string; valor: string };
+  /** Mostra quais anilhas montar para o valor digitado. */
+  anilhas?: boolean;
 }
 
 /**
@@ -44,6 +47,7 @@ export function NumberPad({
   rotulo,
   unidade,
   contexto,
+  anilhas,
 }: Props) {
   /**
    * Primeira tecla substitui o valor herdado, em vez de concatenar.
@@ -116,6 +120,10 @@ export function NumberPad({
         ) : null}
       </View>
 
+      {/* Quais anilhas montar. É a conta que todo mundo faz de cabeça entre
+          uma série e outra — e erra, principalmente com 2,5 e 1,25. */}
+      {anilhas && valor ? <LinhaAnilhas alvo={parseFloat(valor.replace(',', '.'))} /> : null}
+
       <View style={s.rapidos}>
         {incrementos.map((inc) => (
           <Press key={`m${inc}`} onPress={() => ajustar(-inc)} haptic={false} style={s.rapido}>
@@ -149,6 +157,29 @@ export function NumberPad({
         </Txt>
       </Press>
     </Animated.View>
+  );
+}
+
+/**
+ * Anilhas por lado.
+ *
+ * Só aparece para carga que dá para montar numa barra. Halter e máquina não
+ * têm anilha para calcular, e mostrar "não fecha" o tempo todo vira ruído —
+ * então quando sobra muito, some.
+ */
+function LinhaAnilhas({ alvo }: { alvo: number }) {
+  if (!Number.isFinite(alvo) || alvo < 20) return null;
+  const c = calcularAnilhas(alvo, 20);
+  if (Math.abs(c.sobra) > 2.5) return null;
+
+  return (
+    <View style={s.anilhas}>
+      <Ionicons name="disc-outline" size={14} color={colors.textFaint} />
+      <Txt v="small" size={11} cor={colors.textDim} style={{ flex: 1 }}>
+        Por lado: <Txt v="small" size={11} cor={colors.text} bold>{resumoAnilhas(c)}</Txt>
+        {c.sobra !== 0 ? `  (dá ${String(c.total).replace('.', ',')} kg)` : ''}
+      </Txt>
+    </View>
   );
 }
 
@@ -204,6 +235,15 @@ const s = StyleSheet.create({
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.borderStrong,
+  },
+  anilhas: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceAlt,
   },
   cursor: {
     width: 2,

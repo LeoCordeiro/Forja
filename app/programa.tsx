@@ -28,6 +28,12 @@ import {
   type PreferenciaEquipamento,
 } from '@/features/treino/equipamento';
 import { definirPreferenciaEquipamento } from '@/features/perfil/api';
+import {
+  mapaDeRecuperacao,
+  ROTULO_ESTADO,
+  sugerirFoco,
+  type RecuperacaoGrupo,
+} from '@/features/treino/recuperacao';
 import { hoje } from '@/shared/utils/date';
 import { buzz } from '@/shared/utils/haptics';
 
@@ -44,7 +50,8 @@ export default function Programa() {
   const { dados, recarregar } = useDados(async () => {
     const [r, rotina] = await Promise.all([resumo(), rotinaAtiva()]);
     const audit = rotina ? await auditarVolume(rotina.id) : null;
-    return { r, rotina, audit };
+    const recup = await mapaDeRecuperacao();
+    return { r, rotina, audit, recup, foco: sugerirFoco(recup) };
   }, []);
 
   useEffect(() => {
@@ -175,6 +182,58 @@ export default function Programa() {
         </Card>
       </Animated.View>
 
+      {/* ── Recuperação por músculo ── */}
+      <Animated.View entering={FadeInDown.delay(140).duration(300)}>
+        <Card>
+          <Txt v="label">Recuperação por músculo</Txt>
+          <Txt v="small" size={11} cor={colors.textFaint} style={{ marginTop: 2 }}>
+            Estimativa a partir do seu histórico de séries — não é medição. Serve para não
+            empilhar o mesmo grupo em dias seguidos sem perceber; o que o corpo diz continua
+            valendo mais.
+          </Txt>
+
+          <View style={{ marginTop: spacing.md, gap: spacing.sm }}>
+            {(dados.recup ?? [])
+              .filter((m) => m.horasDesde !== null)
+              .map((m) => (
+                <View key={m.grupo} style={{ gap: 3 }}>
+                  <View style={s.entre}>
+                    <Txt v="small" size={12}>
+                      {nomeDoGrupo(m.grupo)}
+                      <Txt v="small" size={11} cor={colors.textFaint}>
+                        {'  '}
+                        {m.horasDesde! < 24
+                          ? `há ${m.horasDesde}h`
+                          : `há ${Math.round(m.horasDesde! / 24)}d`}
+                      </Txt>
+                    </Txt>
+                    <Txt v="small" size={11} cor={corRecup(m.estado)} bold>
+                      {ROTULO_ESTADO[m.estado]}
+                    </Txt>
+                  </View>
+                  <Barra valor={m.pronto} cor={corRecup(m.estado)} />
+                </View>
+              ))}
+
+            {(dados.recup ?? []).every((m) => m.horasDesde === null) ? (
+              <Txt v="small" size={12} cor={colors.textFaint}>
+                Sem treino registrado ainda. O mapa aparece depois da primeira sessão.
+              </Txt>
+            ) : null}
+          </View>
+
+          {dados.foco ? (
+            <View style={s.sugestao}>
+              <Ionicons name="bulb" size={15} color={colors.warn} />
+              <Txt v="small" size={12} cor={colors.warn} style={{ flex: 1 }}>
+                Mais descansado e há mais tempo sem estímulo: {nomeDoGrupo(dados.foco)}. Bom
+                candidato para o treino de hoje.
+              </Txt>
+            </View>
+          ) : null}
+        </Card>
+      </Animated.View>
+
       {/* ── Preferência de equipamento ── */}
       <Animated.View entering={FadeInDown.delay(150).duration(300)} style={{ gap: spacing.sm }}>
         <Txt v="label">Máquina ou peso livre</Txt>
@@ -260,6 +319,16 @@ export default function Programa() {
   );
 }
 
+function corRecup(e: RecuperacaoGrupo['estado']) {
+  return e === 'pronto'
+    ? colors.success
+    : e === 'quase'
+      ? colors.info
+      : e === 'cansado'
+        ? colors.warn
+        : colors.danger;
+}
+
 function LinhaVolume({ v }: { v: VolumeGrupo }) {
   const cor =
     v.situacao === 'baixo' ? colors.warn : v.situacao === 'alto' ? colors.info : colors.success;
@@ -321,6 +390,14 @@ const s = StyleSheet.create({
     paddingVertical: 3,
     borderRadius: radius.full,
     backgroundColor: colors.surfaceHigh,
+  },
+  sugestao: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    padding: spacing.md,
+    marginTop: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.warnSoft,
   },
   fim: {
     padding: spacing.md,

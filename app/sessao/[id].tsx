@@ -697,7 +697,8 @@ export default function Execucao() {
             rotulo={
               (foco.campo === 'peso' ? 'Peso · série ' : 'Repetições · série ') + (foco.serie + 1)
             }
-            unidade={foco.campo === 'peso' ? 'kg' : 'reps'}
+            unidade={foco.campo === "peso" ? "kg" : "reps"}
+            anilhas={foco.campo === "peso"}
             contexto={(() => {
               const s0 = series[foco.exId]?.[foco.serie];
               const outro = foco.campo === 'peso' ? s0?.reps : s0?.peso;
