@@ -29,7 +29,8 @@ import {
   RIR_POR_FASE,
   semanaAtual as semanaDoPlano,
 } from '@/features/treino/periodizacao';
-import { prioridadeDe, REGRAS_ORDEM } from '@/features/treino/classificacao';
+import { prioridadeDe } from '@/features/treino/classificacao';
+import { analisarOrdem } from '@/features/treino/ordem';
 import { buzz } from '@/shared/utils/haptics';
 import { Ajuda } from '@/shared/ui/Ajuda';
 import { AJUDA } from '@/shared/ajudas';
@@ -198,20 +199,26 @@ export default function DiaDeTreino() {
               </Card>
             ) : null}
 
+            {/* Análise deste dia, não regra genérica: a versão anterior falava
+                de agachamento e terra num treino de costas e bíceps. */}
             <Card padding={spacing.md}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <Txt v="label">Ordem dos exercícios</Txt>
+                <Txt v="label">Ordem deste treino</Txt>
                 <Ajuda conteudo={AJUDA.ordemExercicios} />
               </View>
-              {REGRAS_ORDEM.slice(0, 4).map((r) => (
-                <View key={r.titulo} style={s.regra}>
-                  <Ionicons name="checkmark-circle" size={14} color={colors.success} />
+              {analisarOrdem(dados!.exs).map((o) => (
+                <View key={o.titulo} style={s.regra}>
+                  <Ionicons
+                    name={o.tipo === 'atencao' ? 'alert-circle' : 'checkmark-circle'}
+                    size={14}
+                    color={o.tipo === 'atencao' ? colors.warn : colors.success}
+                  />
                   <View style={{ flex: 1 }}>
                     <Txt v="small" bold size={12}>
-                      {r.titulo}
+                      {o.titulo}
                     </Txt>
                     <Txt v="small" size={11} cor={colors.textFaint}>
-                      {r.texto}
+                      {o.texto}
                     </Txt>
                   </View>
                 </View>

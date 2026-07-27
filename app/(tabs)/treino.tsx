@@ -75,6 +75,22 @@ export default function Treino() {
 
       {aba === 'rotinas' ? (
         <>
+          {/* A pergunta que a lista de dias não responde: para que serve tudo
+              isto e por quanto tempo eu fico nele. */}
+          <Card faixa={colors.primary} onPress={() => router.push('/programa')} padding={spacing.md}>
+            <View style={s.entre}>
+              <View style={{ flex: 1, gap: 2 }}>
+                <Txt v="h3" size={15}>
+                  Objetivo e plano do bloco
+                </Txt>
+                <Txt v="small" size={11} cor={colors.textFaint}>
+                  Para que serve este treino, quantas semanas dura e se o volume por músculo fecha
+                </Txt>
+              </View>
+              <Ionicons name="analytics-outline" size={22} color={colors.primary} />
+            </View>
+          </Card>
+
           {dados?.dias.length ? (
             dados.dias.map((d, i) => (
               <Animated.View key={d.id} entering={FadeInDown.delay(i * 45).duration(280)}>

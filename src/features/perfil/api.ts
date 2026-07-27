@@ -24,7 +24,8 @@ type CamposV2 =
   | 'horario_treino'
   | 'hora_acorda'
   | 'hora_dorme'
-  | 'hora_treino';
+  | 'hora_treino'
+  | 'preferencia_equipamento';
 
 type PerfilEntrada = Omit<Profile, 'id' | 'criado_em' | CamposV2> &
   Partial<Pick<Profile, CamposV2>>;
@@ -288,4 +289,8 @@ export async function definirMetaCalorica(kcal: number) {
 
 export async function definirMetaAgua(ml: number) {
   await run('UPDATE profile SET meta_agua_ml = ? WHERE id = 1', [ml]);
+}
+
+export async function definirPreferenciaEquipamento(pref: string) {
+  await run('UPDATE profile SET preferencia_equipamento = ? WHERE id = 1', [pref]);
 }

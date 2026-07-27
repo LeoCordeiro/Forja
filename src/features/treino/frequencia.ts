@@ -101,12 +101,26 @@ export interface ResumoSemana {
 export async function resumoSemana(metaDias: number): Promise<ResumoSemana> {
   const dias = await semanaAtual();
   const feitos = dias.filter((d) => d.treinou).length;
+  /**
+   * Semana zerada com treino recente atrás dá impressão de que o app esqueceu.
+   * A semana começa na segunda: treinar no domingo conta para a semana que
+   * acabou, e a nova nasce vazia — correto, mas parece defeito. Sem esta
+   * informação o quadro fica em branco sem explicar por quê.
+   */
+  const semTreinar = feitos === 0 ? await diasSemTreinar() : null;
   const restantes = Math.max(0, metaDias - feitos);
   const diasUteisRestantes = dias.filter((d) => d.futuro || d.hoje).length;
   const alcancavel = restantes <= diasUteisRestantes;
 
   let mensagem: string;
-  if (feitos >= metaDias) {
+  if (feitos === 0 && semTreinar !== null && semTreinar <= 2) {
+    mensagem =
+      semTreinar === 0
+        ? 'Você treinou hoje mais cedo — já contabilizado.'
+        : `Semana nova: a contagem zerou na segunda. Seu último treino foi ${
+            semTreinar === 1 ? 'ontem' : `há ${semTreinar} dias`
+          } e entrou na semana passada.`;
+  } else if (feitos >= metaDias) {
     mensagem = `Meta da semana batida: ${feitos} de ${metaDias} treinos.`;
   } else if (restantes === 0) {
     mensagem = 'Semana completa.';

@@ -2,6 +2,7 @@ import { all, first, run } from '@/db/client';
 import type {
   Exercise,
   PersonalRecord,
+  Routine,
   RoutineDay,
   RoutineExerciseFull,
   SetLog,
@@ -97,6 +98,11 @@ export async function exerciciosDoDia(diaId: number): Promise<RoutineExerciseFul
       ORDER BY re.ordem`,
     [diaId]
   );
+}
+
+/** A rotina em uso. `criado_em` é a data de início do bloco de treino. */
+export async function rotinaAtiva(): Promise<Routine | null> {
+  return first<Routine>('SELECT * FROM routines WHERE ativa = 1 ORDER BY criado_em DESC LIMIT 1');
 }
 
 export async function criarRotina(nome: string, descricao?: string): Promise<number> {

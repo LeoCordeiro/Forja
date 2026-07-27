@@ -116,6 +116,7 @@ export default function Execucao() {
   const [agora, setAgora] = useState(Date.now());
   const [comemorar, setComemorar] = useState<Comemoracao | null>(null);
   const [confirmandoFim, setConfirmandoFim] = useState(false);
+  const [saindo, setSaindo] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [trocando, setTrocando] = useState<RoutineExerciseFull | null>(null);
   const [substitutos, setSubstitutos] = useState<Exercise[]>([]);
@@ -576,7 +577,9 @@ export default function Execucao() {
     <View style={s.root}>
       {/* ── Cabeçalho fixo ── */}
       <View style={[s.head, { paddingTop: insets.top + spacing.sm }]}>
-        <Press onPress={() => router.back()} style={s.iconeBtn} scale={0.9}>
+        {/* Sair do treino é ambíguo: pausar para continuar depois, ou desistir?
+            Voltar direto já perdeu treino por engano. Agora pergunta. */}
+        <Press onPress={() => setSaindo(true)} style={s.iconeBtn} scale={0.9}>
           <Ionicons name="chevron-down" size={22} color={colors.textDim} />
         </Press>
         <View style={{ flex: 1 }}>
@@ -754,6 +757,60 @@ export default function Execucao() {
         ) : null}
       </Sheet>
 
+      {/* ── Sair: pausar ou cancelar ── */}
+      <Sheet aberto={saindo} onFechar={() => setSaindo(false)} titulo="Sair do treino" altura={0.62}>
+        <View style={{ gap: spacing.lg }}>
+          <View style={s.resumoFim}>
+            <ItemResumo label="Duração" valor={duracao(decorrido)} />
+            <ItemResumo label="Séries" valor={String(totalSeries)} />
+            <ItemResumo label="Volume" valor={volume(volumeAtual)} />
+          </View>
+
+          <Button
+            titulo="Pausar e continuar depois"
+            icone="pause-circle-outline"
+            variante="secundario"
+            full
+            tam="lg"
+            onPress={() => {
+              // O treino continua aberto: a home mostra "treino em andamento"
+              // e o cronômetro segue contando do horário de início.
+              setSaindo(false);
+              encerrarDescanso();
+              router.replace('/');
+            }}
+          />
+
+          <Button
+            titulo="Concluir agora"
+            icone="checkmark-circle-outline"
+            variante="sucesso"
+            full
+            onPress={() => {
+              setSaindo(false);
+              setConfirmandoFim(true);
+            }}
+          />
+
+          <View style={{ gap: spacing.sm }}>
+            <Txt v="small" cor={colors.textFaint}>
+              {totalSeries > 0
+                ? `Cancelar apaga as ${totalSeries} série${totalSeries > 1 ? 's' : ''} deste treino. ` +
+                  'Recordes que saíram daqui também somem. Não dá para desfazer.'
+                : 'Nenhuma série registrada — cancelar não perde nada.'}
+            </Txt>
+            <Button
+              titulo="Cancelar treino"
+              icone="trash-outline"
+              variante="perigo"
+              full
+              carregando={salvando}
+              onPress={abandonar}
+            />
+          </View>
+        </View>
+      </Sheet>
+
       {/* ── Finalizar ── */}
       <Sheet
         aberto={confirmandoFim}
@@ -781,13 +838,6 @@ export default function Execucao() {
               </Press>
             ))}
           </View>
-          <Button
-            titulo="Descartar treino"
-            variante="perigo"
-            full
-            onPress={abandonar}
-            carregando={salvando}
-          />
         </View>
       </Sheet>
 

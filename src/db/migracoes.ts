@@ -199,7 +199,21 @@ CREATE TABLE IF NOT EXISTS mobilidade_log (
  * Falha em ALTER TABLE de coluna já existente é ignorada de propósito — deixa
  * a migração ser reaplicada sem quebrar bancos parcialmente migrados.
  */
+/**
+ * v3 → v4: preferência de equipamento.
+ *
+ * O Position Stand do ACSM de 2026 lista tipo de equipamento entre o que NÃO
+ * precisa ser prescrito, e a meta-análise de Haugen (2023) não achou diferença
+ * de hipertrofia entre máquina e peso livre (SMD −0,055; IC 95% −0,40 a 0,29;
+ * p = 0,75). Ou seja: isto é preferência de verdade, não um lado certo e outro
+ * errado — e preferência é o que faz alguém continuar aparecendo.
+ */
+const V4 = `
+ALTER TABLE profile ADD COLUMN preferencia_equipamento TEXT NOT NULL DEFAULT 'ambos';
+`;
+
 export const MIGRACOES: { versao: number; sql: string }[] = [
   { versao: 2, sql: V2 },
   { versao: 3, sql: V3 },
+  { versao: 4, sql: V4 },
 ];

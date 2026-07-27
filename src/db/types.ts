@@ -30,6 +30,8 @@ export interface Profile {
   tmb_medido_kcal: number | null;
   usa_tmb_medido: number;
   meta_agua_ml: number | null;
+  /** 'livre' | 'maquina' | 'ambos' — inclina a seleção, não filtra. */
+  preferencia_equipamento: string | null;
   gordura_meta_pct: number | null;
   experiencia: Experiencia;
   dias_treino_semana: number;
