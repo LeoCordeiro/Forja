@@ -5,6 +5,7 @@
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",
     "@expo/vector-icons": "^15.0.2",
+    "@supabase/supabase-js": "^2.110.9",
     "babel-preset-expo": "~54.0.10",
     "expo": "~54.0.0",
     "expo-constants": "~18.0.13",

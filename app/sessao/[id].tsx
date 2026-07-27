@@ -59,6 +59,7 @@ import {
   type DescansoAtivo,
 } from '@/features/treino/descanso';
 import { avaliarConquistas } from '@/features/gamificacao/api';
+import { checkin } from '@/features/liga/api';
 import type { Exercise, RoutineExerciseFull } from '@/db/types';
 import {
   cronometro,
@@ -516,6 +517,13 @@ export default function Execucao() {
         return;
       }
       alarmeConclusao();
+      // Check-in da liga sai do treino concluído, não de um botão separado:
+      // pedir para a pessoa marcar presença depois de já ter treinado é o tipo
+      // de passo que ninguém faz duas semanas seguidas.
+      await checkin('treino', {
+        duracaoMin: Math.round(decorrido / 60),
+        volumeKg: volumeAtual,
+      });
       const novas = await avaliarConquistas();
       setConfirmandoFim(false);
       if (novas.length > 0) {

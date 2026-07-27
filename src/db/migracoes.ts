@@ -210,7 +210,22 @@ CREATE TABLE IF NOT EXISTS mobilidade_log (
  */
 const V4 = `
 ALTER TABLE profile ADD COLUMN preferencia_equipamento TEXT NOT NULL DEFAULT 'ambos';
+`;
 
+
+
+/**
+ * v4 → v5.
+ *
+ * ATENÇÃO — a lição que gerou esta migração: **nunca acrescentar comando a uma
+ * migração que já rodou.** Estes campos nasceram dentro do V4 depois que o V4
+ * já tinha sido aplicado; como `user_version` já estava em 4, o degrau não roda
+ * de novo e os comandos novos foram pulados em silêncio. O app só quebrou no
+ * "no such table: passos_log", bem longe da causa.
+ *
+ * Comando novo = versão nova. Sempre.
+ */
+const V5 = `
 -- Diagnóstico: o que incomoda, o que já fez parar, onde dói. Cada campo aqui
 -- muda algo na prescrição — não existe pergunta guardada só para constar.
 ALTER TABLE profile ADD COLUMN incomodo TEXT;
@@ -228,10 +243,26 @@ CREATE TABLE IF NOT EXISTS passos_log (
   passos    INTEGER NOT NULL,
   criado_em INTEGER NOT NULL
 );
+
+-- Check-in da liga. Grava aqui SEMPRE, sincroniza depois: sem sinal na
+-- academia é o normal, e falhar em enviar não pode apagar o registro.
+CREATE TABLE IF NOT EXISTS checkin_log (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  data          TEXT    NOT NULL,
+  tipo          TEXT    NOT NULL,
+  pontos        INTEGER NOT NULL DEFAULT 0,
+  duracao_min   INTEGER,
+  volume_kg     REAL,
+  sincronizado  INTEGER NOT NULL DEFAULT 0,
+  criado_em     INTEGER NOT NULL,
+  UNIQUE (data, tipo)
+);
+CREATE INDEX IF NOT EXISTS ix_checkin_data ON checkin_log (data DESC);
 `;
 
 export const MIGRACOES: { versao: number; sql: string }[] = [
   { versao: 2, sql: V2 },
   { versao: 3, sql: V3 },
   { versao: 4, sql: V4 },
+  { versao: 5, sql: V5 },
 ];

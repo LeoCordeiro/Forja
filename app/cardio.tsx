@@ -18,6 +18,7 @@ import { alarmeConclusao, alarmeFimDescanso, bipCurto, prepararAudio } from '@/s
 import { manterAudioVivo } from '@/shared/utils/alarme';
 import { buzz } from '@/shared/utils/haptics';
 import { registrarSessao } from '@/features/mobilidade/api';
+import { checkin as checkinLiga } from '@/features/liga/api';
 
 /**
  * Cardio com hora e lugar.
@@ -163,6 +164,7 @@ function Execucao({ p, onSair }: { p: ProtocoloCardio; onSair: () => void }) {
           buzz.ok();
           setFim(true);
           void registrarSessao(`cardio:${p.chave}`, total);
+      void checkinLiga('cardio', { duracaoMin: Math.round(total / 60) });
           return 0;
         }
         alarmeFimDescanso();

@@ -3,6 +3,8 @@ import { useRouter } from 'expo-router';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { colors, radius, shadow, spacing } from '@/theme';
+import { resumoPassos, registrarPassos } from '@/features/passos/api';
+import { resumoSolo } from '@/features/liga/api';
 import { Anel, Barra, Button, Card, Empty, Press, Screen, Txt } from '@/shared/ui';
 import { useDados } from '@/shared/hooks/useDados';
 import { resumo } from '@/features/perfil/api';
@@ -30,11 +32,13 @@ export default function Home() {
       prsRecentes(3),
       sessaoAberta(),
     ]);
-    const [semana, agua] = await Promise.all([
+    const [semana, agua, passos, liga] = await Promise.all([
       resumoSemana(r?.perfil.dias_treino_semana ?? 3),
       totalDoDia(),
+      resumoPassos(r?.perfil.passos_alvo ?? 8000, r?.pesoKg ?? 80),
+      resumoSolo(),
     ]);
-    return { r, dias, macros, stats, prs, aberta, semana, agua };
+    return { r, dias, macros, stats, prs, aberta, semana, agua, passos, liga };
   }, []);
 
   if (carregando || !dados?.r) {
@@ -45,7 +49,7 @@ export default function Home() {
     );
   }
 
-  const { r, dias, macros, stats, prs, aberta, semana, agua } = dados;
+  const { r, dias, macros, stats, prs, aberta, semana, agua, passos, liga } = dados;
   const nivel = progressoNivel(stats.xp_total);
   const primeiroNome = r.perfil.nome.split(' ')[0];
   const statusAgua = statusHidratacao(agua, r.metaAguaMl);
@@ -155,8 +159,67 @@ export default function Home() {
           <Txt v="small" cor={colors.textFaint} style={{ marginTop: spacing.sm }}>
             {semana.mensagem}
           </Txt>
+
+          {/* Sequência e pontos ficam colados na semana: é o mesmo assunto —
+              apareceu ou não apareceu. Separar em telas afasta o número da
+              decisão que ele deveria influenciar. */}
+          <Press onPress={() => router.push('/liga')} style={s.ligaLinha} haptic="leve">
+            <Ionicons name="flame" size={16} color={colors.primary} />
+            <Txt v="small" size={12} style={{ flex: 1 }}>
+              {liga.sequencia > 0
+                ? `${liga.sequencia} dia${liga.sequencia > 1 ? 's seguidos' : ' seguido'} · ${liga.pontosSemana} pts`
+                : 'Nenhum check-in ainda'}
+            </Txt>
+            <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
+          </Press>
         </Card>
       </Animated.View>
+
+      {/* ── Passos ── */}
+      {/* Sempre visível, com alvo padrão: esconder até a pessoa fazer o
+          diagnóstico enterra a métrica que mais move gasto diário. */}
+      {true ? (
+        <Animated.View entering={FadeInDown.delay(45).duration(300)}>
+          <Card faixa={passos.hoje >= passos.alvo ? colors.success : colors.info}>
+            <View style={s.entre}>
+              <Txt v="label">Passos de hoje</Txt>
+              <Txt
+                v="small"
+                cor={passos.hoje >= passos.alvo ? colors.success : colors.textDim}
+                bold
+              >
+                {passos.hoje.toLocaleString('pt-BR')} / {passos.alvo.toLocaleString('pt-BR')}
+              </Txt>
+            </View>
+            <Barra
+              valor={passos.alvo ? passos.hoje / passos.alvo : 0}
+              cor={passos.hoje >= passos.alvo ? colors.success : colors.info}
+            />
+            <Txt v="small" size={11} cor={colors.textFaint} style={{ marginTop: spacing.sm }}>
+              {passos.mensagem}
+            </Txt>
+
+            <View style={s.passosBotoes}>
+              {[2000, 5000, 8000, 12000].map((v) => (
+                <Press
+                  key={v}
+                  onPress={async () => {
+                    await registrarPassos(v);
+                    buzz.ok();
+                    recarregar();
+                  }}
+                  style={s.passoBtn}
+                  scale={0.94}
+                >
+                  <Txt v="small" size={12} cor={colors.textDim} bold>
+                    {v / 1000}k
+                  </Txt>
+                </Press>
+              ))}
+            </View>
+          </Card>
+        </Animated.View>
+      ) : null}
 
       {/* ── Fase do plano ── */}
       {fase && fase.fase !== 'acumulo' ? (
@@ -484,6 +547,23 @@ const s = StyleSheet.create({
     borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  ligaLinha: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  passosBotoes: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md },
+  passoBtn: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceHigh,
   },
   diaFeito: {
     backgroundColor: colors.success,
