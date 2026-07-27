@@ -14,9 +14,12 @@ import { abrir, urlShorts, urlVideo } from '@/features/treino/video';
 interface Props {
   nome: string;
   mediaUrl: string | null;
-  altura?: number;
-  /** Fora da página atual: para de animar os frames e não carrega o player. */
+  /** Largura da capa em pé. A altura sai daqui, na proporção 3:4. */
+  largura?: number;
+  /** Fora da página atual: para de animar os frames. */
   parado?: boolean;
+  /** false não baixa imagem nenhuma — páginas distantes do pager. */
+  montar?: boolean;
 }
 
 /**
@@ -28,13 +31,14 @@ interface Props {
  * a miniatura (que carrega sozinha, sem player) e o toque abre o player em
  * tamanho de verdade. De quebra, nada de rede acontece até você querer.
  */
-export function MidiaExercicio({ nome, mediaUrl, altura = 168, parado }: Props) {
+export function MidiaExercicio({ nome, mediaUrl, largura = 116, parado, montar = true }: Props) {
   const [assistindo, setAssistindo] = useState(false);
   const [modo, setModo] = useState<'video' | 'demo'>('video');
   const [thumbQuebrou, setThumbQuebrou] = useState(false);
 
   const video = VIDEOS[nome];
   const temVideo = !!video && !thumbQuebrou;
+  const altura = Math.round(largura * 1.34);
 
   // Trocar de exercício (troca de aparelho, ou o pager andando) precisa voltar
   // ao estado padrão — senão o próximo exercício herda "modo demo" sem motivo.
@@ -43,73 +47,67 @@ export function MidiaExercicio({ nome, mediaUrl, altura = 168, parado }: Props) 
     setThumbQuebrou(false);
   }, [nome]);
 
+  const caixa = { width: largura, height: altura };
+
   if (!temVideo || modo === 'demo') {
     return (
-      <View style={{ gap: spacing.sm }}>
-        <ExerciseDemo mediaUrl={mediaUrl} altura={altura} parado={parado} />
-        <View style={s.linhaAcao}>
-          {temVideo ? (
-            <Press onPress={() => setModo('video')} style={s.acao} scale={0.96}>
-              <Ionicons name="play-circle-outline" size={15} color={colors.textDim} />
-              <Txt v="small" cor={colors.textDim}>
-                Ver vídeo
-              </Txt>
-            </Press>
-          ) : (
-            <Press onPress={() => abrir(urlShorts(nome))} style={s.acao} scale={0.96}>
-              <Ionicons name="logo-youtube" size={15} color="#FF0033" />
-              <Txt v="small" cor={colors.textDim}>
-                Buscar no YouTube
-              </Txt>
-            </Press>
-          )}
-        </View>
+      <View style={{ width: largura, gap: 6 }}>
+        <ExerciseDemo mediaUrl={mediaUrl} altura={altura} parado={parado || !montar} />
+        {temVideo ? (
+          <Press onPress={() => setModo('video')} style={s.acao} scale={0.96}>
+            <Ionicons name="play-circle-outline" size={14} color={colors.textDim} />
+            <Txt v="small" size={11} cor={colors.textDim}>
+              Vídeo
+            </Txt>
+          </Press>
+        ) : (
+          <Press onPress={() => abrir(urlShorts(nome))} style={s.acao} scale={0.96}>
+            <Ionicons name="logo-youtube" size={14} color="#FF0033" />
+            <Txt v="small" size={11} cor={colors.textDim}>
+              Buscar
+            </Txt>
+          </Press>
+        )}
       </View>
     );
   }
 
   return (
-    <View style={{ gap: spacing.sm }}>
+    <View style={{ width: largura, gap: 6 }}>
       <Press
         onPress={() => setAssistindo(true)}
-        scale={0.985}
+        scale={0.97}
         haptic="medio"
-        style={[s.capa, { height: altura }]}
+        style={[s.capa, caixa]}
       >
-        <Image
-          source={{ uri: thumb(video.id) }}
-          style={StyleSheet.absoluteFill}
-          contentFit="cover"
-          transition={180}
-          onError={() => setThumbQuebrou(true)}
-        />
+        {montar ? (
+          <Image
+            source={{ uri: thumb(video.id) }}
+            style={StyleSheet.absoluteFill}
+            contentFit="cover"
+            transition={180}
+            onError={() => setThumbQuebrou(true)}
+          />
+        ) : null}
         <View style={s.veu} />
         <View style={s.play}>
-          <Ionicons name="play" size={26} color="#FFFFFF" style={{ marginLeft: 3 }} />
+          <Ionicons name="play" size={20} color="#FFFFFF" style={{ marginLeft: 2 }} />
         </View>
         <View style={s.selo}>
-          <Ionicons name="logo-youtube" size={12} color="#FF0033" />
+          <Ionicons name="logo-youtube" size={10} color="#FF0033" />
           {/* A duração na capa é o que decide se dá tempo antes da próxima série. */}
-          <Txt v="small" size={10} cor="#FFFFFF" bold>
+          <Txt v="small" size={9} cor="#FFFFFF" bold>
             {duracaoCurta(video.seg)}
           </Txt>
         </View>
       </Press>
 
-      <View style={s.linhaAcao}>
-        <Press onPress={() => setModo('demo')} style={s.acao} scale={0.96}>
-          <Ionicons name="images-outline" size={15} color={colors.textDim} />
-          <Txt v="small" cor={colors.textDim}>
-            Demonstração
-          </Txt>
-        </Press>
-        <Press onPress={() => abrir(urlShorts(nome))} style={s.acao} scale={0.96}>
-          <Ionicons name="search" size={15} color={colors.textDim} />
-          <Txt v="small" cor={colors.textDim}>
-            Outros vídeos
-          </Txt>
-        </Press>
-      </View>
+      <Press onPress={() => setModo('demo')} style={s.acao} scale={0.96}>
+        <Ionicons name="images-outline" size={14} color={colors.textDim} />
+        <Txt v="small" size={11} cor={colors.textDim}>
+          Fotos
+        </Txt>
+      </Press>
 
       <PlayerSheet
         aberto={assistindo}
@@ -118,6 +116,51 @@ export function MidiaExercicio({ nome, mediaUrl, altura = 168, parado }: Props) 
         nome={nome}
       />
     </View>
+  );
+}
+
+/**
+ * Versão compacta, para telas que já têm um elemento principal (o anel do
+ * timer de mobilidade, por exemplo) e não têm espaço para uma capa inteira.
+ * Some sozinha quando não há vídeo do movimento — nada de botão morto.
+ */
+export function VideoDoMovimento({ nome }: { nome: string }) {
+  const [aberto, setAberto] = useState(false);
+  const video = VIDEOS[nome];
+  if (!video) return null;
+
+  return (
+    <>
+      <Press onPress={() => setAberto(true)} style={s.mini} scale={0.97} haptic="medio">
+        <View style={s.miniCapa}>
+          <Image
+            source={{ uri: thumb(video.id) }}
+            style={StyleSheet.absoluteFill}
+            contentFit="cover"
+            transition={160}
+          />
+          <View style={s.miniPlay}>
+            <Ionicons name="play" size={13} color="#FFFFFF" style={{ marginLeft: 2 }} />
+          </View>
+        </View>
+        <View style={{ flex: 1 }}>
+          <Txt v="h3" size={14}>
+            Ver como faz
+          </Txt>
+          <Txt v="small" size={11} cor={colors.textFaint}>
+            Short de {duracaoCurta(video.seg)}
+          </Txt>
+        </View>
+        <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
+      </Press>
+
+      <PlayerSheet
+        aberto={aberto}
+        onFechar={() => setAberto(false)}
+        videoId={video.id}
+        nome={nome}
+      />
+    </>
   );
 }
 
@@ -209,7 +252,6 @@ function Embutido({ videoId }: { videoId: string }) {
 
 const s = StyleSheet.create({
   capa: {
-    width: '100%',
     borderRadius: radius.lg,
     overflow: 'hidden',
     backgroundColor: '#000000',
@@ -218,9 +260,9 @@ const s = StyleSheet.create({
   },
   veu: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.28)' },
   play: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: 'rgba(255,0,51,0.92)',
     alignItems: 'center',
     justifyContent: 'center',
@@ -237,14 +279,40 @@ const s = StyleSheet.create({
     borderRadius: radius.full,
     backgroundColor: 'rgba(10,11,15,0.82)',
   },
-  linhaAcao: { flexDirection: 'row', gap: spacing.sm },
+  mini: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    padding: spacing.sm,
+    paddingRight: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  miniCapa: {
+    width: 44,
+    height: 58,
+    borderRadius: radius.md,
+    overflow: 'hidden',
+    backgroundColor: '#000000',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  miniPlay: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: 'rgba(255,0,51,0.92)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   acao: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 5,
-    paddingVertical: spacing.sm,
+    gap: 4,
+    paddingVertical: 6,
     borderRadius: radius.md,
     backgroundColor: colors.surfaceAlt,
   },

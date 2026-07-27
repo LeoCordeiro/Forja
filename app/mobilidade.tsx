@@ -5,9 +5,11 @@ import { useKeepAwake } from 'expo-keep-awake';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { colors, radius, spacing } from '@/theme';
-import { Anel, Button, Card, Press, Tela, Txt } from '@/shared/ui';
+import { Anel, Button, Card, Press, Tela, Txt, VideoDoMovimento } from '@/shared/ui';
 import { ROTINAS, duracaoTotal, PRINCIPIOS, type RotinaMobilidade } from '@/features/mobilidade/rotinas';
-import { registrarSessao } from '@/features/mobilidade/api';
+import { historicoMobilidade, registrarSessao } from '@/features/mobilidade/api';
+import { useDados } from '@/shared/hooks/useDados';
+import { VIDEOS } from '@/db/seed/videos';
 import { duracao } from '@/shared/utils/format';
 import { alarmeConclusao, bipCurto, prepararAudio } from '@/shared/utils/alarme';
 import { buzz } from '@/shared/utils/haptics';
@@ -19,14 +21,81 @@ import { buzz } from '@/shared/utils/haptics';
  * segundos que a pessoa jura terem sido 30 — e abaixo de ~30 s por posição o
  * ganho de amplitude é pequeno.
  */
+function Selo({
+  icone,
+  texto,
+  cor = colors.textDim,
+}: {
+  icone: keyof typeof Ionicons.glyphMap;
+  texto: string;
+  cor?: string;
+}) {
+  return (
+    <View style={s.selo}>
+      <Ionicons name={icone} size={11} color={cor} />
+      <Txt v="small" size={10} cor={cor} bold>
+        {texto}
+      </Txt>
+    </View>
+  );
+}
+
 export default function Mobilidade() {
   const router = useRouter();
   const [ativa, setAtiva] = useState<RotinaMobilidade | null>(null);
+  const { dados: hist, recarregar } = useDados(historicoMobilidade, []);
 
-  if (ativa) return <Execucao rotina={ativa} onSair={() => setAtiva(null)} />;
+  if (ativa)
+    return (
+      <Execucao
+        rotina={ativa}
+        onSair={() => {
+          setAtiva(null);
+          recarregar();
+        }}
+      />
+    );
+
+  const feitas = hist?.porRotina ?? {};
 
   return (
-    <Tela titulo="Mobilidade" subtitulo="Flexibilidade, amplitude e movimento livre">
+    <Tela
+      titulo="Mobilidade"
+      subtitulo="Flexibilidade, amplitude e movimento livre"
+      onRefresh={recarregar}
+    >
+      {/* ── Frequência da semana ── */}
+      <Card faixa={colors.success}>
+        <View style={s.linha}>
+          <View style={{ flex: 1, gap: 2 }}>
+            <Txt v="label">Esta semana</Txt>
+            <Txt v="h1" size={30} cor={colors.success}>
+              {hist?.diasNaSemana ?? 0}
+              <Txt v="h3" cor={colors.textFaint}>
+                {' '}
+                de 7 dias
+              </Txt>
+            </Txt>
+          </View>
+          <Anel
+            valor={(hist?.diasNaSemana ?? 0) / 7}
+            tamanho={62}
+            espessura={7}
+            cor={colors.success}
+            centro=""
+          />
+        </View>
+        <Txt v="small" cor={colors.textFaint} style={{ marginTop: spacing.sm }}>
+          {hist?.ultima
+            ? hist.ultima.diasAtras === 0
+              ? 'Você já se moveu hoje. Mais uma rodada curta não atrapalha.'
+              : hist.ultima.diasAtras === 1
+                ? 'Última sessão foi ontem. Cinco minutos hoje mantêm o ganho.'
+                : `Faz ${hist.ultima.diasAtras} dias. Amplitude perdida volta rápido — mas só se voltar.`
+            : 'Nenhuma sessão ainda. Comece pelo aquecimento antes do próximo treino.'}
+        </Txt>
+      </Card>
+
       <Card>
         <Txt v="label">Por que isso importa</Txt>
         <Txt v="small">
@@ -34,30 +103,62 @@ export default function Mobilidade() {
           o dobro do peso. E ombro ou quadril travados são onde mais aparece lesão em quem treina
           há anos.
         </Txt>
+        <Txt v="small" cor={colors.textFaint} style={{ marginTop: spacing.sm }}>
+          Frequência ganha de duração: 5 minutos todo dia rendem mais que 40 minutos uma vez
+          por semana.
+        </Txt>
       </Card>
 
-      {ROTINAS.map((r, i) => (
-        <Animated.View key={r.chave} entering={FadeInDown.delay(i * 45).duration(280)}>
-          <Card onPress={() => setAtiva(r)} faixa={r.tipo === 'dinamico' ? colors.warn : r.tipo === 'estatico' ? colors.info : colors.success}>
-            <View style={s.linha}>
-              <Txt size={26}>{r.emoji}</Txt>
-              <View style={{ flex: 1, gap: 2 }}>
-                <Txt v="h3">{r.nome}</Txt>
-                <Txt v="small" cor={colors.textFaint}>
-                  {r.quando}
-                </Txt>
-                <Txt v="small" size={11} cor={colors.textDim}>
-                  {r.movimentos.length} movimentos · {Math.round(duracaoTotal(r) / 60)} min
-                </Txt>
+      {ROTINAS.map((r, i) => {
+        const comVideo = r.movimentos.filter((m) => VIDEOS[m.nome]).length;
+        const vezes = feitas[r.chave] ?? 0;
+        return (
+          <Animated.View key={r.chave} entering={FadeInDown.delay(i * 45).duration(280)}>
+            <Card
+              onPress={() => setAtiva(r)}
+              faixa={
+                r.tipo === 'dinamico'
+                  ? colors.warn
+                  : r.tipo === 'estatico'
+                    ? colors.info
+                    : colors.success
+              }
+            >
+              <View style={s.linha}>
+                <Txt size={26}>{r.emoji}</Txt>
+                <View style={{ flex: 1, gap: 3 }}>
+                  <Txt v="h3">{r.nome}</Txt>
+                  <Txt v="small" cor={colors.textFaint}>
+                    {r.quando}
+                  </Txt>
+                  <View style={s.selos}>
+                    <Selo icone="list-outline" texto={`${r.movimentos.length} movimentos`} />
+                    <Selo icone="time-outline" texto={`${Math.round(duracaoTotal(r) / 60)} min`} />
+                    {comVideo > 0 ? (
+                      <Selo icone="logo-youtube" texto={`${comVideo} com vídeo`} cor="#FF0033" />
+                    ) : null}
+                    {vezes > 0 ? (
+                      <Selo icone="checkmark-circle" texto={`${vezes}×`} cor={colors.success} />
+                    ) : null}
+                  </View>
+                </View>
+                <Ionicons name="play-circle" size={30} color={colors.primary} />
               </View>
-              <Ionicons name="play-circle" size={30} color={colors.primary} />
-            </View>
-            <Txt v="small" style={{ marginTop: spacing.sm }}>
-              {r.descricao}
-            </Txt>
-          </Card>
-        </Animated.View>
-      ))}
+              <Txt v="small" style={{ marginTop: spacing.sm }}>
+                {r.descricao}
+              </Txt>
+              {/* Saber o que vem antes de começar evita abrir só para desistir. */}
+              <Txt v="small" size={11} cor={colors.textFaint} style={{ marginTop: 4 }}>
+                {r.movimentos
+                  .slice(0, 3)
+                  .map((m) => m.nome)
+                  .join(' · ')}
+                {r.movimentos.length > 3 ? ` · +${r.movimentos.length - 3}` : ''}
+              </Txt>
+            </Card>
+          </Animated.View>
+        );
+      })}
 
       <View style={{ gap: spacing.md }}>
         <Txt v="label">Princípios</Txt>
@@ -188,6 +289,10 @@ function Execucao({ rotina, onSair }: { rotina: RotinaMobilidade; onSair: () => 
           ) : null}
         </Card>
 
+        {/* Descrição em texto não resolve mobilidade: a diferença entre fazer
+            certo e errado está no ângulo, e ângulo se vê, não se lê. */}
+        <VideoDoMovimento nome={mov.nome} />
+
         <View style={s.controles}>
           <Press
             onPress={() => {
@@ -231,6 +336,16 @@ function Execucao({ rotina, onSair }: { rotina: RotinaMobilidade; onSair: () => 
 
 const s = StyleSheet.create({
   linha: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  selos: { flexDirection: 'row', gap: 5, flexWrap: 'wrap', marginTop: 2 },
+  selo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: radius.full,
+    backgroundColor: colors.surfaceHigh,
+  },
   exec: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.xl, paddingBottom: spacing['4xl'] },
   ladoTag: {
     paddingHorizontal: spacing.md,

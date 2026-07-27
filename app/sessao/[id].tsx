@@ -49,6 +49,15 @@ import {
   type SerieAnterior,
 } from '@/features/treino/api';
 import { descansoCorreto, MOTIVOS_TROCA, porqueDescanso } from '@/features/treino/classificacao';
+import {
+  avisarFimDoDescanso,
+  lerDescanso,
+  manterAcordado,
+  pedirPermissaoAviso,
+  restantes,
+  salvarDescanso,
+  type DescansoAtivo,
+} from '@/features/treino/descanso';
 import { avaliarConquistas } from '@/features/gamificacao/api';
 import type { Exercise, RoutineExerciseFull } from '@/db/types';
 import {
@@ -98,7 +107,12 @@ export default function Execucao() {
   const [atual, setAtual] = useState(0);
   const [foco, setFoco] = useState<Foco>(null);
   const [buffer, setBuffer] = useState('');
-  const [descanso, setDescanso] = useState<number | null>(null);
+  /**
+   * Descanso guardado como INSTANTE DE TÉRMINO, não como segundos restantes.
+   * O que aparece na tela é sempre uma subtração contra o relógio — por isso
+   * continua certo depois de o navegador congelar a aba.
+   */
+  const [descansoAtivo, setDescansoAtivo] = useState<DescansoAtivo | null>(null);
   const [agora, setAgora] = useState(Date.now());
   const [comemorar, setComemorar] = useState<Comemoracao | null>(null);
   const [confirmandoFim, setConfirmandoFim] = useState(false);
@@ -107,13 +121,8 @@ export default function Execucao() {
   const [substitutos, setSubstitutos] = useState<Exercise[]>([]);
   const [motivoTroca, setMotivoTroca] = useState('ocupado');
   const [detalhe, setDetalhe] = useState<RoutineExerciseFull | null>(null);
-  /** Exercício cuja série acabou de ser concluída — alimenta o aviso do descanso. */
-  const [ultimaAcao, setUltimaAcao] = useState<{
-    nome: string;
-    feitas: number;
-    total: number;
-    proximo?: string;
-  } | null>(null);
+  /** Já alarmou este descanso? Sem isso o alarme repete a cada segundo. */
+  const alarmado = useRef<number | null>(null);
 
   const pager = useRef<ScrollView>(null);
   const trilha = useRef<ScrollView>(null);
@@ -134,6 +143,10 @@ export default function Execucao() {
       // Navegador só libera áudio após gesto; o toque em "iniciar treino" já
       // aconteceu, então é aqui que o alarme do descanso fica destravado.
       prepararAudio();
+      // Mesmo raciocínio para a notificação: pedir agora, com o gesto ainda
+      // fresco. Pedir quando o descanso acaba seria tarde — o pop-up não
+      // aparece com a aba escondida, que é justo quando ela faria falta.
+      void pedirPermissaoAviso();
       const sessao = await getSessao(sessionId);
       if (!sessao) return router.back();
       setNome(sessao.nome);
@@ -188,37 +201,74 @@ export default function Execucao() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, router]);
 
-  // ── relógio: cronômetro do treino e contagem do descanso ────────────────
+  /**
+   * Relógio único da tela: cronômetro do treino e descanso saem daqui.
+   *
+   * Também reage a voltar para o app. O navegador congela o `setInterval` com a
+   * aba escondida; `visibilitychange` força uma leitura na hora em que a tela
+   * reaparece, para o número não ficar um instante desatualizado.
+   */
   useEffect(() => {
-    const t = setInterval(() => setAgora(Date.now()), 1000);
-    return () => clearInterval(t);
+    const tique = () => setAgora(Date.now());
+    const t = setInterval(tique, 1000);
+    const doc = (globalThis as unknown as { document?: Document }).document;
+    doc?.addEventListener('visibilitychange', tique);
+    return () => {
+      clearInterval(t);
+      doc?.removeEventListener('visibilitychange', tique);
+    };
+  }, []);
+
+  const descanso = descansoAtivo ? restantes(descansoAtivo.fim) : null;
+
+  /** Retoma um descanso que estava correndo quando o app foi fechado. */
+  useEffect(() => {
+    const guardado = lerDescanso();
+    if (guardado) {
+      setDescansoAtivo(guardado);
+      if (restantes(guardado.fim) > 0) manterAcordado(true);
+      else alarmado.current = guardado.fim; // já venceu: não alarmar atrasado
+    }
   }, []);
 
   /**
-   * Contagem do descanso.
+   * Alarme.
    *
-   * Passa de zero para negativo em vez de sumir: saber que você está 40 s além
-   * do intervalo é informação útil — descanso esticado demais esfria a série e
-   * alonga o treino sem ganho nenhum.
+   * Dispara por travessia do zero, não por igualdade com zero: se a aba ficou
+   * congelada e o contador pulou de 12 para -3, `=== 0` nunca aconteceria e o
+   * aviso simplesmente não sairia.
    */
   useEffect(() => {
-    if (descanso === null) return;
-
-    if (descanso === 0) {
-      alarmeFimDescanso();
-    } else if (descanso === -60 || descanso === -180) {
-      // Reforço em 1 e 3 minutos de atraso — depois disso, silêncio.
-      alarmeAtraso();
-    } else if (descanso > 0 && descanso <= 3) {
-      bipCurto();
+    if (!descansoAtivo || descanso === null) return;
+    if (descanso > 0) {
+      if (descanso <= 3) bipCurto();
+      return;
     }
+    if (alarmado.current === descansoAtivo.fim) return;
+    alarmado.current = descansoAtivo.fim;
+    alarmeFimDescanso();
+    avisarFimDoDescanso(descansoAtivo.proximo);
+    manterAcordado(false); // acabou: devolve a bateria
+  }, [descanso, descansoAtivo]);
 
-    // Para de contar em 5 minutos de atraso; a essa altura já virou intervalo.
-    if (descanso <= -300) return;
-
-    const t = setTimeout(() => setDescanso((d) => (d === null ? null : d - 1)), 1000);
-    return () => clearTimeout(t);
+  /** Reforço em 1 e 3 minutos de atraso — depois disso, silêncio. */
+  useEffect(() => {
+    if (descanso === -60 || descanso === -180) alarmeAtraso();
   }, [descanso]);
+
+  const encerrarDescanso = useCallback(() => {
+    setDescansoAtivo(null);
+    salvarDescanso(null);
+    manterAcordado(false);
+  }, []);
+
+  /** Some sozinho depois de 5 min de atraso: a essa altura virou intervalo. */
+  useEffect(() => {
+    if (descanso !== null && descanso <= -300) encerrarDescanso();
+  }, [descanso, encerrarDescanso]);
+
+  // Sair da tela não pode deixar o silêncio tocando para sempre.
+  useEffect(() => () => manterAcordado(false), []);
 
   const totalSeries = useMemo(
     () => Object.values(series).reduce((a, arr) => a + arr.filter((x) => x.concluida).length, 0),
@@ -409,15 +459,20 @@ export default function Execucao() {
     const iAtual = exercicios.findIndex((e) => e.id === ex.id);
     const iProximo = proximoPendente(iAtual, projetado);
 
-    setUltimaAcao({
-      nome: ex.nome,
-      feitas: feitasAgora,
-      total: arrNova.length,
-      // Saber o que vem depois vale mais durante três minutos de descanso do
-      // que depois deles, quando já dá para ver na tela.
-      proximo: iProximo >= 0 && iProximo !== iAtual ? exercicios[iProximo].nome : undefined,
-    });
-    setDescanso(ex.descanso_seg);
+    if (ex.descanso_seg > 0) {
+      const novo: DescansoAtivo = {
+        fim: Date.now() + ex.descanso_seg * 1000,
+        exercicio: ex.nome,
+        serieFeita: feitasAgora,
+        serieTotal: arrNova.length,
+        // Saber o que vem depois vale mais durante três minutos de descanso do
+        // que depois deles, quando já dá para ver na tela.
+        proximo: iProximo >= 0 && iProximo !== iAtual ? exercicios[iProximo].nome : undefined,
+      };
+      setDescansoAtivo(novo);
+      salvarDescanso(novo);
+      manterAcordado(true);
+    }
 
     if (prs.length > 0) mostrarPR(ex.nome, prs[0]);
 
@@ -452,6 +507,7 @@ export default function Execucao() {
 
   async function encerrar(sensacao: number) {
     setSalvando(true);
+    encerrarDescanso(); // treino fechado não deixa silêncio tocando no bolso
     try {
       const r = await finalizarSessao(sessionId, sensacao);
       if (!r.valida) {
@@ -508,6 +564,7 @@ export default function Execucao() {
   }
 
   async function abandonar() {
+    encerrarDescanso();
     await cancelarSessao(sessionId);
     router.replace('/');
   }
@@ -567,6 +624,7 @@ export default function Execucao() {
             largura={width}
             ex={ex}
             ativo={i === atual}
+            perto={Math.abs(i - atual) <= 1}
             posicao={i}
             total={exercicios.length}
             series={series[ex.id] ?? []}
@@ -605,12 +663,12 @@ export default function Execucao() {
       </ScrollView>
 
       {/* ── Descanso: flutua sobre a página para não empurrar o conteúdo ── */}
-      {descanso !== null && !foco ? (
+      {descansoAtivo && descanso !== null && !foco ? (
         <BarraDescanso
           segundos={descanso}
-          acao={ultimaAcao}
+          acao={descansoAtivo}
           bottom={Math.max(insets.bottom, spacing.md)}
-          onPular={() => setDescanso(null)}
+          onPular={encerrarDescanso}
         />
       ) : null}
 
@@ -625,7 +683,18 @@ export default function Execucao() {
             onConfirmar={confirmarCampo}
             decimal={foco.campo === 'peso'}
             incrementos={foco.campo === 'peso' ? [2.5, 5, 10] : [1, 2, 5]}
-            rotulo={foco.campo === 'peso' ? 'Peso em kg' : 'Repetições'}
+            rotulo={
+              (foco.campo === 'peso' ? 'Peso · série ' : 'Repetições · série ') + (foco.serie + 1)
+            }
+            unidade={foco.campo === 'peso' ? 'kg' : 'reps'}
+            contexto={(() => {
+              const s0 = series[foco.exId]?.[foco.serie];
+              const outro = foco.campo === 'peso' ? s0?.reps : s0?.peso;
+              return {
+                rotulo: foco.campo === 'peso' ? 'reps' : 'kg',
+                valor: outro || '—',
+              };
+            })()}
           />
         </View>
       ) : null}
@@ -879,6 +948,7 @@ function PaginaExercicio({
   largura,
   ex,
   ativo,
+  perto,
   posicao,
   total,
   series,
@@ -897,6 +967,8 @@ function PaginaExercicio({
   largura: number;
   ex: RoutineExerciseFull;
   ativo: boolean;
+  /** Página visível ou vizinha — só essas carregam mídia. */
+  perto: boolean;
   posicao: number;
   total: number;
   series: Serie[];
@@ -946,47 +1018,67 @@ function PaginaExercicio({
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={[s.pagina, { paddingBottom }]}
       >
-        {/* Mídia — sai de cena quando o teclado abre, para a tabela não sumir. */}
+        {/* Cabeçalho: vídeo em pé à esquerda, identificação à direita.
+            O Short é 9:16 — numa faixa larga ele apareceria do tamanho de um
+            selo, com tarja preta ocupando o resto. Em pé, ao lado do texto,
+            usa o mesmo espaço e mostra o quadro inteiro. Some quando o teclado
+            abre, para a tabela de séries não sair da tela. */}
         {!compacto ? (
-          <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(120)}>
-            <MidiaExercicio nome={ex.nome} mediaUrl={ex.media_url} altura={162} parado={!ativo} />
-          </Animated.View>
-        ) : null}
+          <Animated.View
+            entering={FadeIn.duration(180)}
+            exiting={FadeOut.duration(120)}
+            style={s.cabecalho}
+          >
+            <MidiaExercicio
+              nome={ex.nome}
+              mediaUrl={ex.media_url}
+              largura={116}
+              parado={!perto}
+              // Oito páginas carregando miniatura ao mesmo tempo travava a
+              // tela; só a página visível e as vizinhas montam a imagem.
+              montar={perto}
+            />
 
-        {/* Identificação */}
-        <View style={s.tituloLinha}>
-          <View style={{ flex: 1, gap: 4 }}>
-            <Txt v="h2" numberOfLines={2} size={20}>
-              {ex.nome}
-            </Txt>
-            <View style={s.metaLinha}>
+            <View style={{ flex: 1, gap: 6 }}>
+              <View style={{ flexDirection: 'row', gap: spacing.xs }}>
+                <Txt v="h2" numberOfLines={3} size={19} style={{ flex: 1 }}>
+                  {ex.nome}
+                </Txt>
+                <Press onPress={onDetalhe} style={s.iconeMini} scale={0.9}>
+                  <Ionicons name="information-circle-outline" size={19} color={colors.textDim} />
+                </Press>
+              </View>
+
               <Txt v="small" cor={colors.textFaint} size={11}>
                 {posicao + 1} de {total} · {nomeGrupo(ex.grupo_primario)}
               </Txt>
-              <View style={s.tag}>
-                <Ionicons name="repeat" size={10} color={colors.textDim} />
-                <Txt v="small" size={10} cor={colors.textDim} bold>
-                  {ex.series_alvo} × {ex.reps_min}-{ex.reps_max}
-                </Txt>
-              </View>
-              {ex.descanso_seg > 0 ? (
-                <View style={[s.tag, { backgroundColor: colors.infoSoft }]}>
-                  <Ionicons name="timer-outline" size={10} color={colors.info} />
-                  <Txt v="small" size={10} cor={colors.info} bold>
-                    {descansoLegivel(ex.descanso_seg)}
+
+              <View style={s.metaLinha}>
+                <View style={s.tag}>
+                  <Ionicons name="repeat" size={10} color={colors.textDim} />
+                  <Txt v="small" size={10} cor={colors.textDim} bold>
+                    {ex.series_alvo} × {ex.reps_min}-{ex.reps_max}
                   </Txt>
                 </View>
-              ) : null}
-            </View>
-          </View>
+                {ex.descanso_seg > 0 ? (
+                  <View style={[s.tag, { backgroundColor: colors.infoSoft }]}>
+                    <Ionicons name="timer-outline" size={10} color={colors.info} />
+                    <Txt v="small" size={10} cor={colors.info} bold>
+                      {descansoLegivel(ex.descanso_seg)}
+                    </Txt>
+                  </View>
+                ) : null}
+              </View>
 
-          <Press onPress={onTrocar} style={s.iconeMini} scale={0.9}>
-            <Ionicons name="swap-horizontal" size={18} color={colors.info} />
-          </Press>
-          <Press onPress={onDetalhe} style={s.iconeMini} scale={0.9}>
-            <Ionicons name="information-circle-outline" size={19} color={colors.textDim} />
-          </Press>
-        </View>
+              <Press onPress={onTrocar} style={s.trocar} scale={0.95}>
+                <Ionicons name="swap-horizontal" size={15} color={colors.info} />
+                <Txt v="small" size={12} cor={colors.info} bold>
+                  Trocar
+                </Txt>
+              </Press>
+            </View>
+          </Animated.View>
+        ) : null}
 
         {/* Séries */}
         <View
@@ -1172,7 +1264,7 @@ function BarraDescanso({
   onPular,
 }: {
   segundos: number;
-  acao: { nome: string; feitas: number; total: number; proximo?: string } | null;
+  acao: DescansoAtivo;
   bottom: number;
   onPular: () => void;
 }) {
@@ -1188,14 +1280,12 @@ function BarraDescanso({
   const st = useAnimatedStyle(() => ({ transform: [{ scale: pulso.value }] }));
 
   // O que fazer quando o descanso acabar — evita o "e agora?" olhando a tela.
-  const fechou = !!acao && acao.feitas >= acao.total;
-  const proximo = !acao
-    ? 'Pode seguir'
-    : fechou
-      ? acao.proximo
-        ? `Agora: ${acao.proximo}`
-        : 'Exercício concluído'
-      : `Próxima série: ${acao.feitas + 1} de ${acao.total}`;
+  const fechou = acao.serieFeita >= acao.serieTotal;
+  const proximo = fechou
+    ? acao.proximo
+      ? `Agora: ${acao.proximo}`
+      : 'Exercício concluído'
+    : `Próxima série: ${acao.serieFeita + 1} de ${acao.serieTotal}`;
 
   const cor = acabou ? colors.success : colors.primary;
 
@@ -1223,11 +1313,11 @@ function BarraDescanso({
           <Txt v="small" size={11} cor={colors.textFaint}>
             {Math.abs(Math.round(segundos / 60))} min além do intervalo
           </Txt>
-        ) : !acabou && acao ? (
+        ) : !acabou ? (
           <Txt v="small" size={11} cor={colors.textFaint} numberOfLines={1}>
             {fechou && acao.proximo
-              ? `Fechou ${acao.nome}. Depois: ${acao.proximo}`
-              : `${acao.nome} · ${acao.feitas}/${acao.total}`}
+              ? `Fechou ${acao.exercicio}. Depois: ${acao.proximo}`
+              : `${acao.exercicio} · ${acao.serieFeita}/${acao.serieTotal}`}
           </Txt>
         ) : null}
       </View>
@@ -1311,8 +1401,19 @@ const s = StyleSheet.create({
   // flexGrow em vez de flex: a página ocupa a tela inteira quando cabe, e vira
   // rolagem vertical quando não cabe (celular baixo, exercício com 6 séries).
   pagina: { flexGrow: 1, paddingHorizontal: spacing.lg, paddingTop: spacing.md, gap: spacing.md },
-  tituloLinha: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
+  cabecalho: { flexDirection: 'row', gap: spacing.md, alignItems: 'flex-start' },
   metaLinha: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+  trocar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    alignSelf: 'flex-start',
+    paddingHorizontal: spacing.md,
+    paddingVertical: 7,
+    borderRadius: radius.md,
+    backgroundColor: colors.infoSoft,
+  },
   tag: {
     flexDirection: 'row',
     alignItems: 'center',

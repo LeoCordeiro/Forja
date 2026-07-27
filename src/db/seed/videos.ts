@@ -1,15 +1,19 @@
 /**
- * Vídeos de execução por exercício — IDs do YouTube.
+ * Shorts de execução por exercício.
  *
  * GERADO POR `node scripts/videos.mjs`. Não editar à mão sem necessidade:
- * a próxima execução do script preserva o que já está aqui, então um ID
- * corrigido manualmente sobrevive.
+ * a próxima execução preserva o que já está aqui, então um ID corrigido
+ * manualmente sobrevive.
  *
- * Dois critérios foram aplicados na coleta e valem para tudo que está aqui:
- * o vídeo é público E permite ser embutido (validado via oEmbed), e dura no
- * máximo 100 segundos. Exercício sem vídeo curto ficou sem vídeo — o app cai
- * na demonstração em imagens, que serve melhor que uma aula de três minutos
- * no meio de um descanso.
+ * Todo item aqui passou por três testes na coleta:
+ * · o YouTube o classifica como Short (`WEB_PAGE_TYPE_SHORTS`);
+ * · a miniatura é vertical de verdade (altura > largura), porque tela de
+ *   celular é vertical e vídeo deitado aparece do tamanho de um selo;
+ * · o vídeo é público e permite ser embutido (oEmbed responde 200) — vídeo com
+ *   embed bloqueado aparece na busca e só falha dentro do app.
+ *
+ * Exercício sem Short bom fica sem vídeo: o app cai na demonstração em imagens,
+ * que serve melhor que o vídeo errado.
  */
 
 export interface VideoExercicio {
@@ -19,85 +23,109 @@ export interface VideoExercicio {
 }
 
 export const VIDEOS: Record<string, VideoExercicio> = {
-  'Abdominal infra': { id: 'Z3uAk4QcXso', seg: 60 },
-  'Abdominal na polia': { id: 'I64bjVbs7XI', seg: 68 },
-  'Abdominal supra': { id: 't4PBYd481nk', seg: 72 },
-  'Abdução na máquina': { id: 'vMPY_T598Lw', seg: 55 },
-  'Afundo com barra': { id: 'nuzdKy7wylw', seg: 29 },
-  'Afundo com halteres': { id: '6Zz_RG0EHFE', seg: 65 },
-  'Agachamento frontal': { id: 'ra13PWkv0dA', seg: 64 },
-  'Agachamento livre': { id: 'rM6SDUdl9fs', seg: 57 },
-  'Barra fixa': { id: 'AveJ5SXC7vI', seg: 30 },
-  'Barra fixa supinada': { id: 'cI6d4nTFlhM', seg: 61 },
-  'Bicicleta ergométrica': { id: 'xUwn9YpoLrc', seg: 57 },
-  'Cadeira extensora': { id: 'nEKiPWJFdFs', seg: 46 },
-  'Cadeira flexora': { id: 'y9pl2WmFSfI', seg: 35 },
-  'Coice na polia': { id: 'k6jcIcXdDTE', seg: 41 },
-  'Crossover na polia': { id: 'pdMWt71MPlw', seg: 66 },
-  'Crucifixo com halteres': { id: 'MFwQa9B-Cxw', seg: 40 },
-  'Crucifixo inclinado': { id: 'EOr8ogwVF-Q', seg: 80 },
-  'Crucifixo inverso': { id: 'eo4O-BvfjRk', seg: 38 },
-  'Desenvolvimento Arnold': { id: 'yuOPcpMmYJk', seg: 65 },
-  'Desenvolvimento com halteres': { id: 'MmHTcVK-1tU', seg: 36 },
-  'Desenvolvimento militar': { id: 'aee3VLz4ATQ', seg: 40 },
-  'Elevação de pernas na barra': { id: 'X1-2oGDeeMY', seg: 32 },
-  'Elevação frontal': { id: 'TVo6PoqwSBQ', seg: 41 },
-  'Elevação lateral': { id: 'YrrO1zmBIjw', seg: 41 },
-  'Elevação pélvica com barra': { id: '6sTO9ejM-Ew', seg: 37 },
-  'Elíptico': { id: 'pLe3w8WBAK4', seg: 26 },
-  'Encolhimento': { id: 'YeILDnoeYEk', seg: 53 },
-  'Escalador': { id: 'UBZVwnQcjb0', seg: 18 },
-  'Esteira': { id: '0_RcQbYRHPY', seg: 84 },
-  'Face pull': { id: 'QVO3jdjaNFg', seg: 33 },
-  'Flexão de braço': { id: 'dHgoYiCraCw', seg: 76 },
-  'Hack machine': { id: 'Whp712OHPl8', seg: 64 },
-  'Hiperextensão lombar': { id: '9uIWj1DigsY', seg: 70 },
-  'Leg press': { id: 'waAxlYvtCcI', seg: 56 },
-  'Levantamento terra': { id: 'GntwG0iiSZ4', seg: 44 },
-  'Levantamento terra romeno': { id: 'jSomWOwLiGE', seg: 48 },
-  'Mergulho entre bancos': { id: 'ZWwUpWIbnrA', seg: 18 },
-  'Mergulho no paralelo': { id: 'vmkWuV-nH2w', seg: 32 },
-  'Mesa flexora': { id: '8Nat6GRiEoc', seg: 52 },
-  'Panturrilha em pé': { id: 'of5Z7yj-HqY', seg: 54 },
-  'Panturrilha no leg press': { id: 'Ua7jx6wKyMw', seg: 45 },
-  'Panturrilha sentado': { id: 'Vp788-iQqiI', seg: 59 },
-  'Prancha': { id: 'vCpPF6Pg0O0', seg: 23 },
-  'Prancha lateral': { id: '2NjO5KrlVEM', seg: 55 },
-  'Pular corda': { id: 'ok4hlxv8eGo', seg: 18 },
-  'Pulldown com braço estendido': { id: 'H9UrtnL156I', seg: 79 },
-  'Puxada frontal na polia': { id: '25XTUWnt_R4', seg: 59 },
-  'Puxada supinada': { id: 'uA3IrbUAVKA', seg: 28 },
-  'Remada alta': { id: 'iWYNrcd3Y4Y', seg: 93 },
-  'Remada baixa na polia': { id: 'KFRcLgKhiw8', seg: 68 },
-  'Remada cavalinho': { id: 'b-n8m51UIxc', seg: 31 },
-  'Remada curvada com barra': { id: '_vO2dAnz__c', seg: 50 },
-  'Remada unilateral com halter': { id: 'mygFHnzugN4', seg: 43 },
-  'Remo ergômetro': { id: '3Y9ZKnpuZ7E', seg: 84 },
-  'Rosca alternada com halteres': { id: 'yW3nvq6VTOQ', seg: 21 },
-  'Rosca concentrada': { id: '33waMTscv_Q', seg: 43 },
-  'Rosca direta com barra': { id: '0R7V2FXfFyQ', seg: 40 },
-  'Rosca inversa': { id: 'Ji_KYs4w59U', seg: 64 },
-  'Rosca martelo': { id: 'NmmtosqUDnM', seg: 46 },
-  'Rosca na polia alta': { id: 'esNhGb27jyA', seg: 36 },
-  'Rosca scott': { id: 'JWRoHF7I2NQ', seg: 47 },
-  'Russian twist': { id: '4AFJrgd7HkU', seg: 60 },
-  'Stiff': { id: 'BHfY5-jGNDA', seg: 54 },
-  'Supino fechado': { id: 'X1Y1sBIs1Z0', seg: 41 },
-  'Supino inclinado com barra': { id: 'TIMRYQKVvDk', seg: 43 },
-  'Supino inclinado com halteres': { id: 'rCPwrZkrVVQ', seg: 45 },
-  'Supino reto com barra': { id: 'pCPyqW60Wuk', seg: 47 },
-  'Supino reto com halteres': { id: 'tDxKGeY-hjQ', seg: 43 },
-  'Tríceps coice': { id: 'DXGH9_WAP50', seg: 56 },
-  'Tríceps francês': { id: 'bBFx4_i_8Mo', seg: 41 },
-  'Tríceps na polia com barra': { id: 'iioOkPqsVr0', seg: 80 },
-  'Tríceps na polia com corda': { id: '7le1JRUUagM', seg: 44 },
-  'Tríceps testa': { id: 'GwZzKiEmbcU', seg: 46 },
-  'Voador (peck deck)': { id: 'QJT52jGuyVE', seg: 99 },
+  'Abdominal infra': { id: 'jqyHNUeAIQU', seg: 73 },
+  'Abdominal na polia': { id: 'jXu-yJq9m3s', seg: 29 },
+  'Abdominal supra': { id: '8wEofUHsYvA', seg: 60 },
+  'Abdução na máquina': { id: 'bdF3z3K9Hn4', seg: 25 },
+  'Afundo com barra': { id: 'bql6kvcoT5o', seg: 29 },
+  'Afundo com halteres': { id: 'w8Ar4bgxizw', seg: 28 },
+  'Afundo com rotação': { id: '33np73VU8HY', seg: 16 },
+  'Agachamento com peso corporal': { id: 'jZKcrf5oowY', seg: 15 },
+  'Agachamento frontal': { id: 'pYIpBFnong0', seg: 38 },
+  'Agachamento livre': { id: '3vTRFnzCMaA', seg: 49 },
+  'Agachamento profundo segurado': { id: 'Vdibrs0ZGfo', seg: 60 },
+  'Alongamento pós-treino': { id: 'qDoihsLgIXY', seg: 27 },
+  'Aquecimento antes do treino': { id: '8fEtSkNaQQM', seg: 48 },
+  'Balanço de perna': { id: 'YmhhMMOmlB4', seg: 35 },
+  'Barra fixa': { id: 'qT_6_B4trdo', seg: 30 },
+  'Barra fixa supinada': { id: 'M-eZFcSyuP0', seg: 15 },
+  'Bicicleta ergométrica': { id: 'RKi8h4aL75E', seg: 33 },
+  'Cadeira extensora': { id: 'McDlS16kwhI', seg: 58 },
+  'Cadeira flexora': { id: 'vWqi5uAnEu4', seg: 25 },
+  'Círculos de escápula': { id: '1OeNIs8sDXo', seg: 21 },
+  'Coice na polia': { id: 'uXIy5SYdS84', seg: 74 },
+  'Coluna de quem passa o dia sentado': { id: '2DMutDMZ--U', seg: 60 },
+  'Crossover na polia': { id: 'nuTuKjcQRHg', seg: 52 },
+  'Crucifixo com halteres': { id: 'pU80usRU99Y', seg: 59 },
+  'Crucifixo inclinado': { id: 'BNBsJFYBpqk', seg: 28 },
+  'Crucifixo inverso': { id: 'C9Q9so5Fqws', seg: 20 },
+  'Desenvolvimento Arnold': { id: 'CF0rkkvNh3g', seg: 27 },
+  'Desenvolvimento com halteres': { id: 'zoXE8hI9zoI', seg: 48 },
+  'Desenvolvimento militar': { id: 'fFYwiqIQ6yY', seg: 33 },
+  'Deslize na parede': { id: 'Hl7dGcEHyzs', seg: 25 },
+  'Dorsal suspenso': { id: 'mXaWQvlGTQg', seg: 17 },
+  'Elevação de pernas na barra': { id: 'AkcAg5suq6Y', seg: 46 },
+  'Elevação frontal': { id: '4obmVkoKQkA', seg: 55 },
+  'Elevação lateral': { id: 'AXyz3LONUkY', seg: 49 },
+  'Elevação pélvica com barra': { id: 'RbGXlJjAf3I', seg: 18 },
+  'Elíptico': { id: 'KjoCtuZfew4', seg: 82 },
+  'Encolhimento': { id: 'xYk3w0V3GWM', seg: 20 },
+  'Escalador': { id: 'Fia12izRfAc', seg: 30 },
+  'Esteira': { id: '10sfKL6X9WQ', seg: 31 },
+  'Face pull': { id: 'ej70jhGdow4', seg: 38 },
+  'Flexão de braço': { id: 'IfZ0N3KeZuc', seg: 33 },
+  'Flexor do quadril (afundo)': { id: '8AcVi3aLHWk', seg: 46 },
+  'Gato e camelo': { id: 'g5r6WGVasCw', seg: 38 },
+  'Hack machine': { id: 'lQo21In1LZs', seg: 60 },
+  'Hiperextensão lombar': { id: 'TxCo5HttW_s', seg: 55 },
+  'Leg press': { id: 'c74ubBbL3zU', seg: 49 },
+  'Levantamento terra': { id: 'dta3aMVe9qA', seg: 35 },
+  'Levantamento terra romeno': { id: 'dta3aMVe9qA', seg: 35 },
+  'Mergulho no paralelo': { id: 'p_DeBmkbCUc', seg: 15 },
+  'Mesa flexora': { id: 'bA5gbGtltFs', seg: 49 },
+  'Mobilidade de ombro': { id: '_uDUcmsbaJQ', seg: 31 },
+  'Mobilidade de quadril': { id: 'd55z6suktuo', seg: 37 },
+  'Movimento livre': { id: 'GB5upCs4phI', seg: 25 },
+  'Panturrilha em pé': { id: 'kj2GgzdRXTU', seg: 19 },
+  'Panturrilha na parede': { id: 'UwZql3MUeX0', seg: 19 },
+  'Panturrilha no leg press': { id: 'ClGPnxuKXNQ', seg: 33 },
+  'Panturrilha sentado': { id: '6eJ9EVwazXk', seg: 53 },
+  'Peitoral na parede': { id: 'RFC4QLB5eY0', seg: 53 },
+  'Ponte de glúteo': { id: '0u3-WOO611Q', seg: 22 },
+  'Posterior de coxa sentado': { id: 'XYMba96VI-Y', seg: 40 },
+  'Prancha': { id: 'Zex85qTPc4s', seg: 15 },
+  'Prancha lateral': { id: 'hfswPJ3cucY', seg: 34 },
+  'Pular corda': { id: 'emnAsCf66vQ', seg: 24 },
+  'Puxada frontal na polia': { id: 'hTaY3y09eLc', seg: 38 },
+  'Puxada supinada': { id: 'xd_f-tE9l3M', seg: 31 },
+  'Quadríceps em pé': { id: 'HQXoF0pXtsU', seg: 19 },
+  'Remada alta': { id: 'KABahQZ_9FQ', seg: 43 },
+  'Remada baixa na polia': { id: '9lLn49UFMFk', seg: 21 },
+  'Remada cavalinho': { id: 'A-7jq3U-Qmg', seg: 34 },
+  'Remada curvada com barra': { id: 'acDyeZn_Jug', seg: 46 },
+  'Remada unilateral com halter': { id: 'eeg6REnybpI', seg: 84 },
+  'Remo ergômetro': { id: 'yaxveBJGoy8', seg: 45 },
+  'Rosca alternada com halteres': { id: '1LpnsHK6uMw', seg: 51 },
+  'Rosca concentrada': { id: 'YxkxWJtOv24', seg: 25 },
+  'Rosca direta com barra': { id: 'Yp-SuCCqui8', seg: 74 },
+  'Rosca inversa': { id: 'VMCHKbBjLwQ', seg: 72 },
+  'Rosca martelo': { id: 'RejYUX31uVo', seg: 75 },
+  'Rosca na polia alta': { id: 'Yisx-zzaHL8', seg: 20 },
+  'Rosca scott': { id: 'BaLyD_0Qi9Y', seg: 43 },
+  'Rotação de quadril': { id: '5nzzndnJZT8', seg: 16 },
+  'Rotação de tronco': { id: 'IfHmkw9uK6g', seg: 16 },
+  'Russian twist': { id: '_d5cpAre7_w', seg: 26 },
+  'Série de aproximação': { id: 'eUlXrAGEDMw', seg: 37 },
+  'Stiff': { id: 'Vjtn6n_-sXo', seg: 53 },
+  'Supino fechado': { id: 'AgAjzg3AMwc', seg: 59 },
+  'Supino inclinado com barra': { id: 'GWe3Pcl3oH0', seg: 30 },
+  'Supino inclinado com halteres': { id: 'Fa-X2ByLHaY', seg: 38 },
+  'Supino reto com barra': { id: '6jBx5YwAb7E', seg: 15 },
+  'Supino reto com halteres': { id: 'amHMMhNbqUg', seg: 38 },
+  'Tríceps coice': { id: 'XnTXknZ7srQ', seg: 46 },
+  'Tríceps francês': { id: 'jCY6bkVLOzE', seg: 54 },
+  'Tríceps na polia com barra': { id: 'CVrp2m_rBfs', seg: 20 },
+  'Tríceps na polia com corda': { id: 'IoawExktILM', seg: 18 },
+  'Tríceps testa': { id: '0jMF0o0DdbA', seg: 32 },
+  'Voador (peck deck)': { id: 'Tq0LwCOVl4M', seg: 43 },
 };
 
-/** Miniatura sem custo de player — carrega antes de decidir assistir. */
+/**
+ * Miniatura vertical. `frame0.jpg` sai na proporção original do vídeo; o
+ * `hqdefault.jpg` é sempre 480x360 e enfia tarja preta dos dois lados.
+ */
 export function thumb(videoId: string): string {
-  return `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+  return `https://i.ytimg.com/vi/${videoId}/frame0.jpg`;
 }
 
 export function duracaoCurta(seg: number): string {

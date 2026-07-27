@@ -46,6 +46,48 @@ export function prepararAudio() {
   if (c.ctx.state === 'suspended') void c.ctx.resume();
 }
 
+/**
+ * Mantém a sessão de áudio aberta enquanto o descanso corre.
+ *
+ * Com áudio ativo o navegador trata a aba como em uso e continua executando os
+ * timers depois que a pessoa troca de app — que é o que faz o alarme tocar de
+ * verdade em vez de só aparecer atrasado quando ela volta.
+ *
+ * A primeira versão fazia isto com um `<audio>` tocando um WAV de silêncio em
+ * loop. O WAV tinha zero byte de amostras, então `loop` reiniciava
+ * instantaneamente e sem parar: travou a aba inteira. Um oscilador em volume
+ * praticamente nulo faz o mesmo trabalho sem esse risco — não tem fim para
+ * reiniciar.
+ */
+let vivo: { osc: OscillatorNode; g: GainNode } | null = null;
+
+export function manterAudioVivo(ligar: boolean) {
+  const c = contexto();
+  if (!c) return;
+  try {
+    if (ligar) {
+      if (vivo) return;
+      if (c.ctx.state === 'suspended') void c.ctx.resume();
+      const osc = c.ctx.createOscillator();
+      const g = c.ctx.createGain();
+      // Inaudível, mas não zero: alguns navegadores descartam a rota silenciosa.
+      g.gain.value = 0.0001;
+      osc.frequency.value = 30;
+      osc.connect(g);
+      g.connect(c.ctx.destination);
+      osc.start();
+      vivo = { osc, g };
+    } else if (vivo) {
+      vivo.osc.stop();
+      vivo.osc.disconnect();
+      vivo.g.disconnect();
+      vivo = null;
+    }
+  } catch {
+    /* sem áudio: o cronômetro continua certo, só o alarme em segundo plano cai */
+  }
+}
+
 function bip(freq: number, inicio: number, duracao: number, volume: number) {
   const c = contexto();
   if (!c) return;

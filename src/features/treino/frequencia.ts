@@ -40,17 +40,34 @@ export async function semanaAtual(referencia = hoje()): Promise<DiaSemana[]> {
     dias.push(isoDe(d));
   }
 
-  const treinos = await all<{ dia: string; volume: number; nome: string }>(
-    `SELECT date(iniciado_em/1000, 'unixepoch', 'localtime') AS dia,
-            COALESCE(SUM(volume_total_kg),0) AS volume,
-            MAX(nome) AS nome
+  /**
+   * O agrupamento por dia acontece no JS, não no SQL.
+   *
+   * `date(..., 'localtime')` não serve: no SQLite compilado para WebAssembly
+   * não existe fuso do sistema, então 'localtime' é UTC. Treino das 21h de
+   * Brasília (00h UTC) era contabilizado no dia seguinte — o quadradinho de
+   * hoje ficava vazio e o de amanhã aparecia marcado.
+   */
+  const inicioMs = new Date(inicio).setHours(0, 0, 0, 0);
+  const fimMs = inicioMs + 7 * 86400000;
+
+  const treinos = await all<{ iniciado_em: number; volume: number; nome: string }>(
+    `SELECT iniciado_em, COALESCE(volume_total_kg,0) AS volume, nome
        FROM workout_sessions
       WHERE finalizado_em IS NOT NULL
-        AND date(iniciado_em/1000, 'unixepoch', 'localtime') BETWEEN ? AND ?
-      GROUP BY dia`,
-    [dias[0], dias[6]]
+        AND iniciado_em >= ? AND iniciado_em < ?`,
+    [inicioMs, fimMs]
   );
-  const mapa = new Map(treinos.map((t) => [t.dia, t]));
+
+  const mapa = new Map<string, { volume: number; nome: string }>();
+  for (const t of treinos) {
+    const chave = isoDe(new Date(t.iniciado_em));
+    const atual = mapa.get(chave);
+    mapa.set(chave, {
+      volume: (atual?.volume ?? 0) + t.volume,
+      nome: atual?.nome ?? t.nome,
+    });
+  }
   const h = hoje();
 
   return dias.map((data) => {

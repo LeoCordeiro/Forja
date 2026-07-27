@@ -2,7 +2,7 @@ import { StyleSheet, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { colors, radius, spacing } from '@/theme';
+import { colors, radius, shadow, spacing } from '@/theme';
 import { Anel, Barra, Button, Card, Empty, Press, Screen, Txt } from '@/shared/ui';
 import { useDados } from '@/shared/hooks/useDados';
 import { resumo } from '@/features/perfil/api';
@@ -135,19 +135,18 @@ export default function Home() {
                 <Txt v="small" size={10} cor={d.hoje ? colors.primary : colors.textFaint} bold={d.hoje}>
                   {d.letra}
                 </Txt>
+                {/* Dia sem treino fica vazio, não com "✕". O X lia como falta
+                    cometida — e descansar segunda quando o plano é 3x/semana
+                    não é falta nenhuma. */}
                 <View
                   style={[
                     s.diaBox,
-                    d.treinou && { backgroundColor: colors.success, borderColor: colors.success },
+                    d.treinou && s.diaFeito,
                     d.hoje && !d.treinou && { borderColor: colors.primary, borderWidth: 2 },
-                    d.futuro && { opacity: 0.4 },
+                    d.futuro && { opacity: 0.35 },
                   ]}
                 >
-                  {d.treinou ? (
-                    <Ionicons name="checkmark" size={16} color="#00251A" />
-                  ) : d.futuro ? null : (
-                    <Ionicons name="close" size={13} color={colors.textFaint} />
-                  )}
+                  {d.treinou ? <Ionicons name="checkmark" size={17} color="#00251A" /> : null}
                 </View>
               </View>
             ))}
@@ -485,6 +484,11 @@ const s = StyleSheet.create({
     borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  diaFeito: {
+    backgroundColor: colors.success,
+    borderColor: colors.success,
+    ...shadow.glow(colors.success),
   },
   copos: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md },
   copoRapido: {

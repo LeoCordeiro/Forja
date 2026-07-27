@@ -30,6 +30,8 @@ export default function Agua() {
   const router = useRouter();
   const [editandoMeta, setEditandoMeta] = useState(false);
   const [metaTexto, setMetaTexto] = useState('');
+  const [abrindoPersonalizado, setAbrindoPersonalizado] = useState(false);
+  const [personalizado, setPersonalizado] = useState('');
 
   const { dados, recarregar } = useDados(async () => {
     const [r, consumido, regs, hist] = await Promise.all([
@@ -115,6 +117,26 @@ export default function Agua() {
               </Txt>
             </Press>
           ))}
+
+          {/* Garrafa de 750, copo do trabalho, o que for. Sem isto, quem bebe
+              600 ml registra "500" e a conta do dia sai sempre errada. */}
+          <Press
+            onPress={() => {
+              setPersonalizado('');
+              setAbrindoPersonalizado(true);
+            }}
+            style={[s.copo, s.copoOutro]}
+            scale={0.92}
+            haptic={false}
+          >
+            <Ionicons name="create-outline" size={24} color={colors.info} />
+            <Txt v="h3" size={15} cor={colors.info}>
+              Outro
+            </Txt>
+            <Txt v="small" size={10} cor={colors.textFaint}>
+              Medida sua
+            </Txt>
+          </Press>
         </View>
       </Animated.View>
 
@@ -278,6 +300,63 @@ export default function Agua() {
           />
         </View>
       </Sheet>
+
+      {/* ── Quantidade personalizada ── */}
+      <Sheet
+        aberto={abrindoPersonalizado}
+        onFechar={() => setAbrindoPersonalizado(false)}
+        titulo="Quanto você bebeu?"
+        altura={0.62}
+      >
+        <View style={{ gap: spacing.lg }}>
+          <Input
+            rotulo="Quantidade"
+            grande
+            sufixo="ml"
+            value={personalizado}
+            onChangeText={setPersonalizado}
+            keyboardType="number-pad"
+            placeholder="750"
+          />
+
+          <View style={{ flexDirection: 'row', gap: spacing.sm, flexWrap: 'wrap' }}>
+            {[150, 250, 400, 600, 750, 1500].map((v) => (
+              <Press
+                key={v}
+                onPress={() => setPersonalizado(String(v))}
+                style={[s.sugestao, personalizado === String(v) && s.sugestaoAtiva]}
+                haptic="selecao"
+              >
+                <Txt v="small" cor={personalizado === String(v) ? colors.info : colors.textDim} bold>
+                  {v} ml
+                </Txt>
+              </Press>
+            ))}
+          </View>
+
+          <Txt v="small" cor={colors.textFaint}>
+            Vale para garrafa, squeeze, chá e café. Refrigerante e álcool não contam —
+            o álcool desidrata, e é justamente essa a conta que interessa aqui.
+          </Txt>
+
+          <Button
+            titulo="Registrar"
+            icone="water-outline"
+            full
+            tam="lg"
+            desabilitado={!(parseInt(personalizado, 10) > 0)}
+            onPress={async () => {
+              const n = parseInt(personalizado, 10);
+              // Teto de 3 L num gole só: acima disso é erro de digitação, e um
+              // registro errado some do histórico só se a pessoa perceber.
+              if (n > 0 && n <= 3000) {
+                setAbrindoPersonalizado(false);
+                await beber(n);
+              }
+            }}
+          />
+        </View>
+      </Sheet>
     </Tela>
   );
 }
@@ -291,9 +370,12 @@ const s = StyleSheet.create({
     borderRadius: radius.full,
   },
   streak: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  atalhos: { flexDirection: 'row', gap: spacing.sm },
+  // Cinco atalhos não cabem lado a lado num celular: quebra em duas fileiras.
+  atalhos: { flexDirection: 'row', gap: spacing.sm, flexWrap: 'wrap' },
   copo: {
-    flex: 1,
+    flexGrow: 1,
+    flexBasis: '30%',
+    minWidth: 96,
     gap: 3,
     paddingVertical: spacing.lg,
     borderRadius: radius.lg,
@@ -301,6 +383,11 @@ const s = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     alignItems: 'center',
+  },
+  copoOutro: {
+    borderStyle: 'dashed',
+    borderColor: colors.info,
+    backgroundColor: colors.infoSoft,
   },
   linha: {
     flexDirection: 'row',

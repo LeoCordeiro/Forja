@@ -1,150 +1,159 @@
 /**
- * Coleta de vídeos de execução (YouTube Shorts).
+ * Coleta de Shorts de execução.
  *
- * Por que um script e não uma busca dentro do app: o YouTube não libera CORS,
- * então o navegador não consegue buscar. Aqui, fora do navegador, consegue.
- * O resultado vira `src/db/seed/videos.ts`, que o app lê sem rede nenhuma.
+ * Três coisas descobertas testando, que definem todo o desenho deste script:
+ *
+ * 1. O YouTube não deixa buscar do navegador (sem CORS). Fora dele, deixa.
+ * 2. A busca do site em HTML **não devolve Shorts** — devolve vídeo comum, na
+ *    horizontal. E o parâmetro `sp=EgIYAQ` da URL não é "Shorts": é "menos de
+ *    4 minutos". Foi isso que encheu a primeira versão de aula de 3 minutos.
+ * 3. Quem devolve Shorts é a API interna com o cliente **MWEB** (YouTube
+ *    mobile). Lá cada Short vem com `webPageType: WEB_PAGE_TYPE_SHORTS` e a
+ *    miniatura já traz largura e altura reais — dá para exigir vertical sem
+ *    baixar imagem nenhuma.
  *
  * Rodar de novo quando algum vídeo sair do ar:
  *   node scripts/videos.mjs            (só o que falta)
  *   node scripts/videos.mjs --tudo     (refaz todos)
- *
- * O `--tudo` é caro: são ~74 buscas. O padrão preserva o que já foi validado.
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { embutivel, espera } from './lib-yt.mjs';
 
 const raiz = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SAIDA = join(raiz, 'src/db/seed/videos.ts');
 const refazerTudo = process.argv.includes('--tudo');
 
-const UA =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36';
+const MUA =
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 ' +
+  '(KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
 
 /**
- * Filtro de duração "menos de 4 minutos" da busca do YouTube.
+ * Faixa de duração útil.
  *
- * Não é o filtro de Shorts — não existe um confiável na URL. Serve só para
- * reduzir a pilha; quem decide de verdade é o `LIMITE_SEG` abaixo, lido da
- * duração que vem em cada resultado.
+ * Teto: Short pode ir a 3 min, mas acima de ~110s não serve entre séries.
+ * Piso: abaixo de 15s é clipe mudo — mostra o movimento e acaba, sem dizer
+ * onde a pessoa erra. O pedido era breve E explicativo.
  */
-const SP_CURTOS = 'EgIYAQ%3D%3D';
+const LIMITE_SEG = 110;
+const MINIMO_SEG = 15;
+const IDEAL = [25, 70];
 
-/**
- * Teto de duração. Um Short de 40 segundos mostra o movimento e os dois erros
- * comuns; um vídeo de três minutos gasta o primeiro falando de canal e patrocínio.
- * Ninguém assiste isso entre duas séries.
- */
-const LIMITE_SEG = 100;
-const IDEAL_SEG = 60;
-
-/**
- * Piso de duração. Abaixo disso é clipe solto: mostra o movimento e acaba,
- * sem dizer onde a pessoa erra. O pedido era breve E explicativo — nove
- * segundos não explicam nada.
- */
-const MINIMO_SEG = 18;
-
-// ── nomes dos exercícios, lidos direto do seed ────────────────────────────
-function nomesDeExercicios() {
+// ── fontes de nomes ───────────────────────────────────────────────────────
+function exerciciosDoSeed() {
   const src = readFileSync(join(raiz, 'src/db/seed/exercicios.ts'), 'utf8');
   const nomes = [];
   for (const l of src.split('\n')) {
     const m = l.match(/^\s*\['([^']+)','([a-z]+)'/);
-    if (m) nomes.push({ nome: m[1], grupo: m[2] });
+    if (m) nomes.push(m[1]);
   }
   return nomes;
 }
 
-const espera = (ms) => new Promise((r) => setTimeout(r, ms));
+/** Movimentos de mobilidade e alongamento — mesma necessidade, outro arquivo. */
+function movimentosDeMobilidade() {
+  const src = readFileSync(join(raiz, 'src/features/mobilidade/rotinas.ts'), 'utf8');
+  return [...src.matchAll(/^\s*nome: '([^']+)'/gm)].map((m) => m[1]);
+}
+
+// ── API interna ───────────────────────────────────────────────────────────
+let ctx = null;
+async function contexto() {
+  if (ctx) return ctx;
+  const html = await (
+    await fetch('https://m.youtube.com/', {
+      headers: { 'user-agent': MUA, cookie: 'CONSENT=YES+cb' },
+    })
+  ).text();
+  ctx = {
+    key: html.match(/"INNERTUBE_API_KEY":"([^"]+)"/)[1],
+    versao: html.match(/"INNERTUBE_CLIENT_VERSION":"([^"]+)"/)[1],
+  };
+  return ctx;
+}
+
+async function buscarShorts(termo, tentativa = 0) {
+  const { key, versao } = await contexto();
+  try {
+    const r = await fetch(`https://m.youtube.com/youtubei/v1/search?key=${key}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'user-agent': MUA },
+      body: JSON.stringify({
+        context: { client: { clientName: 'MWEB', clientVersion: versao, hl: 'pt-BR', gl: 'BR' } },
+        query: termo,
+      }),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const dados = await r.json();
+
+    const achados = [];
+    const vistos = new Set();
+    (function anda(no) {
+      if (!no || typeof no !== 'object') return;
+      if (Array.isArray(no)) return no.forEach(anda);
+
+      const ehShort = no.commandMetadata?.webCommandMetadata?.webPageType === 'WEB_PAGE_TYPE_SHORTS';
+      const id = no.reelWatchEndpoint?.videoId;
+      if (ehShort && id && !vistos.has(id)) {
+        vistos.add(id);
+        const t = no.reelWatchEndpoint.thumbnail?.thumbnails?.[0];
+        // Vertical de verdade. Alguns Shorts antigos foram enviados na
+        // horizontal e ficam com tarja preta gorda no player — fora.
+        if (t && t.height > t.width * 1.2) achados.push({ id, ordem: achados.length });
+      }
+      for (const v of Object.values(no)) anda(v);
+    })(dados);
+
+    return achados;
+  } catch (e) {
+    if (tentativa >= 3) throw e;
+    ctx = null; // pode ter expirado
+    await espera(4000 * 2 ** tentativa);
+    return buscarShorts(termo, tentativa + 1);
+  }
+}
 
 /**
- * GET com paciência.
+ * Título + validação numa tacada.
  *
- * O YouTube corta a torneira depois de algumas dezenas de buscas seguidas — a
- * primeira versão deste script morreu em 11 de 74 exatamente assim. Recuo
- * exponencial resolve; o cookie CONSENT evita cair na tela de consentimento,
- * que devolve HTML sem resultado nenhum e parece "não achei nada".
+ * oEmbed responde 200 só para vídeo público E embutível — que é o teste que
+ * importa, porque vídeo com embed bloqueado aparece normalmente na busca e só
+ * falha dentro do app. E de quebra devolve o título, que é como se mede se o
+ * vídeo é do exercício certo.
  */
-async function buscarHtml(url, tentativa = 0) {
+async function titulo(id) {
   try {
-    const r = await fetch(url, {
-      headers: {
-        'user-agent': UA,
-        'accept-language': 'pt-BR,pt;q=0.9',
-        cookie: 'CONSENT=YES+cb.20240101-00-p0.pt+FX+111',
-      },
-    });
-    if (r.status === 429 || r.status >= 500) throw new Error(`HTTP ${r.status}`);
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    return await r.text();
-  } catch (e) {
-    if (tentativa >= 4) throw e;
-    const recuo = 4000 * 2 ** tentativa + Math.floor(Math.random() * 1500);
-    console.log(`    … ${e.message}, tentando de novo em ${Math.round(recuo / 1000)}s`);
-    await espera(recuo);
-    return buscarHtml(url, tentativa + 1);
-  }
-}
-
-// ── busca ─────────────────────────────────────────────────────────────────
-/** "2:21" → 141. Retorna null para transmissão ao vivo, que não tem duração. */
-function emSegundos(txt) {
-  if (!txt) return null;
-  const p = txt.split(':').map(Number);
-  if (p.some(Number.isNaN)) return null;
-  return p.reduce((a, n) => a * 60 + n, 0);
-}
-
-async function buscar(termo, sp = SP_CURTOS) {
-  const url =
-    `https://www.youtube.com/results?search_query=${encodeURIComponent(termo)}` +
-    (sp ? `&sp=${sp}` : '');
-  const html = await buscarHtml(url);
-
-  const i = html.indexOf('var ytInitialData = ');
-  if (i < 0) return [];
-  const inicio = i + 'var ytInitialData = '.length;
-  const fim = html.indexOf(';</script>', inicio);
-  let dados;
-  try {
-    dados = JSON.parse(html.slice(inicio, fim));
+    const r = await fetch(
+      `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${id}&format=json`,
+      { headers: { 'user-agent': MUA } }
+    );
+    if (!r.ok) return null;
+    return (await r.json()).title ?? null;
   } catch {
-    return [];
+    return null;
   }
+}
 
-  // A resposta muda de formato com frequência; em vez de navegar por caminho
-  // fixo, varre a árvore atrás de qualquer nó que tenha videoId + título.
-  const achados = [];
-  const vistos = new Set();
-  (function anda(no) {
-    if (!no || typeof no !== 'object') return;
-    if (Array.isArray(no)) return no.forEach(anda);
-
-    const id = no.videoId;
-    if (typeof id === 'string' && id.length === 11 && !vistos.has(id)) {
-      const titulo =
-        no.title?.runs?.[0]?.text ??
-        no.title?.simpleText ??
-        no.headline?.simpleText ??
-        no.overlayMetadata?.primaryText?.content ??
-        null;
-      if (titulo) {
-        vistos.add(id);
-        achados.push({ id, titulo, seg: emSegundos(no.lengthText?.simpleText) });
-      }
-    }
-    for (const v of Object.values(no)) anda(v);
-  })(dados);
-
-  return achados;
+/** Duração exata, da página do vídeo. Só do escolhido — é caro. */
+async function duracao(id) {
+  try {
+    const html = await (
+      await fetch(`https://www.youtube.com/watch?v=${id}`, {
+        headers: { 'user-agent': MUA, cookie: 'CONSENT=YES+cb' },
+      })
+    ).text();
+    const m = html.match(/"lengthSeconds":"(\d+)"/);
+    return m ? Number(m[1]) : null;
+  } catch {
+    return null;
+  }
 }
 
 // ── relevância ────────────────────────────────────────────────────────────
 const IGNORAR = new Set([
-  'com','de','do','da','na','no','em','para','a','o','e','os','as','um','uma',
+  'com', 'de', 'do', 'da', 'na', 'no', 'em', 'para', 'a', 'o', 'e', 'os', 'as', 'um', 'uma',
 ]);
 
 function normalizar(t) {
@@ -155,127 +164,52 @@ function normalizar(t) {
     .replace(/[^a-z0-9\s]/g, ' ');
 }
 
-/**
- * Quantas palavras significativas do nome do exercício aparecem no título.
- * Sem isso, "elevação lateral" traz vídeo de elevação de terreno.
- */
-function relevancia(nomeEx, titulo) {
-  const palavras = normalizar(nomeEx).split(/\s+/).filter((p) => p.length > 2 && !IGNORAR.has(p));
-  const t = normalizar(titulo);
+function relevancia(nomeEx, tit) {
+  const palavras = normalizar(nomeEx)
+    .split(/\s+/)
+    .filter((p) => p.length > 2 && !IGNORAR.has(p));
+  const t = normalizar(tit);
   const acertos = palavras.filter((p) => t.includes(p)).length;
   return palavras.length ? acertos / palavras.length : 0;
 }
 
-/** Título que promete técnica vale mais que título que promete resultado. */
-const BOM = ['execu', 'tecnica', 'técnica', 'como fazer', 'erro', 'forma correta', 'certo'];
+const BOM = ['execu', 'tecnica', 'como fazer', 'erro', 'forma correta', 'certo', 'jeito'];
 const RUIM = [
-  'challenge', 'motivation', 'shorts virais', 'humor', 'meme', 'prank',
-  // A busca por aparelho traz manutenção e venda antes de execução —
-  // "Troca Cinta Carga Freio Bicicleta Ergométrica" passou por relevante.
+  'challenge', 'motivation', 'humor', 'meme', 'prank',
   'troca', 'manutenc', 'conserto', 'reparo', 'montagem', 'unboxing',
   'review', 'comprar', 'preco', 'barato', 'promocao',
 ];
 
-function nota(nomeEx, c, posicao) {
-  const t = normalizar(c.titulo);
-  let n = relevancia(nomeEx, c.titulo) * 100;
-  if (BOM.some((b) => t.includes(normalizar(b)))) n += 18;
-
-  // Corte seco, não desconto. Com penalidade de pontos, "Troca Cinta Carga
-  // Freio Bicicleta Ergométrica" sobrevivia: o nome do aparelho aparece duas
-  // vezes e a relevância pagava a multa sozinha.
+function nota(nomeEx, tit, ordem) {
+  const t = normalizar(tit);
+  // Corte seco, não desconto: com penalidade de pontos, "Troca Cinta Carga
+  // Freio Bicicleta Ergométrica" sobrevivia porque o nome do aparelho aparecia
+  // duas vezes e a relevância pagava a multa sozinha.
   if (RUIM.some((b) => t.includes(normalizar(b)))) return -1;
 
-  // Duração pesa quase tanto quanto o título: entre um vídeo perfeito de 2min
-  // e um bom de 40s, o de 40s ganha — é o que dá para ver na academia.
-  if (c.seg === null || c.seg > LIMITE_SEG || c.seg < MINIMO_SEG) return -1;
-  n += c.seg <= IDEAL_SEG ? 25 : 25 * ((LIMITE_SEG - c.seg) / (LIMITE_SEG - IDEAL_SEG));
-
-  n -= posicao * 1.5; // empate desempata pela ordem do YouTube
+  let n = relevancia(nomeEx, tit) * 100;
+  if (BOM.some((b) => t.includes(normalizar(b)))) n += 18;
+  n -= ordem * 2; // a ordem do YouTube já é um sinal
   return n;
 }
 
-// ── validação ─────────────────────────────────────────────────────────────
-/** oEmbed só responde 200 para vídeo público e embutível — é o teste que importa. */
-async function embutivel(id) {
-  try {
-    const r = await fetch(
-      `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${id}&format=json`,
-      { headers: { 'user-agent': UA } }
-    );
-    return r.ok;
-  } catch {
-    return false;
-  }
+/** Dentro da faixa ideal vale cheio; fora dela cai proporcional à distância. */
+function bonusDuracao(seg) {
+  const [lo, hi] = IDEAL;
+  if (seg >= lo && seg <= hi) return 30;
+  const fora = seg < lo ? (lo - seg) / (lo - MINIMO_SEG) : (seg - hi) / (LIMITE_SEG - hi);
+  return 30 * (1 - Math.min(1, fora));
 }
 
-// ── principal ─────────────────────────────────────────────────────────────
+// ── persistência ──────────────────────────────────────────────────────────
 function carregarExistente() {
   if (refazerTudo || !existsSync(SAIDA)) return {};
   const src = readFileSync(SAIDA, 'utf8');
   const mapa = {};
-  for (const m of src.matchAll(/^\s*'([^']+)':\s*\{ id: '([\w-]{11})', seg: (\d+) \}/gm)) {
+  for (const m of src.matchAll(/^\s*'([^']+)': \{ id: '([\w-]{11})', seg: (\d+) \}/gm)) {
     mapa[m[1]] = { id: m[2], seg: Number(m[3]) };
   }
   return mapa;
-}
-
-const exercicios = nomesDeExercicios();
-const mapa = carregarExistente();
-const jaTinha = Object.keys(mapa).length;
-let novos = 0;
-let falhas = [];
-
-console.log(`${exercicios.length} exercícios · ${jaTinha} já mapeados`);
-
-for (const { nome } of exercicios) {
-  if (mapa[nome]) continue;
-
-  try {
-    // Três formas de perguntar a mesma coisa. Antes existia um plano B que
-    // buscava sem filtro de duração e aceitava vídeo longo — era isso que
-    // enfiava aula de três minutos no meio do treino. Agora, se nenhuma
-    // variação achar algo curto, o exercício fica sem vídeo mesmo: o app cai
-    // na demonstração em imagens, que é melhor que o vídeo errado.
-    let escolhido = null;
-    for (const q of [
-      `${nome} execução correta`,
-      `como fazer ${nome} shorts`,
-      `${nome} técnica erros`,
-    ]) {
-      escolhido = await melhorDe(nome, await buscar(q));
-      if (escolhido) break;
-      await espera(1200);
-    }
-
-    if (escolhido) {
-      mapa[nome] = { id: escolhido.id, seg: escolhido.seg };
-      novos++;
-      const mmss = `${Math.floor(escolhido.seg / 60)}:${String(escolhido.seg % 60).padStart(2, '0')}`;
-      console.log(`  ✓ ${nome} → ${escolhido.id} (${mmss})  "${escolhido.titulo.slice(0, 46)}"`);
-      salvar(mapa); // grava a cada acerto: rate limit no meio não apaga o resto
-    } else {
-      falhas.push(nome);
-      console.log(`  · ${nome} — nada curto e relevante`);
-    }
-  } catch (e) {
-    falhas.push(nome);
-    console.log(`  ! ${nome} — ${e.message}`);
-  }
-
-  await espera(1600 + Math.floor(Math.random() * 900));
-}
-
-async function melhorDe(nome, candidatos) {
-  const ranqueados = candidatos
-    .map((c, i) => ({ ...c, n: nota(nome, c, i) }))
-    .filter((c) => c.n > 60)
-    .sort((a, b) => b.n - a.n);
-
-  for (const c of ranqueados.slice(0, 4)) {
-    if (await embutivel(c.id)) return c;
-  }
-  return null;
 }
 
 function salvar(mapa) {
@@ -287,17 +221,21 @@ function salvar(mapa) {
   writeFileSync(
     SAIDA,
     `/**
- * Vídeos de execução por exercício — IDs do YouTube.
+ * Shorts de execução por exercício.
  *
  * GERADO POR \`node scripts/videos.mjs\`. Não editar à mão sem necessidade:
- * a próxima execução do script preserva o que já está aqui, então um ID
- * corrigido manualmente sobrevive.
+ * a próxima execução preserva o que já está aqui, então um ID corrigido
+ * manualmente sobrevive.
  *
- * Dois critérios foram aplicados na coleta e valem para tudo que está aqui:
- * o vídeo é público E permite ser embutido (validado via oEmbed), e dura no
- * máximo ${LIMITE_SEG} segundos. Exercício sem vídeo curto ficou sem vídeo — o app cai
- * na demonstração em imagens, que serve melhor que uma aula de três minutos
- * no meio de um descanso.
+ * Todo item aqui passou por três testes na coleta:
+ * · o YouTube o classifica como Short (\`WEB_PAGE_TYPE_SHORTS\`);
+ * · a miniatura é vertical de verdade (altura > largura), porque tela de
+ *   celular é vertical e vídeo deitado aparece do tamanho de um selo;
+ * · o vídeo é público e permite ser embutido (oEmbed responde 200) — vídeo com
+ *   embed bloqueado aparece na busca e só falha dentro do app.
+ *
+ * Exercício sem Short bom fica sem vídeo: o app cai na demonstração em imagens,
+ * que serve melhor que o vídeo errado.
  */
 
 export interface VideoExercicio {
@@ -310,9 +248,12 @@ export const VIDEOS: Record<string, VideoExercicio> = {
 ${linhas}
 };
 
-/** Miniatura sem custo de player — carrega antes de decidir assistir. */
+/**
+ * Miniatura vertical. \`frame0.jpg\` sai na proporção original do vídeo; o
+ * \`hqdefault.jpg\` é sempre 480x360 e enfia tarja preta dos dois lados.
+ */
 export function thumb(videoId: string): string {
-  return \`https://i.ytimg.com/vi/\${videoId}/hqdefault.jpg\`;
+  return \`https://i.ytimg.com/vi/\${videoId}/frame0.jpg\`;
 }
 
 export function duracaoCurta(seg: number): string {
@@ -323,9 +264,62 @@ export function duracaoCurta(seg: number): string {
   );
 }
 
-salvar(mapa);
+// ── principal ─────────────────────────────────────────────────────────────
+const alvos = [...exerciciosDoSeed(), ...movimentosDeMobilidade()];
+const mapa = carregarExistente();
+let novos = 0;
+const falhas = [];
 
+console.log(`${alvos.length} alvos · ${Object.keys(mapa).length} já mapeados`);
+
+for (const nome of alvos) {
+  if (mapa[nome]) continue;
+
+  try {
+    let escolhido = null;
+    for (const q of [`${nome} execução`, `${nome} como fazer`, `${nome} técnica`]) {
+      const candidatos = await buscarShorts(q);
+      const comTitulo = [];
+      for (const c of candidatos.slice(0, 6)) {
+        const t = await titulo(c.id); // null = privado ou sem embed
+        if (t) comTitulo.push({ ...c, titulo: t, n: nota(nome, t, c.ordem) });
+      }
+
+      // Mede a duração dos 4 melhores e só então escolhe. Pegar o primeiro que
+      // couber no teto trazia clipe de 5 segundos: o título era ótimo, o vídeo
+      // não explicava nada.
+      const finalistas = [];
+      for (const c of comTitulo.filter((x) => x.n > 55).sort((a, b) => b.n - a.n).slice(0, 4)) {
+        const seg = await duracao(c.id);
+        if (seg && seg >= MINIMO_SEG && seg <= LIMITE_SEG) {
+          finalistas.push({ ...c, seg, total: c.n + bonusDuracao(seg) });
+        }
+      }
+      escolhido = finalistas.sort((a, b) => b.total - a.total)[0] ?? null;
+      if (escolhido) break;
+      await espera(1400);
+    }
+
+    if (escolhido) {
+      mapa[nome] = { id: escolhido.id, seg: escolhido.seg };
+      novos++;
+      const mmss = `${Math.floor(escolhido.seg / 60)}:${String(escolhido.seg % 60).padStart(2, '0')}`;
+      console.log(`  ✓ ${nome} → ${escolhido.id} (${mmss})  "${escolhido.titulo.slice(0, 42)}"`);
+      salvar(mapa); // grava a cada acerto: corte no meio não apaga o resto
+    } else {
+      falhas.push(nome);
+      console.log(`  · ${nome} — nenhum Short relevante`);
+    }
+  } catch (e) {
+    falhas.push(nome);
+    console.log(`  ! ${nome} — ${e.message}`);
+  }
+
+  await espera(1200 + Math.floor(Math.random() * 600));
+}
+
+salvar(mapa);
 console.log(
-  `\n${Object.keys(mapa).length}/${exercicios.length} mapeados (+${novos} agora)` +
+  `\n${Object.keys(mapa).length}/${alvos.length} mapeados (+${novos} agora)` +
     (falhas.length ? `\nsem vídeo: ${falhas.join(', ')}` : '')
 );

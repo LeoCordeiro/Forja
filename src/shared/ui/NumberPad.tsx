@@ -1,7 +1,14 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import Animated, { FadeInDown, FadeOutDown } from 'react-native-reanimated';
+import Animated, {
+  FadeInDown,
+  FadeOutDown,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withTiming,
+} from 'react-native-reanimated';
 import { colors, radius, spacing } from '@/theme';
 import { Txt } from './Txt';
 import { Press } from './Press';
@@ -15,6 +22,10 @@ interface Props {
   incrementos?: number[];
   decimal?: boolean;
   rotulo?: string;
+  /** "kg", "reps" — aparece ao lado do número no visor. */
+  unidade?: string;
+  /** O outro campo da mesma série, para não perder o par de vista. */
+  contexto?: { rotulo: string; valor: string };
 }
 
 /**
@@ -31,6 +42,8 @@ export function NumberPad({
   incrementos = [2.5, 5, 10],
   decimal = true,
   rotulo,
+  unidade,
+  contexto,
 }: Props) {
   /**
    * Primeira tecla substitui o valor herdado, em vez de concatenar.
@@ -72,11 +85,36 @@ export function NumberPad({
       exiting={FadeOutDown.duration(160)}
       style={s.box}
     >
-      {rotulo ? (
-        <Txt v="label" center style={{ marginBottom: spacing.sm }}>
-          {rotulo}
-        </Txt>
-      ) : null}
+      {/* Visor.
+          O teclado cobre a linha que está sendo editada — inevitável, ele ocupa
+          metade da tela. Então o valor aparece aqui, grande, enquanto se digita.
+          Sem isso a pessoa digita às cegas e só descobre o que escreveu depois
+          de confirmar. Mostra também o outro campo da mesma série, para dar o
+          contexto que a linha coberta daria. */}
+      <View style={s.visor}>
+        <View style={{ flex: 1 }}>
+          <Txt v="label">{rotulo ?? 'Valor'}</Txt>
+          <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 4 }}>
+            <Txt v="h1" size={38} cor={valor ? colors.text : colors.textFaint}>
+              {valor || '0'}
+            </Txt>
+            {unidade ? (
+              <Txt v="h3" cor={colors.textFaint}>
+                {unidade}
+              </Txt>
+            ) : null}
+            <Cursor />
+          </View>
+        </View>
+        {contexto ? (
+          <View style={s.contexto}>
+            <Txt v="small" size={10} cor={colors.textFaint}>
+              {contexto.rotulo}
+            </Txt>
+            <Txt v="h3">{contexto.valor}</Txt>
+          </View>
+        ) : null}
+      </View>
 
       <View style={s.rapidos}>
         {incrementos.map((inc) => (
@@ -114,6 +152,16 @@ export function NumberPad({
   );
 }
 
+/** Barrinha piscando: sem ela o visor parado parece um valor já confirmado. */
+function Cursor() {
+  const op = useSharedValue(1);
+  useEffect(() => {
+    op.value = withRepeat(withTiming(0, { duration: 620 }), -1, true);
+  }, [op]);
+  const st = useAnimatedStyle(() => ({ opacity: op.value }));
+  return <Animated.View style={[s.cursor, st]} />;
+}
+
 function Tecla({
   label,
   icone,
@@ -145,6 +193,30 @@ const s = StyleSheet.create({
     borderColor: colors.border,
     padding: spacing.lg,
     gap: spacing.md,
+  },
+  visor: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+  },
+  cursor: {
+    width: 2,
+    height: 30,
+    backgroundColor: colors.primary,
+    borderRadius: 1,
+    marginLeft: 2,
+  },
+  contexto: {
+    alignItems: 'flex-end',
+    paddingLeft: spacing.md,
+    borderLeftWidth: 1,
+    borderLeftColor: colors.border,
   },
   rapidos: {
     flexDirection: 'row',
