@@ -5,19 +5,15 @@
   },
   "build": {
     "apk": {
-      "//": "Perfil para instalar direto no celular, sem Play Store. O padrão do EAS gera .aab, que só serve para publicar na loja e não instala em nada.",
       "android": {
         "buildType": "apk"
       },
-      "distribution": "internal",
-      "channel": "apk"
+      "distribution": "internal"
     },
     "producao": {
-      "//": "Só quando for para a Play Store. Gera .aab assinado.",
       "android": {
         "buildType": "app-bundle"
-      },
-      "channel": "producao"
+      }
     }
   },
   "submit": {
