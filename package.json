@@ -47,7 +47,8 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "build:pwa": "expo export --platform web && node scripts/pwa.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "testar:migracao": "npx --yes tsx scripts/testar-migracao.mjs"
   },
   "private": true
 }

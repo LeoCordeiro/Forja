@@ -1,6 +1,6 @@
 import * as SQLite from 'expo-sqlite';
-import { DDL, SCHEMA_VERSION } from './schema';
-import { MIGRACOES } from './migracoes';
+import { DDL } from './schema';
+import { aplicarMigracoes } from './migrar';
 import { seedIfEmpty } from './seed';
 import { normalizar } from './normalizar';
 
@@ -29,53 +29,14 @@ export function getDb(): Promise<SQLite.SQLiteDatabase> {
     return db;
   })();
 
+  // Sem isto, uma falha na abertura vira permanente: `opening` fica sendo uma
+  // promise rejeitada e TODA chamada seguinte recebe o mesmo erro, mesmo depois
+  // do problema ter sido consertado. Zerar a referência permite tentar de novo.
+  opening.catch(() => {
+    opening = null;
+  });
+
   return opening;
-}
-
-/**
- * Aplica os degraus pendentes de migração.
- *
- * Separado de `getDb` porque o reset de dados precisa exatamente disto: o DDL
- * cria só o esquema base, e tudo que nasceu em migração — água, passos,
- * check-in, fotos de progresso e dezenas de colunas do perfil — só existe se
- * este laço rodar.
- */
-async function aplicarMigracoes(db: SQLite.SQLiteDatabase) {
-  const row = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
-  const atual = row?.user_version ?? 0;
-
-  for (const m of MIGRACOES) {
-    if (m.versao <= atual) continue;
-      // Comando a comando: um ALTER TABLE de coluna que já existe (banco criado
-      // pelo DDL novo) não pode derrubar o resto da migração.
-      // Comentários saem ANTES de dividir por ';'. Um ponto e vírgula dentro de
-      // comentário — `data:image/jpeg;base64` foi o caso real — partia o comando
-      // ao meio e derrubava a criação da tabela, enquanto o user_version subia
-      // do mesmo jeito. Resultado: migração marcada como aplicada e tabela
-      // inexistente, sem jeito de rodar de novo.
-      const limpo = m.sql
-        .split('\n')
-        .filter((l) => !l.trim().startsWith('--'))
-        .join('\n');
-
-      for (const cmd of limpo.split(';')) {
-        const sql = cmd.trim();
-        if (!sql) continue;
-        try {
-          await db.execAsync(sql);
-        } catch (e) {
-          const msg = String(e);
-          if (!/duplicate column|already exists/i.test(msg)) {
-            console.warn('[migração]', m.versao, sql.slice(0, 60), msg);
-          }
-        }
-      }
-    await db.execAsync(`PRAGMA user_version = ${m.versao}`);
-  }
-
-  if (atual < SCHEMA_VERSION) {
-    await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
-  }
 }
 
 export async function all<T>(sql: string, params: SQLite.SQLiteBindValue[] = []): Promise<T[]> {
@@ -109,24 +70,15 @@ export async function tx(fn: (db: SQLite.SQLiteDatabase) => Promise<void>) {
 /**
  * Apaga tudo e reconstrói o banco do zero.
  *
- * ── O bug que isto conserta ──────────────────────────────────────────────
- *
- * A versão anterior dropava as tabelas, reaplicava o DDL e parava aí. Só que
- * `user_version` é pragma do BANCO, não da tabela: ele sobrevive ao DROP TABLE
- * e continuava marcando a última versão aplicada. Nenhuma migração rodava de
- * novo, e tudo que nasce em migração deixava de existir — água, passos,
- * check-in, notas de exercício, fotos de progresso, e as dezenas de colunas do
- * perfil, de `experiencia` a `local_treino`.
- *
- * O app não quebrava no clique. Quebrava no passo seguinte, quando o
- * questionário tentava gravar numa coluna que tinha sumido — e é por isso que
- * parecia "o botão não faz nada".
- *
- * Zerar `user_version` e rodar as migrações de novo é o que torna o reset um
- * reset de verdade.
+ * O `PRAGMA user_version = 0` no meio não é enfeite: sem ele o banco nasce com
+ * o esquema base se achando na última versão, nenhuma migração roda e tudo que
+ * nasceu em migração deixa de existir. Ver `marcaConfere` para o estrago que
+ * isso causou e como o app se cura sozinho.
  */
 export async function resetDb() {
-  const db = await getDb();
+  // Não passa por `getDb`: o reset também é a saída de emergência de quando a
+  // abertura falha, e aí `getDb` só devolveria o mesmo erro para sempre.
+  const db = dbRef ?? (await SQLite.openDatabaseAsync('forja.db'));
   const tabelas = await db.getAllAsync<{ name: string }>(
     `SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`
   );
@@ -142,6 +94,11 @@ export async function resetDb() {
   await seedIfEmpty(db);
   await normalizar(db);
   limparArmazenamentoLocal();
+
+  // O banco está bom de novo: quem chamou pode ser a tela de erro, e ela
+  // precisa que a próxima chamada a `getDb` funcione sem recarregar o app.
+  dbRef = db;
+  opening = Promise.resolve(db);
 }
 
 /**
