@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import Animated, { FadeInDown } from 'react-native-reanimated';
@@ -6,15 +7,21 @@ import { colors, radius, shadow, spacing } from '@/theme';
 import { resumoPassos, registrarPassos } from '@/features/passos/api';
 import { resumoSolo } from '@/features/liga/api';
 import { oQueFazerHoje } from '@/features/treino/agenda';
-import { Anel, Barra, Button, Card, Empty, Press, Screen, Txt } from '@/shared/ui';
+import { Anel, Barra, Button, Card, Empty, Press, Screen, Sheet, Txt } from '@/shared/ui';
 import { useDados } from '@/shared/hooks/useDados';
 import { resumo } from '@/features/perfil/api';
-import { listarDias, prsRecentes, sessaoAberta } from '@/features/treino/api';
+import {
+  desmarcarTreinoManual,
+  listarDias,
+  marcarTreinoManual,
+  prsRecentes,
+  sessaoAberta,
+} from '@/features/treino/api';
 import { macrosDoDia } from '@/features/dieta/api';
 import { getStats, progressoNivel } from '@/features/gamificacao/api';
 import { kcal, num, pct, peso } from '@/shared/utils/format';
 import { dataAmigavel, hoje } from '@/shared/utils/date';
-import { resumoSemana } from '@/features/treino/frequencia';
+import { resumoSemana, type DiaSemana } from '@/features/treino/frequencia';
 import { registrar as registrarAgua, statusHidratacao, totalDoDia } from '@/features/agua/api';
 import { faseDaSemana, LABEL_FASE, planoRetorno, semanaAtual as semanaDoPlano } from '@/features/treino/periodizacao';
 import { Ajuda } from '@/shared/ui/Ajuda';
@@ -23,6 +30,9 @@ import { buzz } from '@/shared/utils/haptics';
 
 export default function Home() {
   const router = useRouter();
+
+  const [diaMarcando, setDiaMarcando] = useState<DiaSemana | null>(null);
+  const [salvandoMarca, setSalvandoMarca] = useState(false);
 
   const { dados, carregando, recarregar } = useDados(async () => {
     const [r, dias, macros, stats, prs, aberta] = await Promise.all([
@@ -136,8 +146,19 @@ export default function Home() {
           </View>
 
           <View style={s.semana}>
+            {/* Cada dia é tocável: treino que aconteceu fora do app — academia
+                sem sinal, celular sem bateria, jogo de futebol — pode ser
+                marcado depois. Sem isso a semana mostra a constância de usar o
+                app, não a de treinar. Dia futuro não abre: marcar treino que
+                ainda não aconteceu não é registro, é ficção. */}
             {semana.dias.map((d) => (
-              <View key={d.data} style={s.diaCol}>
+              <Press
+                key={d.data}
+                onPress={() => !d.futuro && setDiaMarcando(d)}
+                style={s.diaCol}
+                scale={d.futuro ? 1 : 0.9}
+                haptic="leve"
+              >
                 <Txt v="small" size={10} cor={d.hoje ? colors.primary : colors.textFaint} bold={d.hoje}>
                   {d.letra}
                 </Txt>
@@ -154,7 +175,7 @@ export default function Home() {
                 >
                   {d.treinou ? <Ionicons name="checkmark" size={17} color="#00251A" /> : null}
                 </View>
-              </View>
+              </Press>
             ))}
           </View>
 
@@ -499,6 +520,82 @@ export default function Home() {
           onPress={() => router.push('/conquistas')}
         />
       </Animated.View>
+
+      {/* ── Marcar treino de um dia ─────────────────────────────────────── */}
+      <Sheet
+        aberto={!!diaMarcando}
+        onFechar={() => setDiaMarcando(null)}
+        titulo={diaMarcando ? nomeDoDia(diaMarcando) : ''}
+        altura={0.5}
+      >
+        {diaMarcando && (
+          <View style={{ gap: spacing.lg }}>
+            {diaMarcando.treinou ? (
+              <>
+                <Txt v="body">
+                  {diaMarcando.volume > 0
+                    ? `Treino registrado com ${peso(diaMarcando.volume)} de volume. Como tem série gravada, ele não é desmarcável por aqui — apague pela tela do treino se estiver errado.`
+                    : 'Este dia está marcado como treinado.'}
+                </Txt>
+                {diaMarcando.volume === 0 && (
+                  <Button
+                    titulo="Desmarcar este dia"
+                    icone="close-circle-outline"
+                    variante="secundario"
+                    full
+                    carregando={salvandoMarca}
+                    onPress={async () => {
+                      setSalvandoMarca(true);
+                      try {
+                        await desmarcarTreinoManual(diaMarcando.data);
+                        buzz.leve();
+                        setDiaMarcando(null);
+                        await recarregar();
+                      } finally {
+                        setSalvandoMarca(false);
+                      }
+                    }}
+                  />
+                )}
+              </>
+            ) : (
+              <>
+                <Txt v="body">Você treinou neste dia?</Txt>
+                <Txt v="small" cor={colors.textFaint} style={{ lineHeight: 18 }}>
+                  Serve para treino que aconteceu fora do app — academia sem sinal, celular sem
+                  bateria, futebol, aula. Conta para a semana, para a sequência e para o check-in;
+                  não entra no volume nem em recorde, porque não tem série registrada.
+                </Txt>
+                <Button
+                  titulo="Sim, treinei"
+                  icone="checkmark-circle-outline"
+                  full
+                  tam="lg"
+                  carregando={salvandoMarca}
+                  onPress={async () => {
+                    setSalvandoMarca(true);
+                    try {
+                      await marcarTreinoManual(diaMarcando.data);
+                      buzz.ok();
+                      setDiaMarcando(null);
+                      await recarregar();
+                    } finally {
+                      setSalvandoMarca(false);
+                    }
+                  }}
+                />
+              </>
+            )}
+            <Button
+              titulo="Fechar"
+              variante="fantasma"
+              full
+              onPress={() => setDiaMarcando(null)}
+            />
+          </View>
+        )}
+      </Sheet>
+
     </Screen>
   );
 }
@@ -571,6 +668,14 @@ function isoDeTs(ts: number) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
     d.getDate()
   ).padStart(2, '0')}`;
+}
+
+/** "Hoje", "Ontem" ou o nome do dia — como a pessoa se refere a ele. */
+function nomeDoDia(d: DiaSemana): string {
+  if (d.hoje) return 'Hoje';
+  const NOMES = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+  const ontem = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  return d.data === ontem ? 'Ontem' : NOMES[d.diaSemana];
 }
 
 const s = StyleSheet.create({

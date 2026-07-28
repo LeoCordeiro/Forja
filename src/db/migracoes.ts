@@ -408,6 +408,23 @@ UPDATE routines SET ativa = 0
    );
 `;
 
+/**
+ * v12 → v13: sessão marcada à mão.
+ *
+ * Nem todo treino passa pelo app. Academia sem sinal, celular sem bateria,
+ * aula de spinning, jogo de futebol — e no dia seguinte o quadradinho da semana
+ * está vazio contando uma história errada. Sem um jeito de marcar depois, a
+ * constância que o app mostra é a constância de usar o app, não a de treinar.
+ *
+ * A sessão marcada à mão conta para frequência, sequência e check-in da liga,
+ * mas fica de fora das estatísticas de volume e de recorde — ela não tem série
+ * registrada, e misturar as duas coisas contaminaria justamente os números que
+ * dependem de carga real.
+ */
+const V13 = `
+ALTER TABLE workout_sessions ADD COLUMN manual INTEGER NOT NULL DEFAULT 0;
+`;
+
 export const MIGRACOES: { versao: number; sql: string }[] = [
   { versao: 2, sql: V2 },
   { versao: 3, sql: V3 },
@@ -420,4 +437,5 @@ export const MIGRACOES: { versao: number; sql: string }[] = [
   { versao: 10, sql: V10 },
   { versao: 11, sql: V11 },
   { versao: 12, sql: V12 },
+  { versao: 13, sql: V13 },
 ];

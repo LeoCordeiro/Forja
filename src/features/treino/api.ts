@@ -127,6 +127,65 @@ export async function diasComTempo(): Promise<(DiaComResumo & { minutos: number 
   }));
 }
 
+// ── Treino marcado à mão ──────────────────────────────────────────────────
+
+/**
+ * Registrar depois que já treinou, sem ter aberto o app na hora.
+ *
+ * Academia sem sinal, celular sem bateria, aula de spinning, jogo de futebol —
+ * e no dia seguinte o quadradinho da semana está vazio contando uma história
+ * errada. Sem isto, a constância que o app mostra é a de usar o app, não a de
+ * treinar, e a pessoa perde a sequência por um motivo que não tem nada a ver
+ * com treino.
+ *
+ * A sessão entra com volume zero e marcada como `manual`: conta para
+ * frequência, sequência e check-in, e fica de fora de recorde e de volume — ela
+ * não tem série registrada, e misturar contaminaria justamente os números que
+ * dependem de carga real.
+ */
+export async function marcarTreinoManual(data: string, nome = 'Treino registrado depois') {
+  const jaTem = await treinoDe(data);
+  if (jaTem) return jaTem;
+
+  // Meio-dia: a hora não importa e o meio do dia sobrevive a qualquer fuso sem
+  // escorregar para o dia vizinho.
+  const quando = new Date(`${data}T12:00:00`).getTime();
+  return run(
+    `INSERT INTO workout_sessions (routine_day_id, nome, iniciado_em, finalizado_em, volume_total_kg, manual)
+     VALUES (NULL, ?, ?, ?, 0, 1)`,
+    [nome, quando, quando]
+  );
+}
+
+/** Desfaz a marcação — e só a marcação: sessão com série registrada não sai. */
+export async function desmarcarTreinoManual(data: string): Promise<boolean> {
+  const inicio = new Date(`${data}T00:00:00`).getTime();
+  const fim = inicio + 86400000;
+  const r = await first<{ id: number }>(
+    `SELECT id FROM workout_sessions
+      WHERE manual = 1 AND iniciado_em >= ? AND iniciado_em < ? LIMIT 1`,
+    [inicio, fim]
+  );
+  if (!r) return false;
+  await run('DELETE FROM workout_sessions WHERE id = ?', [r.id]);
+  return true;
+}
+
+/** O treino daquele dia, se houver, e se foi marcado à mão. */
+export async function treinoDe(
+  data: string
+): Promise<{ id: number; nome: string; manual: boolean } | null> {
+  const inicio = new Date(`${data}T00:00:00`).getTime();
+  const fim = inicio + 86400000;
+  const r = await first<{ id: number; nome: string; manual: number }>(
+    `SELECT id, nome, manual FROM workout_sessions
+      WHERE finalizado_em IS NOT NULL AND iniciado_em >= ? AND iniciado_em < ?
+      ORDER BY manual ASC LIMIT 1`,
+    [inicio, fim]
+  );
+  return r ? { id: r.id, nome: r.nome, manual: !!r.manual } : null;
+}
+
 export async function getDia(id: number): Promise<DiaComResumo | null> {
   const rows = await listarDias();
   return rows.find((d) => d.id === id) ?? null;

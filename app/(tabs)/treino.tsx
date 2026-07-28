@@ -67,10 +67,16 @@ const MAIS = [
     sub: 'Catálogo com execução em vídeo',
   },
   {
+    rota: '/refazer-treino',
+    icone: 'sparkles-outline',
+    titulo: 'Refazer meu treino',
+    sub: 'Seis perguntas e o app monta tudo de novo — nada é apagado',
+  },
+  {
     rota: '/agenda',
-    icone: 'construct-outline',
-    titulo: 'Ajustar meus treinos',
-    sub: 'Trocar o dia da semana, editar ou refazer o plano',
+    icone: 'calendar-outline',
+    titulo: 'Agenda da semana',
+    sub: 'Trocar o dia de cada treino',
   },
 ] as const;
 
