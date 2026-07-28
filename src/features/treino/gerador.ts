@@ -46,6 +46,30 @@ import { estimarDuracao, emMinutos } from './duracao';
  *   também treina, e ignorar isso infla o volume real do braço.
  * · **Teto útil.** Acima de ~20 séries semanais o ganho extra não paga o custo
  *   de recuperação. A ênfase respeita esse teto.
+ *
+ * ── Por que GÊNERO não aparece em lugar nenhum deste arquivo ─────────────
+ *
+ * O questionário coleta gênero, e ele é usado — mas em `tmb()`, para gasto
+ * energético, não aqui. Volume, faixa de repetição, descanso e divisão saem
+ * idênticos para qualquer gênero, e isso é decisão, não esquecimento.
+ *
+ * Não é uma afirmação sobre biologia: é ausência de base para prescrever
+ * diferente. O ganho RELATIVO de massa é equivalente entre sexos (Refalo et al.,
+ * PeerJ 2025;13:e19042 — meta-análise bayesiana, 29 estudos, N=2.815: diferença
+ * de 0,69%, HDI 95% −1,50 a 2,88, cruzando zero). O número de repetições
+ * possível num dado %1RM também é praticamente igual na faixa que se usa em
+ * treino de força (Nuzzo et al., Sports Medicine 2023;53:2547-2557, 269 estudos,
+ * N=7.289). E não existe nenhuma meta-análise de frequência estratificada por
+ * sexo.
+ *
+ * O que existe de real e ainda NÃO vira código: há sinal de que mulheres
+ * recuperam mais rápido entre séries. Mas nenhum estudo mediu de quantos
+ * segundos elas precisam — os que compararam usaram descanso FIXO para os dois
+ * grupos. Encurtar descanso feminino por analogia seria inventar um número.
+ *
+ * Reverter esta decisão exige ensaio mostrando dose semanal ótima diferente por
+ * sexo — não apenas diferença de ganho absoluto, que existe e reflete ponto de
+ * partida, não capacidade de resposta.
  */
 
 export type Grupo =
@@ -121,7 +145,7 @@ const SPLITS: Record<number, ModeloDia[]> = {
   3: [
     { nome: 'A — Corpo todo, foco empurrar', cor: COR.empurrar, grupos: ['peito', 'quadriceps', 'costas', 'ombro', 'triceps', 'abdomen'] },
     { nome: 'B — Corpo todo, foco puxar', cor: COR.puxar, grupos: ['costas', 'posterior', 'peito', 'biceps', 'gluteo', 'abdomen'] },
-    { nome: 'C — Corpo todo, foco perna', cor: COR.perna, grupos: ['quadriceps', 'gluteo', 'costas', 'ombro', 'panturrilha', 'abdomen'] },
+    { nome: 'C — Corpo todo, foco perna', cor: COR.perna, grupos: ['quadriceps', 'posterior', 'gluteo', 'costas', 'ombro', 'panturrilha'] },
   ],
   4: [
     { nome: 'A — Superior', cor: COR.empurrar, grupos: ['peito', 'costas', 'ombro', 'triceps', 'biceps'] },
@@ -151,14 +175,18 @@ export function divisaoDe(dias: number): { nome: string; porque: string } {
   if (d <= 2)
     return {
       nome: 'Corpo todo',
-      porque: `Com ${d} dia${d > 1 ? 's' : ''}, treinar o corpo inteiro em cada sessão é a única forma de cada músculo aparecer 2× na semana.`,
+      porque:
+        `Com ${d} dia${d > 1 ? 's' : ''}, corpo todo em cada sessão é o máximo que dá. Peito e costas ` +
+        `ficam 2× na semana; ombro, perna e posterior ficam 1×, e isso é o teto do que ${d} dia` +
+        `${d > 1 ? 's permitem' : ' permite'} — não um erro do plano. Um terceiro dia muda esse quadro mais ` +
+        `que qualquer outro ajuste.`,
     };
   if (d === 3)
     return {
       nome: 'Corpo todo, com foco diferente por dia',
       porque:
-        'Três dias de corpo todo entregam cada grupo 3× na semana. A alternativa clássica — um ' +
-        'músculo por dia — daria 1×, abaixo do mínimo que o ACSM 2026 recomenda.',
+        'Três dias de corpo todo colocam todo grupo grande 2× ou 3× na semana. A alternativa ' +
+        'clássica — um músculo por dia — daria 1×, abaixo do mínimo que o ACSM 2026 recomenda.',
     };
   if (d === 4)
     return {
@@ -340,11 +368,21 @@ export async function montarPlano(p: PerfilDoTreino): Promise<Plano> {
         continue;
       }
 
-      const quantos = Math.min(quantosExercicios(naSessao), cands.length);
-      const porExercicio = Math.max(2, Math.floor(naSessao / quantos));
+      // Nunca mais exercícios do que dá para dar 2 séries em cada: exercício de
+      // série única é presença, não estímulo.
+      const quantos = Math.max(
+        1,
+        Math.min(quantosExercicios(naSessao), cands.length, Math.floor(naSessao / 2))
+      );
+      // O RESTO é distribuído, não descartado. Antes: floor(7/2) = 3, vezes 2 =
+      // 6 — uma série a menos por sessão, toda semana, três linhas abaixo do
+      // comentário que promete arredondar para cima para não ficar abaixo do alvo.
+      const base = Math.floor(naSessao / quantos);
+      const resto = naSessao % quantos;
 
       for (let i = 0; i < quantos; i++) {
         const e = cands[i];
+        const porExercicio = base + (i < resto ? 1 : 0);
         usadosNoDia.add(e.nome);
         const [rmin, rmax] = repsDe(e.nome, grupo, p.experiencia);
         exercicios.push({
@@ -364,14 +402,18 @@ export async function montarPlano(p: PerfilDoTreino): Promise<Plano> {
     // a força do treino inteiro; depois, não atrapalha a hipertrofia.
     if ((p.objetivo === 'emagrecimento' || p.objetivo === 'recomposicao') && cardio.length) {
       const c = cardio.find((x) => !x.equipamento || equipamentos.has(x.equipamento)) ?? cardio[0];
+      // Duração de verdade, em segundos. Antes ia com 0 e a pessoa recebia
+      // "Esteira" no fim do treino sem um único número — e o estimador de
+      // duração da sessão também trabalhava com um bloco sem duração declarada.
+      const minutosCardio = p.objetivo === 'emagrecimento' ? 30 : 20;
       exercicios.push({
         id: c.id,
         nome: c.nome,
         grupo: 'cardio',
         secundarios: [],
         series: 1,
-        repsMin: 0,
-        repsMax: 0,
+        repsMin: minutosCardio * 60,
+        repsMax: minutosCardio * 60,
         descanso: 0,
       });
     }
@@ -396,7 +438,7 @@ export async function montarPlano(p: PerfilDoTreino): Promise<Plano> {
 
   for (const d of dias) {
     const minutos = d.diaSemana !== null ? (p.minutosPorDia[d.diaSemana] ?? 60) : 60;
-    cortarParaCaber(d, minutos, avisos, volumeAtual, pisos);
+    cortarParaCaber(d, minutos, avisos, volumeAtual, pisos, p.objetivo);
     d.minutos = emMinutos(estimarDuracao(paraEstimativa(d)).totalSeg);
   }
 
@@ -422,7 +464,10 @@ function paraEstimativa(d: DiaGerado) {
     reps_min: e.repsMin,
     reps_max: e.repsMax,
     descanso_seg: e.descanso,
-    tipo_carga: e.repsMin === 0 ? 'tempo' : 'peso_reps',
+    // Pelo GRUPO, não pelo valor de reps. Com o cardio ganhando duração real em
+    // segundos, o teste antigo (`repsMin === 0`) passava a classificá-lo como
+    // peso+reps e multiplicava 1200 s por 3 — uma sessão de 20 min virava 60.
+    tipo_carga: e.grupo === 'cardio' ? 'tempo' : 'peso_reps',
   })) as never;
 }
 
@@ -438,10 +483,36 @@ function cortarParaCaber(
   minutos: number,
   avisos: string[],
   volumeAtual: Record<string, number>,
-  pisos: Record<string, number>
+  pisos: Record<string, number>,
+  objetivo: string
 ) {
   const limite = minutos * 60;
   let cortados = 0;
+  const abaixoDoPiso: string[] = [];
+
+  // ── O cardio sai PRIMEIRO quando o objetivo é músculo ────────────────────
+  //
+  // Antes ele era intocável por acidente: `contarVolume` ignora cardio, então o
+  // teste de piso comparava -1 com 0, dava falso, e o laço pulava o cardio para
+  // ir comer os acessórios de musculação. Com o cardio passando a declarar seus
+  // 20 minutos de verdade, esse acidente virou estrago — numa sessão de 60 min
+  // ele engolia um terço do orçamento e derrubava o peito de 14 para 9 séries.
+  //
+  // Em recomposição e hipertrofia quem carrega o resultado é o estímulo
+  // resistido: se não cabe tudo, o cardio é o primeiro a sair, e ele pode ser
+  // feito em outro horário sem prejuízo. Em emagrecimento puro a prioridade é a
+  // do usuário, não a minha — ali o aeróbio fica e a musculação é que cede.
+  const cardioCedeAntes = objetivo !== 'emagrecimento';
+  if (cardioCedeAntes && estimarDuracao(paraEstimativa(d)).totalSeg > limite) {
+    const i = d.exercicios.findIndex((e) => e.grupo === 'cardio');
+    if (i >= 0) {
+      d.exercicios.splice(i, 1);
+      avisos.push(
+        `${d.nome}: o cardio saiu da sessão para o treino de força caber em ${minutos} min. ` +
+          `Ele rende igual feito em outro horário — o que não dá é perder série de musculação por ele.`
+      );
+    }
+  }
 
   while (d.exercicios.length > 3 && estimarDuracao(paraEstimativa(d)).totalSeg > limite) {
     // Primeiro tenta tirar do grupo que ainda fica no alvo sem este exercício.
@@ -472,7 +543,18 @@ function cortarParaCaber(
     if (alvo < 0) break;
 
     const removido = d.exercicios[alvo];
-    volumeAtual[removido.grupo] = (volumeAtual[removido.grupo] ?? 0) - removido.series;
+    const antes = volumeAtual[removido.grupo] ?? 0;
+    const depois = antes - removido.series;
+    volumeAtual[removido.grupo] = depois;
+
+    // Aviso NOMINAL. "3 exercícios a menos para caber em 50 min" não diz à
+    // pessoa que o peito dela caiu de 12 para 6 séries semanais — e é
+    // exatamente essa informação que faz alguém decidir arrumar mais 10 min.
+    const piso = pisos[removido.grupo] ?? 0;
+    if (antes >= piso && depois < piso) {
+      abaixoDoPiso.push(removido.grupo);
+    }
+
     d.exercicios.splice(alvo, 1);
     cortados++;
   }
@@ -481,6 +563,15 @@ function cortarParaCaber(
     avisos.push(
       `${d.nome}: ${cortados} exercício${cortados > 1 ? 's' : ''} a menos para caber em ${minutos} min. ` +
         `Saíram os acessórios do fim — os compostos, que são o que constrói, ficaram todos.`
+    );
+  }
+
+  if (abaixoDoPiso.length) {
+    const nomes = [...new Set(abaixoDoPiso)].join(', ');
+    avisos.push(
+      `Para caber em ${minutos} min, ${nomes} ficou abaixo do mínimo semanal. ` +
+        `Dez minutos a mais neste dia, ou um dia a mais na semana, resolvem — o volume semanal é o ` +
+        `que mais decide o resultado, e é justamente ele que está sendo sacrificado aqui.`
     );
   }
 }
