@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Alert, Platform, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import Ionicons from '@expo/vector-icons/Ionicons';
@@ -33,6 +33,8 @@ export default function Perfil() {
   const [editandoMeta, setEditandoMeta] = useState(false);
   const [recomecando, setRecomecando] = useState(false);
   const [apagando, setApagando] = useState(false);
+  const [confirmandoReset, setConfirmandoReset] = useState(false);
+  const [resetando, setResetando] = useState(false);
 
   const { dados, recarregar } = useDados(async () => {
     const [r, stats, gam, perder] = await Promise.all([
@@ -48,23 +50,25 @@ export default function Perfil() {
   const { r, stats, gam, perder } = dados;
   const nivel = progressoNivel(gam.xp_total);
 
-  function confirmarReset() {
-    const acao = async () => {
+  /**
+   * Confirmação da ação mais destrutiva do app, na folha do próprio app.
+   *
+   * Antes usava `Alert.alert` no nativo e, no web, PULAVA a confirmação: o
+   * toque apagava tudo na hora. No PWA do iPhone — que é web — isso significava
+   * perder meses de histórico sem uma única pergunta. Uma folha que funciona
+   * igual nas três plataformas resolve os dois problemas de uma vez.
+   */
+  async function apagarTudo() {
+    setResetando(true);
+    try {
       await resetDb();
       buzz.aviso();
+      setConfirmandoReset(false);
       setTemPerfil(false);
       router.replace('/onboarding');
-    };
-    // Alert nativo não existe no preview web; lá a ação vai direto.
-    if (Platform.OS === 'web') return void acao();
-    Alert.alert(
-      'Apagar todos os dados?',
-      'Treinos, medidas, refeições e medalhas serão perdidos. Não dá para desfazer.',
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        { text: 'Apagar tudo', style: 'destructive', onPress: acao },
-      ]
-    );
+    } finally {
+      setResetando(false);
+    }
   }
 
   return (
@@ -263,7 +267,7 @@ export default function Perfil() {
         />
       </Card>
 
-      <Press onPress={confirmarReset} style={s.reset} haptic="forte">
+      <Press onPress={() => setConfirmandoReset(true)} style={s.reset} haptic="forte">
         <Ionicons name="warning-outline" size={15} color={colors.danger} />
         <Txt v="small" cor={colors.danger}>
           Apagar todos os dados e recomeçar
@@ -304,6 +308,39 @@ export default function Perfil() {
             }}
           />
           <Button titulo="Cancelar" variante="fantasma" full onPress={() => setApagando(false)} />
+        </View>
+      </Sheet>
+
+      <Sheet
+        aberto={confirmandoReset}
+        onFechar={() => setConfirmandoReset(false)}
+        titulo="Apagar todos os dados?"
+        altura={0.6}
+      >
+        <View style={{ gap: spacing.lg }}>
+          <Txt v="body">
+            Treinos, séries, medidas, fotos de progresso, refeições, água e medalhas serão
+            apagados. Não dá para desfazer.
+          </Txt>
+          <Txt v="small" cor={colors.textFaint}>
+            Se quiser guardar antes, saia daqui e baixe a cópia dos seus dados em Treino → O que
+            travou. Depois de apagar não existe de onde recuperar: nada disto está em servidor
+            nenhum.
+          </Txt>
+          <Button
+            titulo={resetando ? 'Apagando…' : 'Apagar tudo e recomeçar'}
+            icone="trash-outline"
+            full
+            tam="lg"
+            carregando={resetando}
+            onPress={() => void apagarTudo()}
+          />
+          <Button
+            titulo="Cancelar"
+            variante="fantasma"
+            full
+            onPress={() => setConfirmandoReset(false)}
+          />
         </View>
       </Sheet>
 
