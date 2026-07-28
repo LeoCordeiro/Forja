@@ -1,5 +1,5 @@
 import type { Profile } from '@/db/types';
-import { descansoCorreto, ehComposto, ehPesado } from './classificacao';
+import { descansoCorreto, diversificar, ehComposto, ehPesado, padraoDe } from './classificacao';
 import { equipamentosDe, limitacaoDoLocal } from './local';
 import { REGIOES_DOR } from '@/features/perfil/diagnostico';
 import { PADROES } from './padroes';
@@ -93,8 +93,29 @@ const PEQUENOS: Grupo[] = ['biceps', 'triceps', 'panturrilha', 'abdomen', 'trape
 
 /** Piso do ACSM 2026. Nenhum grupo fica abaixo disso. */
 export const PISO_SEMANAL = 10;
-/** Acima disso o retorno não paga a recuperação. */
+/** Acima disso o retorno não paga a recuperação, para grupo sem prioridade. */
 export const TETO_SEMANAL = 20;
+/**
+ * Teto do grupo que a pessoa escolheu priorizar.
+ *
+ * ── Por que 28 e não 20 ──────────────────────────────────────────────────
+ *
+ * 20 é onde o retorno COMEÇA a cair, não onde ele acaba. A meta-regressão de
+ * dose-resposta mostra hipertrofia ainda subindo acima disso, com ganho cada
+ * vez menor e sem platô claro dentro da faixa estudada. Tratar 20 como parede
+ * era transformar "diminui" em "para".
+ *
+ * O custo disso apareceu inteiro num caso real: um dia de "costas e bíceps"
+ * com 90 minutos disponíveis saiu com DOIS exercícios de costas — terra e
+ * barra fixa — sem puxada frontal e sem remada, usando 4 dos 12 exercícios de
+ * costas do catálogo. Não era falta de exercício nem falta de tempo: as costas
+ * fechavam exatamente em 20 séries e o gerador parava ali.
+ *
+ * O teto maior vale só para quem foi priorizado, e só até onde o tempo do dia
+ * permitir. Quem não foi escolhido continua em 20, que é onde o custo de
+ * recuperação deixa de valer para músculo que não é a prioridade da pessoa.
+ */
+export const TETO_SEMANAL_FOCO = 28;
 /**
  * Teto de séries do mesmo grupo numa sessão.
  *
@@ -511,6 +532,7 @@ function alvoSemanal(grupo: Grupo, p: PerfilDoTreino): number {
   let alvo = pequeno ? Math.round(base * 0.6) : base;
 
   const { alvos, bonus, desconto } = pesosDaEnfase(p.focos);
+  const emFoco = alvos.has(grupo);
   if (alvos.size) {
     // Abdômen fica de fora da conta de troca: quase todo mundo quer, ele quase
     // não cobra recuperação, e descontá-lo por não ter sido marcado só produz
@@ -521,7 +543,29 @@ function alvoSemanal(grupo: Grupo, p: PerfilDoTreino): number {
     }
   }
 
-  return Math.max(6, Math.min(TETO_SEMANAL, alvo));
+  // O bônus de ênfase só chega perto do teto novo se o grupo for grande: para
+  // bíceps e panturrilha, 28 séries diretas por semana não é prioridade, é
+  // lesão por uso repetitivo esperando acontecer.
+  const teto = emFoco && !pequeno ? TETO_SEMANAL_FOCO : TETO_SEMANAL;
+  return Math.max(6, Math.min(teto, alvo));
+}
+
+/**
+ * Até onde o volume de um grupo pode subir quando SOBRA tempo.
+ *
+ * `alvoSemanal` é a mira do plano; isto é o limite. A diferença entre os dois é
+ * a folga de quem tem mais tempo disponível: quem treina 90 min cinco vezes por
+ * semana consegue absorver mais que quem tem 50, e travar os dois no mesmo alvo
+ * era o que fazia um dia de costas com 90 minutos sair com dois exercícios.
+ *
+ * Grupo pequeno não sobe junto: bíceps aguenta menos série direta porque toda
+ * remada da semana já o treina, e enchê-lo de rosca com o tempo que sobrou é
+ * como se machucar por sobra de agenda.
+ */
+function tetoDe(grupo: Grupo, p: PerfilDoTreino): number {
+  const pequeno = PEQUENOS.includes(grupo);
+  if (pequeno) return grupo === 'abdomen' ? 12 : 14;
+  return pesosDaEnfase(p.focos).alvos.has(grupo) ? TETO_SEMANAL_FOCO : TETO_SEMANAL;
 }
 
 /** Faixa de repetição pelo papel do exercício na sessão. */
@@ -574,10 +618,20 @@ function rodar<T>(lista: T[], n: number): T[] {
   return [...lista.slice(k), ...lista.slice(0, k)];
 }
 
+/**
+ * Em quantos exercícios dividir as séries de um grupo na sessão.
+ *
+ * Parava em 3, e isso limitava a sessão antes de qualquer conta de tempo: um
+ * dia de costas com 90 minutos e 12 exercícios disponíveis no catálogo saía com
+ * dois. O corte certo é por SÉRIE (3 a 4 por exercício rende mais que 2), não
+ * por um número fixo de exercícios.
+ */
 function quantosExercicios(series: number): number {
   if (series <= 4) return 1;
   if (series <= 8) return 2;
-  return 3;
+  if (series <= 11) return 3;
+  if (series <= 15) return 4;
+  return 5;
 }
 
 // ── Montagem ──────────────────────────────────────────────────────────────
@@ -661,9 +715,12 @@ export async function montarPlano(
       // custa menos que ficar cronicamente abaixo dele.
       const naSessao = Math.max(2, Math.min(TETO_SERIES_SESSAO, Math.ceil(alvo / aparicoes[grupo])));
 
-      const ordenados = ordenar(
-        disponiveis.filter((e) => e.grupo_primario === grupo && !usadosNoDia.has(e.nome)),
-        p.preferenciaEquipamento
+      const ordenados = diversificar(
+        ordenar(
+          disponiveis.filter((e) => e.grupo_primario === grupo && !usadosNoDia.has(e.nome)),
+          p.preferenciaEquipamento
+        ),
+        grupo
       );
 
       // Rodízio a partir do SEGUNDO exercício.
@@ -769,7 +826,7 @@ export async function montarPlano(
   // em cada), depois usa o tempo que sobrou. Ao contrário, encheria de série um
   // exercício que ia sair de qualquer jeito.
   consolidar(dias);
-  preencherTempo(dias, p, avisos);
+  preencherTempo(dias, p, avisos, disponiveis);
 
   for (const d of dias) d.minutos = emMinutos(estimarDuracao(paraEstimativa(d)).totalSeg);
 
@@ -1068,7 +1125,12 @@ function consolidar(dias: DiaGerado[]) {
  * do dia já está no alvo, o tempo sobra mesmo, e aí o plano diz isso: o limite
  * passou a ser a recuperação, não a agenda.
  */
-function preencherTempo(dias: DiaGerado[], p: PerfilDoTreino, avisos: string[]) {
+function preencherTempo(
+  dias: DiaGerado[],
+  p: PerfilDoTreino,
+  avisos: string[],
+  disponiveis: ExercicioCat[]
+) {
   const FOLGA_ACEITAVEL = 8 * 60; // menos que isso não vale mexer
   let algumDiaSobrando = false;
 
@@ -1080,6 +1142,19 @@ function preencherTempo(dias: DiaGerado[], p: PerfilDoTreino, avisos: string[]) 
       if (disponivel - usado < FOLGA_ACEITAVEL) break;
 
       const volume = contarVolume(dias);
+
+      // Antes de engordar o que já existe, tenta ACRESCENTAR exercício.
+      //
+      // Só somar série no que estava lá foi o que produziu um dia de costas com
+      // terra e barra fixa e mais nada — sem puxada frontal, sem remada, com 12
+      // exercícios de costas parados no catálogo e 50 minutos livres. Estímulo
+      // vem de ângulo diferente também, não só de repetir o mesmo movimento com
+      // mais séries.
+      const novo = exercicioParaAcrescentar(d, p, volume, disponiveis);
+      if (novo) {
+        d.exercicios.splice(posicaoPara(d, novo.grupo), 0, novo);
+        continue;
+      }
       // Candidato: exercício de grupo abaixo do alvo, o de menos séries
       // primeiro — subir de 2 para 3 vale mais que de 4 para 5.
       // Teto de 4 por exercício mesmo tendo tempo: a partir da quinta série o
@@ -1088,7 +1163,7 @@ function preencherTempo(dias: DiaGerado[], p: PerfilDoTreino, avisos: string[]) 
       // não é programa, é sobra de tempo empilhada.
       const cand = d.exercicios
         .filter((e) => e.grupo !== 'cardio' && e.series < 4)
-        .filter((e) => (volume[e.grupo] ?? 0) + 1 <= alvoSemanal(e.grupo as Grupo, p))
+        .filter((e) => (volume[e.grupo] ?? 0) + 1 <= tetoDe(e.grupo as Grupo, p))
         .sort((a, b) => a.series - b.series)[0];
 
       if (!cand) {
@@ -1127,6 +1202,71 @@ function preencherTempo(dias: DiaGerado[], p: PerfilDoTreino, avisos: string[]) 
         'use a sobra para aquecer melhor, descansar o quanto o app pede e subir o peso.'
     );
   }
+}
+
+/**
+ * Escolhe um exercício novo para um grupo que ainda cabe no alvo semanal.
+ *
+ * Prefere o grupo mais distante do alvo — é onde a série extra rende mais — e
+ * dentro dele o primeiro candidato que ainda não está na sessão. Devolve null
+ * quando todo grupo do dia já está no alvo, e é isso que faz o laço parar.
+ */
+function exercicioParaAcrescentar(
+  d: DiaGerado,
+  p: PerfilDoTreino,
+  volume: Record<string, number>,
+  disponiveis: ExercicioCat[]
+): DiaGerado['exercicios'][number] | null {
+  const naSessao = new Set(d.exercicios.map((e) => e.nome));
+  const grupos = [...new Set(d.exercicios.filter((e) => e.grupo !== 'cardio').map((e) => e.grupo))];
+
+  const comFolga = grupos
+    .map((g) => ({ g, folga: tetoDe(g as Grupo, p) - (volume[g] ?? 0) }))
+    // 3 séries é o tamanho mínimo de um exercício que vale a pena entrar.
+    .filter((x) => x.folga >= 3)
+    .sort((a, b) => b.folga - a.folga);
+
+  for (const { g } of comFolga) {
+    // O exercício acrescentado pelo tempo que sobrou deve cobrir o padrão de
+    // movimento que ainda FALTA no dia. Sem isso, sobrar tempo num dia de
+    // costas rendia uma quarta puxada vertical em vez da remada que faltava.
+    const padroesNoDia = new Set(
+      d.exercicios.filter((e) => e.grupo === g).map((e) => padraoDe(e.nome, g))
+    );
+    const livres = ordenar(
+      disponiveis.filter((e) => e.grupo_primario === g && !naSessao.has(e.nome)),
+      p.preferenciaEquipamento
+    );
+    const cand = livres.find((e) => !padroesNoDia.has(padraoDe(e.nome, g))) ?? livres[0];
+    if (!cand) continue;
+    const [rmin, rmax] = repsDe(cand.nome, g, p.experiencia);
+    return {
+      id: cand.id,
+      nome: cand.nome,
+      grupo: g as Grupo,
+      secundarios: cand.grupos_secundarios.split(',').map((x) => x.trim()).filter(Boolean),
+      series: 3,
+      repsMin: cand.tipo_carga === 'tempo' ? 0 : rmin,
+      repsMax: cand.tipo_carga === 'tempo' ? 0 : rmax,
+      descanso: descansoCorreto(cand.nome, rmax, g),
+    };
+  }
+  return null;
+}
+
+/**
+ * Onde encaixar o exercício novo: junto dos do mesmo grupo, no fim deles.
+ *
+ * Jogar no fim da sessão espalharia o grupo em dois pontos separados, e a
+ * pessoa faria puxada frontal, depois rosca, depois remada — trocando de
+ * aparelho à toa e perdendo o aquecimento específico do movimento.
+ */
+function posicaoPara(d: DiaGerado, grupo: string): number {
+  let ultimo = -1;
+  d.exercicios.forEach((e, i) => {
+    if (e.grupo === grupo) ultimo = i;
+  });
+  return ultimo >= 0 ? ultimo + 1 : d.exercicios.length;
 }
 
 /** Nomes de grupo como se fala, para o aviso não sair em jargão de banco. */

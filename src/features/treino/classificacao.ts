@@ -247,3 +247,81 @@ export const MOTIVOS_TROCA = [
   { chave: 'dor', label: 'Senti dor ou desconforto', emoji: '🤕' },
   { chave: 'preferencia', label: 'Prefiro outro', emoji: '🔄' },
 ];
+
+/**
+ * Padrão de movimento, deduzido do nome.
+ *
+ * ── Por que isto existe ──────────────────────────────────────────────────
+ *
+ * O gerador escolhia exercício por ordem de catálogo. Num dia de costas com
+ * espaço para quatro, saíam levantamento terra, barra fixa, barra fixa supinada
+ * e puxada frontal — quatro puxadas verticais e nenhuma remada, com quatro
+ * remadas paradas na lista logo abaixo. Volume alto e cobertura pobre: a parte
+ * do dorsal que remada treina simplesmente não era treinada.
+ *
+ * A dedução por nome é grosseira de propósito. Os nomes são nossos, escritos
+ * neste repositório, e não mudam sozinhos — uma coluna nova no catálogo seria
+ * mais bonita e daria o mesmo resultado com 104 linhas a mais para manter.
+ * Exercício que não casa com nada cai em 'outro', e 'outro' entra no rodízio
+ * como qualquer outro padrão.
+ */
+export function padraoDe(nome: string, grupo: string): string {
+  const n = nome.toLowerCase();
+  if (grupo === 'costas') {
+    if (/remada/.test(n)) return 'horizontal';
+    if (/puxada|barra fixa|pulldown/.test(n)) return 'vertical';
+    return 'extensao';
+  }
+  if (grupo === 'peito') {
+    if (/crucifixo|voador|crossover/.test(n)) return 'abertura';
+    if (/inclinad/.test(n)) return 'inclinado';
+    return 'reto';
+  }
+  if (grupo === 'ombro') {
+    if (/lateral/.test(n)) return 'lateral';
+    if (/invers|face pull|posterior/.test(n)) return 'posterior';
+    return 'desenvolvimento';
+  }
+  if (grupo === 'quadriceps') {
+    if (/afundo|búlgaro|bulgaro|subida|passada|caminhand/.test(n)) return 'unilateral';
+    if (/leg press|extensora|hack|cadeira/.test(n)) return 'maquina';
+    return 'agachamento';
+  }
+  if (grupo === 'posterior') {
+    if (/flexora|nórdica|nordica|ham raise/.test(n)) return 'joelho';
+    return 'quadril';
+  }
+  if (grupo === 'gluteo') {
+    if (/abdu|coice|monster/.test(n)) return 'abducao';
+    return 'extensao';
+  }
+  return 'outro';
+}
+
+/**
+ * Reordena para que padrões diferentes venham primeiro.
+ *
+ * Preserva a preferência dentro de cada padrão: o primeiro de cada grupo de
+ * movimento é o que já estava melhor colocado. Só evita que os quatro primeiros
+ * sejam a mesma coisa com outro nome.
+ */
+export function diversificar<T extends { nome: string }>(cands: T[], grupo: string): T[] {
+  if (cands.length < 3) return cands;
+  const porPadrao = new Map<string, T[]>();
+  for (const c of cands) {
+    const k = padraoDe(c.nome, grupo);
+    if (!porPadrao.has(k)) porPadrao.set(k, []);
+    porPadrao.get(k)!.push(c);
+  }
+  if (porPadrao.size < 2) return cands;
+
+  const filas = [...porPadrao.values()];
+  const saida: T[] = [];
+  while (saida.length < cands.length) {
+    for (const fila of filas) {
+      const x = fila.shift();
+      if (x) saida.push(x);
+    }
+  }
+  return saida;
+}
