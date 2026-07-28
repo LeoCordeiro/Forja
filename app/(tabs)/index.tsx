@@ -5,6 +5,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { colors, radius, shadow, spacing } from '@/theme';
 import { resumoPassos, registrarPassos } from '@/features/passos/api';
 import { resumoSolo } from '@/features/liga/api';
+import { oQueFazerHoje } from '@/features/treino/agenda';
 import { Anel, Barra, Button, Card, Empty, Press, Screen, Txt } from '@/shared/ui';
 import { useDados } from '@/shared/hooks/useDados';
 import { resumo } from '@/features/perfil/api';
@@ -38,7 +39,8 @@ export default function Home() {
       resumoPassos(r?.perfil.passos_alvo ?? 8000, r?.pesoKg ?? 80),
       resumoSolo(),
     ]);
-    return { r, dias, macros, stats, prs, aberta, semana, agua, passos, liga };
+    const agenda = await oQueFazerHoje();
+    return { r, dias, macros, stats, prs, aberta, semana, agua, passos, liga, agenda };
   }, []);
 
   if (carregando || !dados?.r) {
@@ -49,7 +51,7 @@ export default function Home() {
     );
   }
 
-  const { r, dias, macros, stats, prs, aberta, semana, agua, passos, liga } = dados;
+  const { r, dias, macros, stats, prs, aberta, semana, agua, passos, liga, agenda } = dados;
   const nivel = progressoNivel(stats.xp_total);
   const primeiroNome = r.perfil.nome.split(' ')[0];
   const statusAgua = statusHidratacao(agua, r.metaAguaMl);
@@ -238,12 +240,84 @@ export default function Home() {
         </Animated.View>
       ) : null}
 
-      {/* ── Treino de hoje ── */}
+      {/* ── Treino de hoje ──
+          Vem da agenda, não do "menos recente": com dia marcado o app sabe o
+          que era para ser hoje, o que ficou pendente, e se o grupo de hoje já
+          cumpriu as ~48 h de descanso. Quando não cumpriu, ele remaneja e diz
+          por quê — empurrar a fila criaria peito em dias seguidos. */}
       <Animated.View entering={FadeInDown.delay(120).duration(300)} style={{ gap: spacing.md }}>
-        <Txt v="label">Treino de hoje</Txt>
-        {sugerido ? (
-          <Card faixa={sugerido.cor ?? colors.primary}>
-            <Txt v="h2">{sugerido.nome}</Txt>
+        <View style={s.entre}>
+          <Txt v="label">Hoje</Txt>
+          <Press onPress={() => router.push('/agenda')} haptic="leve">
+            <Txt v="small" size={11} cor={colors.primary} bold>
+              ver a semana
+            </Txt>
+          </Press>
+        </View>
+
+        <Card faixa={agenda.remanejado ? colors.warn : colors.primary}>
+          <View style={s.entre}>
+            <Txt v="h2" style={{ flex: 1 }}>
+              {agenda.titulo}
+            </Txt>
+            {agenda.remanejado ? (
+              <View style={s.selo}>
+                <Txt v="small" size={10} cor={colors.warn} bold>
+                  remanejado
+                </Txt>
+              </View>
+            ) : null}
+          </View>
+          <Txt v="small" cor={colors.textFaint} style={{ marginTop: 4 }}>
+            {agenda.motivo}
+          </Txt>
+
+          {agenda.tipo === 'treino' && agenda.routineDayId ? (
+            <Button
+              titulo={aberta ? 'Ver treino em andamento' : 'Iniciar treino'}
+              icone="flame"
+              full
+              style={{ marginTop: spacing.md }}
+              onPress={() =>
+                aberta
+                  ? router.push(`/sessao/${aberta.id}`)
+                  : router.push(`/dia/${agenda.routineDayId}`)
+              }
+            />
+          ) : agenda.tipo === 'cardio' ? (
+            <Button
+              titulo="Abrir cardio"
+              icone="pulse-outline"
+              variante="secundario"
+              full
+              style={{ marginTop: spacing.md }}
+              onPress={() => router.push('/cardio')}
+            />
+          ) : agenda.tipo === 'mobilidade' ? (
+            <Button
+              titulo="Abrir mobilidade"
+              icone="body-outline"
+              variante="secundario"
+              full
+              style={{ marginTop: spacing.md }}
+              onPress={() => router.push('/mobilidade')}
+            />
+          ) : null}
+
+          {agenda.atrasados.length ? (
+            <Txt v="small" size={11} cor={colors.textFaint} style={{ marginTop: spacing.sm }}>
+              Devendo esta semana: {agenda.atrasados.join(', ')}
+            </Txt>
+          ) : null}
+        </Card>
+      </Animated.View>
+
+      {/* ── Outras divisões ── */}
+      <Animated.View entering={FadeInDown.delay(150).duration(300)} style={{ gap: spacing.md }}>
+        {sugerido && agenda.routineDayId !== sugerido.id ? (
+          <Card faixa={sugerido.cor ?? colors.textFaint} padding={spacing.md}
+                onPress={() => router.push(`/dia/${sugerido.id}`)}>
+            <Txt v="h3" size={14}>{sugerido.nome}</Txt>
             <View style={s.linhaInfo}>
               <Info icone="list" texto={`${sugerido.qtd_exercicios} exercícios`} />
               <Info
@@ -255,24 +329,19 @@ export default function Home() {
                 }
               />
             </View>
-            <Button
-              titulo={aberta ? 'Ver treino em andamento' : 'Iniciar treino'}
-              icone="flame"
-              full
-              style={{ marginTop: spacing.sm }}
-              onPress={() =>
-                aberta ? router.push(`/sessao/${aberta.id}`) : router.push(`/dia/${sugerido.id}`)
-              }
-            />
           </Card>
-        ) : (
+        ) : null}
+      </Animated.View>
+
+      <Animated.View entering={FadeInDown.delay(160).duration(300)}>
+        {!dias.length ? (
           <Empty
             icone="barbell-outline"
             titulo="Nenhuma rotina ainda"
             texto="Crie sua primeira divisão de treino para começar."
             acao={{ titulo: 'Criar rotina', onPress: () => router.push('/treino') }}
           />
-        )}
+        ) : null}
       </Animated.View>
 
       {/* ── Nutrição do dia ── */}
@@ -547,6 +616,12 @@ const s = StyleSheet.create({
     borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  selo: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: radius.full,
+    backgroundColor: colors.warnSoft,
   },
   ligaLinha: {
     flexDirection: 'row',

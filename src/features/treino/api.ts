@@ -659,3 +659,45 @@ export async function notasDoDia(exerciseIds: number[]): Promise<Record<number, 
   );
   return Object.fromEntries(rows.map((r) => [r.exercise_id, r.nota]));
 }
+
+// ─────────────────────────── RECOMEÇAR ───────────────────────────
+
+/**
+ * Apaga rotinas e histórico de treino, preservando o resto.
+ *
+ * Existe porque montar treino é a parte do app onde mais se experimenta: cria
+ * um dia, cria outro, testa uma divisão, e em duas semanas há oito treinos e
+ * nenhum critério. Recomeçar não pode exigir apagar 20 registros na mão.
+ *
+ * O que NÃO some: perfil, peso, medidas, bioimpedância, água, dieta e
+ * conquistas. Isso é histórico de corpo, não de rotina — e quem quer refazer o
+ * treino raramente quer perder de onde partiu.
+ */
+export async function recomecarTreino(): Promise<void> {
+  await run('DELETE FROM set_logs');
+  await run('DELETE FROM personal_records');
+  await run('DELETE FROM workout_sessions');
+  await run('DELETE FROM substituicoes');
+  await run('DELETE FROM routine_exercises');
+  await run('DELETE FROM routine_days');
+  await run('DELETE FROM routines');
+  await run('DELETE FROM notas_exercicio');
+}
+
+/** O que será perdido — a tela precisa dizer antes, não depois. */
+export async function oQueSeraApagado(): Promise<{
+  rotinas: number;
+  dias: number;
+  sessoes: number;
+  series: number;
+  recordes: number;
+}> {
+  const n = async (t: string) => (await first<{ n: number }>(`SELECT COUNT(*) AS n FROM ${t}`))?.n ?? 0;
+  return {
+    rotinas: await n('routines'),
+    dias: await n('routine_days'),
+    sessoes: await n('workout_sessions'),
+    series: await n('set_logs'),
+    recordes: await n('personal_records'),
+  };
+}

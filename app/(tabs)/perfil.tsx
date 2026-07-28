@@ -19,6 +19,7 @@ import {
 } from '@/features/perfil/calculos';
 import type { NivelAtividade, Objetivo } from '@/db/types';
 import { resetDb } from '@/db/client';
+import { oQueSeraApagado, recomecarTreino } from '@/features/treino/api';
 import { useApp } from '@/shared/estado';
 import { classificarVisceral } from '@/features/perfil/recomposicao';
 import { num, volume } from '@/shared/utils/format';
@@ -30,14 +31,21 @@ export default function Perfil() {
   const setTemPerfil = useApp((s) => s.setTemPerfil);
   const [editando, setEditando] = useState(false);
   const [editandoMeta, setEditandoMeta] = useState(false);
+  const [recomecando, setRecomecando] = useState(false);
+  const [apagando, setApagando] = useState(false);
 
   const { dados, recarregar } = useDados(async () => {
-    const [r, stats, gam] = await Promise.all([resumo(), estatisticas(), getStats()]);
-    return { r, stats, gam };
+    const [r, stats, gam, perder] = await Promise.all([
+      resumo(),
+      estatisticas(),
+      getStats(),
+      oQueSeraApagado(),
+    ]);
+    return { r, stats, gam, perder };
   }, []);
 
   if (!dados?.r) return <Screen titulo="Carregando…">{null}</Screen>;
-  const { r, stats, gam } = dados;
+  const { r, stats, gam, perder } = dados;
   const nivel = progressoNivel(gam.xp_total);
 
   function confirmarReset() {
@@ -225,12 +233,79 @@ export default function Perfil() {
         </Txt>
       </Card>
 
+      {/* Recomeçar SÓ o treino: montar divisão é onde mais se experimenta, e
+          em duas semanas há oito treinos e nenhum critério. Refazer isso não
+          pode custar o histórico de peso e medidas. */}
+      <Card faixa={colors.warn}>
+        <Txt v="h3" size={15}>
+          Recomeçar o treino
+        </Txt>
+        <Txt v="small" style={{ marginTop: 4 }}>
+          Apaga rotinas, divisões e histórico de treino para você montar do zero. Peso, medidas,
+          bioimpedância, água, dieta e medalhas continuam.
+        </Txt>
+        <View style={s.perder}>
+          <Txt v="small" size={11} cor={colors.textFaint}>
+            Serão apagados: {perder.dias} divisõe{perder.dias === 1 ? 'm' : 's'},{' '}
+            {perder.sessoes} treino{perder.sessoes === 1 ? '' : 's'}, {perder.series} série
+            {perder.series === 1 ? '' : 's'} e {perder.recordes} recorde
+            {perder.recordes === 1 ? '' : 's'}.
+          </Txt>
+        </View>
+        <Button
+          titulo="Recomeçar o treino"
+          icone="refresh"
+          variante="secundario"
+          full
+          carregando={recomecando}
+          style={{ marginTop: spacing.md }}
+          onPress={() => setApagando(true)}
+        />
+      </Card>
+
       <Press onPress={confirmarReset} style={s.reset} haptic="forte">
         <Ionicons name="warning-outline" size={15} color={colors.danger} />
         <Txt v="small" cor={colors.danger}>
           Apagar todos os dados e recomeçar
         </Txt>
       </Press>
+
+      <Sheet
+        aberto={apagando}
+        onFechar={() => setApagando(false)}
+        titulo="Recomeçar o treino?"
+        altura={0.55}
+      >
+        <View style={{ gap: spacing.lg }}>
+          <Txt v="small">
+            Rotinas, divisões, sessões, séries e recordes serão apagados. Não dá para desfazer —
+            se quiser guardar, baixe a cópia dos dados antes.
+          </Txt>
+          <Txt v="small" cor={colors.textFaint}>
+            Continuam intactos: perfil, peso, medidas, bioimpedância, água, dieta e medalhas.
+          </Txt>
+          <Button
+            titulo="Sim, recomeçar"
+            variante="perigo"
+            full
+            tam="lg"
+            carregando={recomecando}
+            onPress={async () => {
+              setRecomecando(true);
+              try {
+                await recomecarTreino();
+                buzz.aviso();
+                setApagando(false);
+                recarregar();
+                router.replace('/treino');
+              } finally {
+                setRecomecando(false);
+              }
+            }}
+          />
+          <Button titulo="Cancelar" variante="fantasma" full onPress={() => setApagando(false)} />
+        </View>
+      </Sheet>
 
       <SheetEditar
         aberto={editando}
@@ -533,6 +608,12 @@ const s = StyleSheet.create({
     backgroundColor: colors.surfaceHigh,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  perder: {
+    marginTop: spacing.md,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceAlt,
   },
   reset: {
     flexDirection: 'row',

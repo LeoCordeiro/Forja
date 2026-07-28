@@ -276,10 +276,23 @@ CREATE TABLE IF NOT EXISTS notas_exercicio (
 );
 `;
 
+/**
+ * v6 → v7: dia da semana de cada treino.
+ *
+ * "Treine 3x por semana" não é plano, é intenção — sem dia marcado a decisão
+ * de treinar volta a ser tomada todo dia. Com dia marcado, o app também passa
+ * a saber o que ficou pendente e consegue remanejar respeitando as ~48 h de
+ * recuperação de cada grupo.
+ */
+const V7 = `
+ALTER TABLE routine_days ADD COLUMN dia_semana INTEGER;
+`;
+
 export const MIGRACOES: { versao: number; sql: string }[] = [
   { versao: 2, sql: V2 },
   { versao: 3, sql: V3 },
   { versao: 4, sql: V4 },
   { versao: 5, sql: V5 },
   { versao: 6, sql: V6 },
+  { versao: 7, sql: V7 },
 ];
