@@ -16,11 +16,20 @@
           "value": "/"
         }
       ]
+    },
+    {
+      "source": "/versao.json",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store, must-revalidate"
+        }
+      ]
     }
   ],
   "rewrites": [
     {
-      "source": "/((?!_expo|assets|icones|manifest.json|sw.js|favicon.ico).*)",
+      "source": "/((?!_expo|assets|icones|manifest.json|sw.js|versao.json|favicon.ico).*)",
       "destination": "/index.html"
     }
   ]
