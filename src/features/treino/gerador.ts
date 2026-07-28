@@ -218,8 +218,8 @@ export interface PerfilDoTreino {
   preferenciaEquipamento: string;
   /** Regiões com dor: os exercícios de risco saem da lista. */
   dores: string[];
-  /** Grupo a priorizar, se houver. */
-  enfase: Grupo | null;
+  /** Região ('inferior' | 'superior') ou grupo único a priorizar. */
+  enfase: string | null;
 }
 
 interface ExercicioCat {
@@ -260,12 +260,68 @@ export interface Plano {
 
 // ── Volume ────────────────────────────────────────────────────────────────
 
+/**
+ * Ênfase por REGIÃO do corpo, não por músculo solto.
+ *
+ * ── Por que existe ───────────────────────────────────────────────────────
+ *
+ * O padrão é real e todo mundo que trabalha com academia conhece: mulher
+ * costuma querer glúteo e perna, homem costuma querer peito, ombro e braço.
+ *
+ * Mas isso é **objetivo estético**, não fisiologia — e a diferença importa na
+ * hora de escrever o código. Se o app deduzisse a ênfase do gênero, ele erraria
+ * com a mulher que quer costas e com o homem que quer perna, e os dois existem.
+ * O corpo responde ao estímulo do mesmo jeito nos dois casos; o que muda é onde
+ * a pessoa quer o resultado. Então o app PERGUNTA em vez de deduzir.
+ *
+ * Ênfase de músculo único não resolvia: quem quer "inferiores" quer glúteo,
+ * posterior, quadríceps e panturrilha juntos, não só um deles.
+ */
+export const REGIOES: Record<string, Grupo[]> = {
+  inferior: ['gluteo', 'quadriceps', 'posterior', 'panturrilha'],
+  superior: ['peito', 'costas', 'ombro', 'biceps', 'triceps'],
+};
+
+/** Séries semanais somadas ao grupo enfatizado, sempre dentro do teto útil. */
+const BONUS_ENFASE = 4;
+/**
+ * Séries tiradas da região OPOSTA quando há ênfase de região.
+ *
+ * Só somar não produz foco — produz sessão maior, que o corte por tempo desfaz
+ * logo em seguida. Quem quer foco em inferiores quer mais perna E menos braço:
+ * é a troca que faz o treino de fato mudar de cara sem estourar a hora que a
+ * pessoa tem.
+ *
+ * Vale só para ênfase de REGIÃO. Escolher "glúteo" não é motivo para tirar
+ * volume do peito — são coisas de tamanho diferente.
+ */
+const DESCONTO_OPOSTA = 3;
+
+const REGIAO_OPOSTA: Record<string, string> = { inferior: 'superior', superior: 'inferior' };
+
+function grupoTemEnfase(grupo: Grupo, enfase: string | null): boolean {
+  if (!enfase) return false;
+  const regiao = REGIOES[enfase];
+  return regiao ? regiao.includes(grupo) : enfase === grupo;
+}
+
 function alvoSemanal(grupo: Grupo, p: PerfilDoTreino): number {
   const base = VOLUME_POR_EXPERIENCIA[p.experiencia] ?? PISO_SEMANAL;
   // Grupo pequeno recebe volume indireto de todo composto: a série direta pesa
   // menos e o alvo direto é menor de propósito.
-  let alvo = PEQUENOS.includes(grupo) ? Math.round(base * 0.6) : base;
-  if (p.enfase === grupo) alvo += 4;
+  const pequeno = PEQUENOS.includes(grupo);
+  let alvo = pequeno ? Math.round(base * 0.6) : base;
+
+  if (grupoTemEnfase(grupo, p.enfase)) {
+    alvo += BONUS_ENFASE;
+  } else if (p.enfase && REGIOES[p.enfase]) {
+    // Região oposta cede volume — mas nunca abaixo do piso em que o músculo
+    // ainda responde. Foco não é abandono: quem foca perna continua treinando
+    // peito e costas 2× na semana, só com menos série.
+    const oposta = REGIOES[REGIAO_OPOSTA[p.enfase]] ?? [];
+    if (oposta.includes(grupo)) alvo = Math.max(pequeno ? 6 : PISO_SEMANAL, alvo - DESCONTO_OPOSTA);
+  }
+
   return Math.max(6, Math.min(TETO_SEMANAL, alvo));
 }
 
@@ -842,7 +898,7 @@ export async function perfilDoTreino(): Promise<PerfilDoTreino | null> {
     local: p.local_treino ?? 'academia',
     preferenciaEquipamento: p.preferencia_equipamento ?? 'ambos',
     dores: (p.dores ?? '').split(',').filter(Boolean),
-    enfase: (p.enfase as Grupo | null) ?? null,
+    enfase: p.enfase ?? null,
   };
 }
 

@@ -66,15 +66,25 @@ const TEMPOS = [
 ];
 
 /** Grupos que fazem sentido priorizar. A ênfase soma série, nunca tira de outro. */
-const ENFASES: { v: Grupo | null; l: string }[] = [
-  { v: null, l: 'Equilibrado' },
-  { v: 'peito', l: 'Peito' },
-  { v: 'costas', l: 'Costas' },
-  { v: 'ombro', l: 'Ombro' },
-  { v: 'biceps', l: 'Braço' },
-  { v: 'quadriceps', l: 'Perna' },
-  { v: 'gluteo', l: 'Glúteo' },
-  { v: 'abdomen', l: 'Abdômen' },
+/**
+ * Ênfase: região primeiro, músculo depois.
+ *
+ * A pergunta é feita porque o padrão existe — mulher costuma querer glúteo e
+ * perna, homem costuma querer peito e ombro — mas deduzir isso do gênero erraria
+ * com a mulher que quer costas e com o homem que quer perna. O corpo responde
+ * igual nos dois casos; o que muda é onde a pessoa quer o resultado. Então o app
+ * pergunta em vez de assumir.
+ */
+const ENFASES: { v: string | null; l: string; d: string }[] = [
+  { v: null, l: 'Equilibrado', d: 'Volume parelho no corpo todo' },
+  { v: 'inferior', l: 'Membros inferiores', d: 'Glúteo, quadríceps, posterior e panturrilha' },
+  { v: 'superior', l: 'Membros superiores', d: 'Peito, costas, ombro e braço' },
+  { v: 'gluteo', l: 'Só glúteo', d: 'Volume extra em um grupo só' },
+  { v: 'peito', l: 'Só peito', d: 'Volume extra em um grupo só' },
+  { v: 'costas', l: 'Só costas', d: 'Volume extra em um grupo só' },
+  { v: 'ombro', l: 'Só ombro', d: 'Volume extra em um grupo só' },
+  { v: 'biceps', l: 'Só braço', d: 'Volume extra em um grupo só' },
+  { v: 'abdomen', l: 'Só abdômen', d: 'Volume extra em um grupo só' },
 ];
 
 export default function Onboarding() {
@@ -103,7 +113,7 @@ export default function Onboarding() {
   const [minutos, setMinutos] = useState(75);
   const [equipamento, setEquipamento] = useState('ambos');
   const [dores, setDores] = useState<string[]>([]);
-  const [enfase, setEnfase] = useState<Grupo | null>(null);
+  const [enfase, setEnfase] = useState<string | null>(null);
   const [plano, setPlano] = useState<Plano | null>(null);
 
   const diasSemana = diasMarcados.length || 3;
@@ -588,8 +598,11 @@ export default function Onboarding() {
               ))}
             </View>
             <Txt v="small" cor={colors.textFaint}>
-              Prioridade acrescenta séries no grupo escolhido — nunca tira dos outros, e nunca passa
-              do teto útil de 20 séries semanais, onde o ganho extra deixa de pagar a recuperação.
+              {enfase === 'inferior' || enfase === 'superior'
+                ? `Foco de região soma 4 séries semanais em cada músculo de ${enfase === 'inferior' ? 'membros inferiores' : 'membros superiores'} e tira 3 do outro lado — é a troca que muda a cara do treino sem estourar o seu tempo. Nada é abandonado: o outro lado continua sendo treinado 2× por semana.`
+                : enfase
+                  ? 'Prioridade em um grupo só acrescenta séries nele e não tira de ninguém. Sem o teto de 20 séries semanais ser ultrapassado, onde o ganho extra deixa de pagar a recuperação.'
+                  : 'Volume parelho. Escolha uma região se você quer que o treino tenha cara de foco — é assim que o app sabe, e não pelo seu gênero: o corpo responde igual, o que muda é onde você quer o resultado.'}
             </Txt>
 
             <View style={{ height: spacing.lg }} />
