@@ -281,4 +281,116 @@ export const EXERCICIOS: L[] = [
   ['Pular corda','cardio','panturrilha','livre','tempo','Rope_Jumping',
    'Cotovelos junto ao corpo, giro vem do punho.|Salto baixo, na ponta dos pés.|Ritmo constante.',
    'Salto alto cansa rápido e não rende. Mal saia do chão.'],
+
+  // ══ EXPANSÃO: INFERIORES E PESO CORPORAL ══════════════════════════════════
+  //
+  // O catálogo nasceu com 44 exercícios de superior contra 17 de inferior, e
+  // glúteo tinha três. Com isso, "foco em inferiores" não tinha como virar um
+  // treino de verdade: o gerador repetia os mesmos três exercícios ou gastava
+  // o volume em quadríceps. Era a causa concreta do treino que saiu confuso.
+  //
+  // Pior estava "em casa, sem equipamento": o filtro só libera `livre`, e não
+  // existia UM exercício de perna com essa etiqueta. O plano saía sem nenhum
+  // agachamento — e a pessoa não conclui que o app errou, conclui que não
+  // consegue treinar.
+
+  // ── GLÚTEO ──────────────────────────────────────────────────────────────
+  ['Hip thrust com barra','gluteo','posterior,quadriceps','barra','peso_reps','Barbell_Hip_Thrust',
+   'Apoie as escápulas na borda do banco, barra na dobra do quadril.|Suba até tronco e coxa formarem uma linha.|Segure um instante no topo e desça sem largar o peso no chão.',
+   'Termine o movimento com o queixo pra dentro. Jogar a cabeça pra trás dá a sensação de subir mais, mas quem sobe é a lombar, não o glúteo.'],
+  ['Agachamento ajoelhado com barra','gluteo','posterior','barra','peso_reps','Kneeling_Squat',
+   'Ajoelhe no colchonete com a barra nas costas.|Sente até quase tocar os calcanhares.|Suba empurrando o quadril à frente.',
+   'Tira o joelho e o tornozelo da conta: é glúteo quase puro. Boa saída para quem tem dor em agachamento.'],
+  ['Pull through na polia','gluteo','posterior','cabo','peso_reps','Pull_Through',
+   'De costas para a polia baixa, corda entre as pernas.|Jogue o quadril pra trás com o joelho quase reto.|Volte empurrando o quadril à frente, não puxando com o braço.',
+   'Se você sentir nos braços, o peso está alto. O braço aqui é só corrente.'],
+  ['Ponte de glúteo','gluteo','posterior','livre','peso_corporal','Butt_Lift_Bridge',
+   'Deitado de costas, joelhos dobrados, pés na largura do quadril.|Suba o quadril apertando o glúteo no topo.|Desça sem encostar de vez no chão.',
+   'Aproxime os calcanhares do bumbum até sentir que quem sobe é o glúteo, não o posterior.'],
+  ['Elevação pélvica unilateral','gluteo','posterior','livre','peso_corporal','Single_Leg_Glute_Bridge',
+   'Deitado, um pé no chão e a outra perna estendida.|Suba o quadril só com a perna apoiada.|Mantenha o quadril nivelado — sem cair pro lado livre.',
+   'Uma perna de cada vez expõe a diferença entre os lados. Faça o lado fraco primeiro e iguale as repetições pelo pior.'],
+  ['Coice no solo','gluteo','','livre','peso_corporal','Glute_Kickback',
+   'Apoiado nas mãos e joelhos, coluna neutra.|Empurre um calcanhar pro teto sem passar da linha do tronco.|Volte controlando.',
+   'Subir mais alto não é melhor: passou da linha do tronco, é lombar arqueando.'],
+  ['Subida no banco','gluteo','quadriceps','livre','peso_corporal','Step-up_with_Knee_Raise',
+   'Pé inteiro apoiado num banco na altura do joelho.|Suba empurrando com a perna de cima, sem impulso da de baixo.|Desça devagar.',
+   'Quanto mais alto o banco, mais glúteo. Baixo demais vira exercício de panturrilha.'],
+
+  // ── POSTERIOR ───────────────────────────────────────────────────────────
+  ['Flexora em pé','posterior','panturrilha','maquina','peso_reps','Standing_Leg_Curl',
+   'Uma perna de cada vez, quadril colado no apoio.|Flexione o joelho até o limite sem tirar o quadril.|Desça controlando.',
+   'Unilateral, então serve para corrigir diferença entre as pernas — coisa que mesa flexora esconde.'],
+  ['Stiff com halteres','posterior','gluteo','halter','peso_reps','Stiff-Legged_Dumbbell_Deadlift',
+   'Halteres à frente das coxas, joelho levemente flexionado e fixo.|Empurre o quadril pra trás descendo os halteres rente à perna.|Suba contraindo o glúteo.',
+   'Não é para chegar no chão. Desça só até onde o posterior estica sem a lombar arredondar.'],
+  ['Bom dia com barra','posterior','gluteo','barra','peso_reps','Good_Morning',
+   'Barra apoiada no trapézio, pés na largura do quadril.|Incline o tronco à frente jogando o quadril pra trás.|Volte com o glúteo, coluna sempre neutra.',
+   'Comece com a barra vazia. É o exercício que mais pune carga adiantada.'],
+  ['Flexão nórdica','posterior','gluteo','livre','peso_corporal','Natural_Glute_Ham_Raise',
+   'Ajoelhado com os tornozelos presos ou apoiados.|Desça o tronco à frente segurando com o posterior o máximo que der.|Empurre o chão com as mãos para voltar.',
+   'É o exercício com melhor evidência para prevenir lesão de posterior. Comece descendo pouco — é normal não segurar nem metade.'],
+  ['Glute ham raise na máquina','posterior','gluteo','maquina','peso_reps','Glute_Ham_Raise',
+   'Coxas apoiadas, tornozelos presos.|Desça o tronco até a linha do corpo.|Volte puxando com o posterior.',
+   'Versão assistida da flexão nórdica: dá para dosar em vez de tudo ou nada.'],
+  ['Hiperextensão inversa','posterior','gluteo','maquina','peso_reps','Reverse_Hyperextension',
+   'Tronco apoiado no aparelho, pernas soltas.|Suba as pernas até a linha do tronco.|Desça sem balançar.',
+   'Carrega posterior e glúteo sem comprimir a coluna. Boa escolha em dia de lombar cansada.'],
+
+  // ── QUADRÍCEPS ──────────────────────────────────────────────────────────
+  ['Agachamento livre sem peso','quadriceps','gluteo,posterior','livre','peso_corporal','Bodyweight_Squat',
+   'Pés na largura do ombro, ponta levemente pra fora.|Desça como se fosse sentar, peito aberto.|Suba empurrando o chão com o pé inteiro.',
+   'A progressão aqui não é peso, é profundidade e cadência. Descer em 3 segundos vale mais que somar repetição.'],
+  ['Agachamento na cadeira','quadriceps','gluteo','livre','peso_corporal','Chair_Squat',
+   'De pé, de costas para uma cadeira.|Desça até encostar de leve no assento.|Levante sem usar as mãos.',
+   'Ponto de partida honesto para quem está começando ou voltando. A cadeira dá o limite e tira o medo de cair.'],
+  ['Afundo caminhando','quadriceps','gluteo','livre','peso_corporal','Bodyweight_Walking_Lunge',
+   'Passo à frente, desça até o joelho de trás quase tocar o chão.|Empurre com a perna da frente e traga a de trás.|Alterne as pernas a cada passo.',
+   'Tronco reto. Inclinar pra frente transfere o trabalho pro glúteo e tira do quadríceps.'],
+  ['Agachamento búlgaro','quadriceps','gluteo','halter','peso_reps','Split_Squat_with_Dumbbells',
+   'Pé de trás apoiado num banco, pé da frente bem à frente.|Desça reto até o joelho de trás quase tocar.|Suba com a perna da frente.',
+   'Quanto mais longe o pé da frente, mais glúteo. Perto demais e o joelho reclama.'],
+  ['Agachamento goblet','quadriceps','gluteo','halter','peso_reps','Goblet_Squat',
+   'Segure um halter na vertical junto ao peito.|Desça entre os joelhos mantendo o peito alto.|Suba empurrando o chão.',
+   'O peso à frente força o tronco a ficar reto sozinho. É o melhor jeito de aprender a agachar fundo.'],
+  ['Agachamento com halteres','quadriceps','gluteo','halter','peso_reps','Dumbbell_Squat',
+   'Halteres ao lado do corpo, pés na largura do ombro.|Desça mantendo o peso no meio do pé.|Suba sem travar o joelho no topo.',
+   'Substitui o agachamento livre quando não há barra ou quando a barra nas costas incomoda.'],
+  ['Agachamento sumô com halter','quadriceps','gluteo','halter','peso_reps','Plie_Dumbbell_Squat',
+   'Pés bem afastados, pontas pra fora, halter entre as pernas.|Desça reto, joelho na direção do pé.|Suba apertando o glúteo.',
+   'A abertura joga a carga pra adutor e glúteo. Boa variação para quem já cansou de agachamento comum.'],
+  ['Subida no banco com halteres','quadriceps','gluteo','halter','peso_reps','Dumbbell_Step_Ups',
+   'Halteres nas mãos, pé inteiro no banco.|Suba sem dar impulso com a perna de baixo.|Desça controlando, sem pular.',
+   'Se você precisa de impulso pra subir, o banco está alto demais.'],
+  ['Afundo reverso com halteres','quadriceps','gluteo','halter','peso_reps','Dumbbell_Rear_Lunge',
+   'Passo pra trás, desça até o joelho quase tocar.|Empurre com a perna da frente para voltar.|Alterne.',
+   'Passo pra trás em vez de pra frente poupa o joelho. Primeira escolha para quem tem dor patelar.'],
+
+  // ── PANTURRILHA ─────────────────────────────────────────────────────────
+  ['Panturrilha com halteres','panturrilha','','halter','peso_reps','Standing_Dumbbell_Calf_Raise',
+   'Ponta dos pés num degrau, halteres nas mãos.|Desça o calcanhar até esticar.|Suba o máximo e segure um instante.',
+   'A amplitude embaixo vale mais que a carga. Calcanhar que não desce não treina panturrilha.'],
+  ['Panturrilha no smith','panturrilha','','maquina','peso_reps','Smith_Machine_Calf_Raise',
+   'Barra do smith no trapézio, ponta dos pés elevada.|Desça devagar.|Suba até o limite.',
+   'O smith segura o equilíbrio, então dá pra usar carga alta sem cair.'],
+  ['Burrinho','panturrilha','','maquina','peso_reps','Donkey_Calf_Raises',
+   'Tronco inclinado à frente, apoio no aparelho.|Desça o calcanhar até esticar.|Suba contraindo.',
+   'A inclinação do tronco alonga a panturrilha antes de contrair — pega a parte que a versão em pé deixa passar.'],
+  ['Panturrilha no degrau','panturrilha','','livre','peso_corporal',null,
+   'Ponta dos pés na quina de um degrau, calcanhar no ar.|Desça até esticar bem.|Suba na ponta e segure.',
+   'Uma perna de cada vez quando as duas ficarem fáceis — é a progressão sem precisar de peso.'],
+
+  // ── SUPERIORES SEM EQUIPAMENTO ──────────────────────────────────────────
+  ['Flexão inclinada','peito','triceps,ombro','livre','peso_corporal','Incline_Push-Up',
+   'Mãos apoiadas numa bancada ou mesa firme.|Desça o peito até quase encostar.|Empurre até esticar.',
+   'Quanto mais alto o apoio, mais fácil. É assim que se chega na flexão no chão, não forçando a versão completa.'],
+  ['Flexão com pés elevados','peito','ombro,triceps','livre','peso_corporal','Push-Ups_With_Feet_Elevated',
+   'Pés num banco, mãos no chão pouco mais largas que o ombro.|Desça o peito até quase tocar.|Empurre sem deixar o quadril cair.',
+   'A progressão da flexão quando o chão ficou fácil: sobe o pé, não a repetição.'],
+  ['Remada invertida','costas','biceps,ombro','livre','peso_corporal','Inverted_Row',
+   'Deite sob uma barra fixa baixa ou mesa firme, corpo reto.|Puxe o peito até a barra.|Desça controlando.',
+   'Quanto mais horizontal o corpo, mais pesa. Andar com os pés pra frente é como aumentar carga.'],
+  ['Flexão pique','ombro','triceps','livre','peso_corporal',null,
+   'Em V invertido, quadril alto, mãos e pés no chão.|Desça a cabeça em direção ao chão entre as mãos.|Empurre de volta.',
+   'O único jeito honesto de treinar ombro sem nenhum equipamento. Quanto mais alto o quadril, mais vira ombro e menos peito.'],
 ];

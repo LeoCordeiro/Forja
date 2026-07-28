@@ -14,13 +14,16 @@ import { DatabaseSync } from 'node:sqlite';
 import { DDL } from '../src/db/schema.ts';
 import { MIGRACOES } from '../src/db/migracoes.ts';
 import { aplicarMigracoes, marcaConfere } from '../src/db/migrar.ts';
+import { normalizar } from '../src/db/normalizar.ts';
+import { EXERCICIOS } from '../src/db/seed/exercicios.ts';
 
 const ULTIMA = Math.max(...MIGRACOES.map((m) => m.versao));
 
 const adaptar = (db) => ({
   execAsync: async (sql) => void db.exec(sql),
-  getFirstAsync: async (sql) => db.prepare(sql).get() ?? null,
-  getAllAsync: async (sql) => db.prepare(sql).all(),
+  getFirstAsync: async (sql, ps = []) => db.prepare(sql).get(...ps) ?? null,
+  getAllAsync: async (sql, ps = []) => db.prepare(sql).all(...ps),
+  runAsync: async (sql, ps = []) => db.prepare(sql).run(...ps),
 });
 
 const versao = (db) => db.prepare('PRAGMA user_version').get().user_version;
@@ -122,6 +125,51 @@ semTabela.exec('DROP TABLE fotos_progresso');
 conferir('detecta tabela faltando', !(await marcaConfere(adaptar(semTabela), ULTIMA)));
 await aplicarMigracoes(adaptar(semTabela));
 conferir('recriou a tabela', colunas(semTabela, 'fotos_progresso').length > 0);
+
+// ── 5. Exercício novo chega em banco que já existe ─────────────────────────
+//
+// `seedIfEmpty` só roda em banco vazio, então todo exercício acrescentado
+// depois do primeiro uso ficaria invisível para quem já tem o app instalado —
+// ou seja, para todo mundo que usa. É `normalizar` que fecha esse buraco.
+console.log('\n5. Catálogo cresce em banco já usado');
+const antigo = new DatabaseSync(':memory:');
+antigo.exec(DDL);
+await aplicarMigracoes(adaptar(antigo));
+
+// Simula o aparelho de quem instalou antes: só os 74 primeiros exercícios.
+const inserir = antigo.prepare(
+  `INSERT INTO exercises (nome, grupo_primario, grupos_secundarios, equipamento, tipo_carga)
+   VALUES (?,?,?,?,?)`
+);
+for (const [nome, grupo, sec, equip, carga] of EXERCICIOS.slice(0, 74))
+  inserir.run(nome, grupo, sec, equip, carga);
+
+const conta = () => antigo.prepare('SELECT COUNT(*) AS n FROM exercises').get().n;
+conferir('parte de um catálogo antigo', conta() === 74, `${conta()} exercícios`);
+
+await normalizar(adaptar(antigo));
+conferir('completou até o catálogo atual', conta() === EXERCICIOS.length,
+  `${conta()} de ${EXERCICIOS.length}`);
+
+const nomes = antigo.prepare('SELECT nome FROM exercises').all().map((e) => e.nome);
+conferir('sem duplicata', new Set(nomes).size === nomes.length,
+  `${nomes.length - new Set(nomes).size} repetido(s)`);
+conferir('trouxe os de perna sem equipamento',
+  ['Ponte de glúteo', 'Agachamento livre sem peso', 'Flexão nórdica'].every((n) => nomes.includes(n)));
+
+// Cardio fica de fora: não tem descanso entre séries para definir.
+const semDescanso = antigo
+  .prepare(
+    `SELECT nome FROM exercises
+      WHERE grupo_primario <> 'cardio'
+        AND (descanso_padrao IS NULL OR descanso_padrao = 0)`
+  )
+  .all();
+conferir('exercício novo nasceu com descanso definido', semDescanso.length === 0,
+  semDescanso.map((e) => e.nome).join(', '));
+
+await normalizar(adaptar(antigo));
+conferir('rodar de novo não duplica nada', conta() === EXERCICIOS.length, `${conta()}`);
 
 console.log(falhas ? `\n${falhas} falha(s)\n` : '\nTudo passou\n');
 process.exit(falhas ? 1 : 0);

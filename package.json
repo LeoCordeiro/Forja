@@ -48,7 +48,8 @@
     "web": "expo start --web",
     "build:pwa": "expo export --platform web && node scripts/pwa.mjs",
     "typecheck": "tsc --noEmit",
-    "testar:migracao": "npx --yes tsx scripts/testar-migracao.mjs"
+    "testar:migracao": "npx --yes tsx scripts/testar-migracao.mjs",
+    "testar:gerador": "npx --yes tsx scripts/testar-gerador.mjs"
   },
   "private": true
 }

@@ -1,11 +1,23 @@
-import { all, first, getDb, run } from '@/db/client';
 import type { Profile } from '@/db/types';
 import { descansoCorreto, ehComposto, ehPesado } from './classificacao';
 import { equipamentosDe, limitacaoDoLocal } from './local';
 import { REGIOES_DOR } from '@/features/perfil/diagnostico';
-import { lerTempoPorDia } from '@/features/perfil/api';
-import { distribuirAutomaticamente, PADROES } from './agenda';
+import { PADROES } from './padroes';
 import { estimarDuracao, emMinutos } from './duracao';
+
+/**
+ * O banco entra tarde, de propósito.
+ *
+ * Importar `@/db/client` no topo arrasta `expo-sqlite` e, atrás dele, o React
+ * Native inteiro — e aí este arquivo só roda dentro do app. Como ele é a
+ * inteligência central do produto, a única forma de conferir uma regra passava
+ * a ser abrir o app e olhar a tela, que é exatamente como um teto de séries
+ * errado ficou meses cortando 40% do volume sem ninguém ver.
+ *
+ * Com o import tardio, o núcleo de prescrição roda no Node e
+ * `scripts/testar-gerador.mjs` confere ordem, volume e cobertura de uma vez.
+ */
+const banco = () => import('@/db/client');
 
 /**
  * Gerador de treino.
@@ -356,6 +368,34 @@ function pesosDaEnfase(focos: string[]): { alvos: Set<string>; bonus: number; de
   return { alvos, bonus, desconto };
 }
 
+/**
+ * Põe na frente da sessão o que a pessoa marcou como foco.
+ *
+ * Até aqui a ênfase só mexia em VOLUME — o grupo priorizado ganhava série, mas
+ * continuava na posição que o modelo do dia definiu. Quem marcava glúteo num
+ * split de 4 dias fazia glúteo em terceiro, depois de quadríceps e posterior
+ * terem gasto a perna inteira. Sobra série e falta força para executá-la, que é
+ * o pior dos dois mundos: o volume aparece no papel e não vira estímulo.
+ *
+ * A ressalva é o grupo pequeno. Priorizar bíceps não pode significar rosca
+ * antes de toda remada: o composto pesado é onde o próprio bíceps recebe a
+ * maior parte do estímulo, e chegar nele com o braço pronto derruba a carga de
+ * tudo que vem depois. Então grupo pequeno sobe, mas atrás do primeiro composto
+ * grande do dia.
+ */
+function priorizarNoDia(grupos: Grupo[], alvos: Set<string>): Grupo[] {
+  const enfatizados = grupos.filter((g) => alvos.has(g));
+  const resto = grupos.filter((g) => !alvos.has(g));
+  // Sem foco, ou com o dia inteiro em foco, a ordem do modelo já é a certa.
+  if (!enfatizados.length || !resto.length) return grupos;
+
+  const grandes = enfatizados.filter((g) => !PEQUENOS.includes(g));
+  const pequenos = enfatizados.filter((g) => PEQUENOS.includes(g));
+  if (grandes.length) return [...grandes, ...pequenos, ...resto];
+
+  return [resto[0], ...pequenos, ...resto.slice(1)];
+}
+
 function alvoSemanal(grupo: Grupo, p: PerfilDoTreino): number {
   const base = VOLUME_POR_EXPERIENCIA[p.experiencia] ?? PISO_SEMANAL;
   // Grupo pequeno recebe volume indireto de todo composto: a série direta pesa
@@ -428,15 +468,31 @@ function quantosExercicios(series: number): number {
 
 // ── Montagem ──────────────────────────────────────────────────────────────
 
-export async function montarPlano(p: PerfilDoTreino): Promise<Plano> {
-  const catalogo = await all<ExercicioCat>(
-    `SELECT id, nome, grupo_primario, grupos_secundarios, equipamento, tipo_carga
-       FROM exercises WHERE grupo_primario <> 'cardio'`
-  );
-  const cardio = await all<ExercicioCat>(
-    `SELECT id, nome, grupo_primario, grupos_secundarios, equipamento, tipo_carga
-       FROM exercises WHERE grupo_primario = 'cardio'`
-  );
+/**
+ * O catálogo pode vir de fora.
+ *
+ * Isto existe só para teste: é a única dependência do gerador que precisa de
+ * banco, e sem uma porta de entrada a inteligência central do app só poderia
+ * ser verificada abrindo o app e olhando. `scripts/testar-gerador.mjs` entra
+ * por aqui com o catálogo lido direto do seed e confere as regras que não dá
+ * para ver no olho — ordem, volume por grupo e cobertura por local.
+ */
+export async function montarPlano(
+  p: PerfilDoTreino,
+  fonte?: { catalogo: ExercicioCat[]; cardio: ExercicioCat[] }
+): Promise<Plano> {
+  const catalogo =
+    fonte?.catalogo ??
+    (await (await banco()).all<ExercicioCat>(
+      `SELECT id, nome, grupo_primario, grupos_secundarios, equipamento, tipo_carga
+         FROM exercises WHERE grupo_primario <> 'cardio'`
+    ));
+  const cardio =
+    fonte?.cardio ??
+    (await (await banco()).all<ExercicioCat>(
+      `SELECT id, nome, grupo_primario, grupos_secundarios, equipamento, tipo_carga
+         FROM exercises WHERE grupo_primario = 'cardio'`
+    ));
 
   const equipamentos = new Set(equipamentosDe(p.local));
   const proibidos = evitarPorDor(p.dores);
@@ -450,6 +506,8 @@ export async function montarPlano(p: PerfilDoTreino): Promise<Plano> {
   const aparicoes: Record<string, number> = {};
   for (const d of modelo) for (const g of d.grupos) aparicoes[g] = (aparicoes[g] ?? 0) + 1;
 
+  const { alvos: emFoco } = pesosDaEnfase(p.focos);
+
   const dias: DiaGerado[] = [];
   const usadosNoDia = new Set<string>();
 
@@ -457,7 +515,7 @@ export async function montarPlano(p: PerfilDoTreino): Promise<Plano> {
     usadosNoDia.clear();
     const exercicios: DiaGerado['exercicios'] = [];
 
-    for (const grupo of md.grupos) {
+    for (const grupo of priorizarNoDia(md.grupos, emFoco)) {
       const alvo = alvoSemanal(grupo, p);
       // Arredonda para CIMA: com 10 séries semanais em 3 aparições, arredondar
       // para baixo dá 3 por sessão e entrega 9 — ficar um pouco acima do alvo
@@ -537,6 +595,7 @@ export async function montarPlano(p: PerfilDoTreino): Promise<Plano> {
   // alvo volta ao alvo, e os minutos que ele devolve são exatamente os que
   // evitam que o corte por tempo coma os acessórios do fim da sessão.
   aparExcesso(dias, p);
+  avisarExcessoIndireto(dias, p, avisos);
 
   // Piso por grupo: 70% do alvo. Abaixo disso o estímulo daquele músculo deixa
   // de valer a pena, e é preferível a sessão passar um pouco do tempo.
@@ -729,8 +788,15 @@ function contarVolume(dias: DiaGerado[]): Record<string, number> {
  * ali por outro motivo.
  */
 function aparExcesso(dias: DiaGerado[], p: PerfilDoTreino) {
-  // Teto de voltas: garante término mesmo se nenhum corte reduzir o excesso.
-  for (let volta = 0; volta < 60; volta++) {
+  // Teto de voltas: só uma rede de segurança contra laço infinito — a saída de
+  // verdade é `!cortou`, quando não sobra série direta para tirar.
+  //
+  // Era 60, e ficava curto exatamente no caso que mais precisa dele: cada volta
+  // corta UMA série, e num avançado de 6 dias vários grupos estouram ao mesmo
+  // tempo. O aparador chegava ao limite no meio do serviço e o plano saía com
+  // 31 séries semanais de ombro — 70% acima do alvo, no grupo que mais se
+  // lesiona. Como o laço termina sozinho, o número só precisa ser grande.
+  for (let volta = 0; volta < 500; volta++) {
     const vol = contarVolume(dias);
 
     // Todos os grupos acima do alvo, do mais estourado para o menos. Percorrer
@@ -763,6 +829,50 @@ function aparExcesso(dias: DiaGerado[], p: PerfilDoTreino) {
     // Nenhum grupo estourado tem série direta para tirar: o excesso é todo
     // indireto e não há o que fazer sem mexer nos compostos.
     if (!cortou) return;
+  }
+}
+
+/** Nomes de grupo como se fala, para o aviso não sair em jargão de banco. */
+const COMO_SE_FALA: Record<string, string> = {
+  peito: 'peito', costas: 'costas', ombro: 'ombro', biceps: 'bíceps',
+  triceps: 'tríceps', quadriceps: 'quadríceps', posterior: 'posterior de coxa',
+  gluteo: 'glúteo', panturrilha: 'panturrilha', abdomen: 'abdômen',
+  trapezio: 'trapézio', antebraco: 'antebraço',
+};
+
+/**
+ * Diz quando um grupo passa muito do alvo por volume INDIRETO.
+ *
+ * O aparador tira série direta até o piso de 2 por exercício e para — de
+ * propósito, porque o resto do excesso vem de composto que está ali por outro
+ * motivo, e cortar supino para "consertar" o ombro seria destruir o peito.
+ *
+ * Só que aí o plano ficava calado sobre duas coisas ao mesmo tempo: o grupo
+ * está bem acima do alvo, e o trabalho DIRETO dele saiu enxuto de propósito.
+ * Um avançado em 6 dias termina com 12 séries diretas de ombro e 19 indiretas
+ * vindas de todo supino, mergulho e encolhimento da semana. Sem explicação, as
+ * três séries de desenvolvimento parecem erro do app — e a reação natural é
+ * acrescentar ombro na mão, que é exatamente o caminho para a lesão mais comum
+ * de quem treina.
+ */
+function avisarExcessoIndireto(dias: DiaGerado[], p: PerfilDoTreino, avisos: string[]) {
+  const total = contarVolume(dias);
+  const direto: Record<string, number> = {};
+  for (const d of dias)
+    for (const e of d.exercicios) direto[e.grupo] = (direto[e.grupo] ?? 0) + e.series;
+
+  for (const [g, v] of Object.entries(total)) {
+    if (g === 'abdomen' || g === 'cardio') continue;
+    const alvo = alvoSemanal(g as Grupo, p);
+    const indireto = v - (direto[g] ?? 0);
+    // Só avisa quando estourou de verdade E a causa é o volume indireto.
+    if (v <= alvo * 1.3 || indireto < v / 2) continue;
+    avisos.push(
+      `Seu ${COMO_SE_FALA[g] ?? g} soma ${Math.round(v)} séries por semana, mas só ` +
+        `${direto[g] ?? 0} são de exercício direto — o resto vem dos compostos, que trabalham ` +
+        `esse músculo junto. O trabalho direto ficou enxuto de propósito: somado, o total já ` +
+        `passa do que a recuperação acompanha. Não acrescente exercício desse grupo por conta.`
+    );
   }
 }
 
@@ -881,9 +991,9 @@ function distribuirNaSemana(dias: DiaGerado[], p: PerfilDoTreino, avisos: string
  * exemplo E a rotina nova, sem saber qual das duas era a dela.
  */
 export async function aplicarPlano(plano: Plano, nome = 'Meu treino'): Promise<number> {
-  const db = await getDb();
+  const db = await (await banco()).getDb();
 
-  await run('UPDATE routines SET ativa = 0 WHERE ativa = 1');
+  await (await banco()).run('UPDATE routines SET ativa = 0 WHERE ativa = 1');
 
   const r = await db.runAsync(
     `INSERT INTO routines (nome, descricao, ativa, criado_em, nivel, dias_semana)
@@ -914,7 +1024,7 @@ export async function aplicarPlano(plano: Plano, nome = 'Meu treino'): Promise<n
 
   // Se algum dia ficou sem data — divisão maior que os dias marcados —, a
   // agenda resolve olhando os grupos musculares.
-  if (plano.dias.some((d) => d.diaSemana === null)) await distribuirAutomaticamente();
+  if (plano.dias.some((d) => d.diaSemana === null)) await (await import('./agenda')).distribuirAutomaticamente();
 
   return routineId;
 }
@@ -933,7 +1043,7 @@ export async function gerarEAplicar(p: PerfilDoTreino, nome?: string): Promise<P
  * isto lê, e o treino sai de lá sem passo intermediário.
  */
 export async function perfilDoTreino(): Promise<PerfilDoTreino | null> {
-  const p = await first<Profile>('SELECT * FROM profile WHERE id = 1');
+  const p = await (await banco()).first<Profile>('SELECT * FROM profile WHERE id = 1');
   if (!p) return null;
 
   const marcados = (p.dias_disponiveis ?? '')
@@ -944,7 +1054,7 @@ export async function perfilDoTreino(): Promise<PerfilDoTreino | null> {
   return {
     dias: p.dias_treino_semana ?? 3,
     diasDisponiveis: marcados,
-    minutosPorDia: lerTempoPorDia(p.minutos_por_dia),
+    minutosPorDia: (await import('@/features/perfil/api')).lerTempoPorDia(p.minutos_por_dia),
     experiencia: p.experiencia ?? 'iniciante',
     objetivo: p.objetivo ?? 'hipertrofia',
     local: p.local_treino ?? 'academia',

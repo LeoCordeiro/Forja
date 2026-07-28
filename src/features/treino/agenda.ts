@@ -1,4 +1,6 @@
 import { all, first, run } from '@/db/client';
+export { PADROES } from './padroes';
+import { PADROES } from './padroes';
 import { mapaDeRecuperacao, type RecuperacaoGrupo } from './recuperacao';
 
 /**
@@ -139,14 +141,6 @@ export async function definirDia(routineDayId: number, diaSemana: number | null)
  * segunda/terça/quinta/sexta. É a distribuição que maximiza a distância entre
  * sessões do mesmo grupo sem precisar saber quais grupos são.
  */
-export const PADROES: Record<number, number[]> = {
-  1: [1],
-  2: [1, 4],
-  3: [1, 3, 5],
-  4: [1, 2, 4, 5],
-  5: [1, 2, 3, 5, 6],
-  6: [1, 2, 3, 4, 5, 6],
-};
 
 /**
  * Distribui olhando os MÚSCULOS, não só a quantidade de dias.

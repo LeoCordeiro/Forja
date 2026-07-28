@@ -1,5 +1,6 @@
 import type * as SQLite from 'expo-sqlite';
 import { COMPOSTOS, COMPOSTOS_PESADOS, descansoCorreto } from '@/features/treino/classificacao';
+import { EXERCICIOS, MEDIA_BASE } from './seed/exercicios';
 
 /**
  * Normalização pós-migração.
@@ -13,8 +14,56 @@ import { COMPOSTOS, COMPOSTOS_PESADOS, descansoCorreto } from '@/features/treino
  * indica. Corrigir por regra conserta o que já está no aparelho de quem usa.
  */
 export async function normalizar(db: SQLite.SQLiteDatabase) {
+  await completarCatalogo(db);
   await classificarExercicios(db);
   await corrigirDescansos(db);
+}
+
+/**
+ * Insere exercício novo do catálogo em banco que já existe.
+ *
+ * `seedIfEmpty` só roda em banco vazio — o nome não mente. Então todo exercício
+ * acrescentado depois do primeiro uso ficava invisível para quem já tinha o app
+ * instalado, que é justamente todo mundo que usa. A expansão que levou o
+ * catálogo de 74 para 104 (inferiores e peso corporal, os dois buracos que
+ * faziam "foco em glúteo" e "em casa sem equipamento" saírem sem treino) não
+ * chegaria em nenhum aparelho.
+ *
+ * Casa por NOME, que é o que o app mostra e o que o usuário reconhece — id de
+ * seed não sobrevive a reset. Quem já existe não é tocado: mexer em exercício
+ * com série registrada apagaria histórico.
+ */
+async function completarCatalogo(db: SQLite.SQLiteDatabase) {
+  const existentes = new Set(
+    (await db.getAllAsync<{ nome: string }>('SELECT nome FROM exercises')).map((e) => e.nome)
+  );
+  if (!existentes.size) return; // banco novo: o seed dá conta
+
+  const faltando = EXERCICIOS.filter(([nome]) => !existentes.has(nome));
+  if (!faltando.length) return;
+
+  for (const [nome, grupo, sec, equip, carga, slug, instr, dica] of faltando) {
+    await db.runAsync(
+      `INSERT INTO exercises
+         (nome, grupo_primario, grupos_secundarios, equipamento, tipo_carga,
+          media_url, instrucoes, dica)
+       VALUES (?,?,?,?,?,?,?,?)`,
+      [nome, grupo, sec, equip, carga, slug ? `${MEDIA_BASE}/${slug}` : null, instr, dica]
+    );
+  }
+
+  // Força a reclassificação: sem isto o exercício novo entra sem saber se é
+  // composto e com descanso zerado, e o gerador prescreve pausa errada nele.
+  //
+  // O CREATE não é redundante: `app_flags` nasce lá embaixo, dentro de
+  // `corrigirDescansos`, e num banco que ainda não chegou lá o DELETE estoura.
+  // Como `normalizar` roda dentro da abertura do banco, isso não daria um erro
+  // discreto — daria o app inteiro sem abrir.
+  await db.execAsync(
+    `CREATE TABLE IF NOT EXISTS app_flags (key TEXT PRIMARY KEY, value TEXT NOT NULL)`
+  );
+  await db.runAsync(`DELETE FROM app_flags WHERE key = 'descansos_v3'`);
+  await db.runAsync('UPDATE exercises SET eh_composto = 0');
 }
 
 async function classificarExercicios(db: SQLite.SQLiteDatabase) {
