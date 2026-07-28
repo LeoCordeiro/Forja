@@ -54,11 +54,25 @@ export interface EstimativaTreino {
   pctDescanso: number;
 }
 
+/**
+ * Estima a duração da MUSCULAÇÃO. Cardio não entra.
+ *
+ * O tempo que a pessoa informa no questionário é o que ela tem para levantar
+ * peso — foi assim que ela entendeu a pergunta. Somar 20 min de esteira nesse
+ * orçamento faz o app cortar exercício de força para caber o cardio, que é o
+ * contrário da prioridade de quem quer hipertrofia. Pior: o corte acontecia em
+ * silêncio, e a pessoa via um treino curto sem entender por quê.
+ *
+ * O cardio continua prescrito e continua aparecendo na sessão — só não disputa
+ * o mesmo orçamento. Ele é o que vem DEPOIS do treino, não parte dele.
+ */
 export function estimarDuracao(exs: RoutineExerciseFull[]): EstimativaTreino {
   let execucao = 0;
   let descanso = 0;
 
-  for (const e of exs) {
+  const forca = exs.filter((e) => e.grupo_primario !== 'cardio');
+
+  for (const e of forca) {
     const reps = ((e.reps_min ?? 8) + (e.reps_max ?? 12)) / 2;
     const porSerie = e.tipo_carga === 'tempo' ? reps : reps * SEG_POR_REP;
     execucao += e.series_alvo * porSerie;
@@ -66,7 +80,7 @@ export function estimarDuracao(exs: RoutineExerciseFull[]): EstimativaTreino {
     descanso += Math.max(0, e.series_alvo - 1) * e.descanso_seg;
   }
 
-  const transicao = SEG_AQUECIMENTO + exs.length * SEG_TROCA;
+  const transicao = SEG_AQUECIMENTO + forca.length * SEG_TROCA;
   const total = execucao + descanso + transicao;
 
   return {

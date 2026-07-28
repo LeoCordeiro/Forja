@@ -236,10 +236,15 @@ const SPLITS_FOCO: Record<'superior' | 'inferior', Record<number, ModeloDia[]>> 
       { nome: 'D — Superior', cor: COR.puxar, grupos: ['costas', 'peito', 'ombro', 'biceps', 'triceps'] },
     ],
     5: [
+      // Os dois dias de superior são COMPLETOS, não empurrar/puxar. Com apenas
+      // dois dias para o corpo inteiro de cima, dividir em empurrar e puxar
+      // deixava peito, costas e ombro em 1× por semana cada — todos abaixo do
+      // mínimo, e não só a região preterida como um todo. Repetindo o superior
+      // inteiro nos dois dias, os grupos grandes voltam para 2×.
       { nome: 'A — Inferior, foco quadríceps', cor: COR.perna, grupos: ['quadriceps', 'gluteo', 'panturrilha'] },
-      { nome: 'B — Superior, empurrar', cor: COR.empurrar, grupos: ['peito', 'ombro', 'triceps'] },
+      { nome: 'B — Superior', cor: COR.empurrar, grupos: ['peito', 'costas', 'ombro', 'triceps'] },
       { nome: 'C — Inferior, foco posterior', cor: COR.perna, grupos: ['posterior', 'gluteo', 'panturrilha'] },
-      { nome: 'D — Superior, puxar', cor: COR.puxar, grupos: ['costas', 'biceps', 'trapezio'] },
+      { nome: 'D — Superior', cor: COR.puxar, grupos: ['costas', 'peito', 'ombro', 'biceps'] },
       { nome: 'E — Inferior, foco glúteo', cor: COR.perna, grupos: ['gluteo', 'quadriceps', 'posterior', 'abdomen'] },
     ],
     6: [
@@ -562,6 +567,13 @@ function ordenar(cands: ExercicioCat[], preferencia: string): ExercicioCat[] {
 }
 
 /** Quantos exercícios distintos para um número de séries. */
+/** Gira a lista n posições. Usado no rodízio de acessórios entre os dias. */
+function rodar<T>(lista: T[], n: number): T[] {
+  if (lista.length < 2) return lista;
+  const k = n % lista.length;
+  return [...lista.slice(k), ...lista.slice(0, k)];
+}
+
 function quantosExercicios(series: number): number {
   if (series <= 4) return 1;
   if (series <= 8) return 2;
@@ -614,7 +626,13 @@ export async function montarPlano(
   // surpresa em cima de quem esperava o padrão.
   const preterida = regiaoDoFoco(p.focos) === 'superior' ? 'inferior' : 'superior';
   if (regiaoDoFoco(p.focos)) {
-    const umaVezSo = REGIOES[preterida].filter((g) => (aparicoes[g] ?? 0) === 1);
+    // Só grupo GRANDE conta aqui. Bíceps e tríceps em 1× direto não são um
+    // problema de frequência: toda remada e todo supino da semana os treinam
+    // junto, e avisar sobre eles transformava um alerta real ("sua perna caiu
+    // para 1×") em ruído que aparecia em todo plano com foco.
+    const umaVezSo = REGIOES[preterida]
+      .filter((g) => !PEQUENOS.includes(g))
+      .filter((g) => (aparicoes[g] ?? 0) === 1);
     if (umaVezSo.length >= 2) {
       avisos.push(
         `Seu foco é ${preterida === 'inferior' ? 'superiores' : 'inferiores'}, então ` +
@@ -629,6 +647,8 @@ export async function montarPlano(
 
   const dias: DiaGerado[] = [];
   const usadosNoDia = new Set<string>();
+  /** Quantas vezes cada grupo já foi montado. Alimenta o rodízio entre dias. */
+  const vezesDoGrupo: Record<string, number> = {};
 
   for (const md of modelo) {
     usadosNoDia.clear();
@@ -641,10 +661,28 @@ export async function montarPlano(
       // custa menos que ficar cronicamente abaixo dele.
       const naSessao = Math.max(2, Math.min(TETO_SERIES_SESSAO, Math.ceil(alvo / aparicoes[grupo])));
 
-      const cands = ordenar(
+      const ordenados = ordenar(
         disponiveis.filter((e) => e.grupo_primario === grupo && !usadosNoDia.has(e.nome)),
         p.preferenciaEquipamento
       );
+
+      // Rodízio a partir do SEGUNDO exercício.
+      //
+      // O primeiro fica fixo na semana inteira de propósito: é o composto
+      // principal do grupo, e é comparando a carga dele semana a semana que se
+      // enxerga progresso. Trocar tudo todo dia deixa o treino bonito e a
+      // progressão invisível.
+      //
+      // Do segundo em diante, roda. Sem isso, quem tinha glúteo em três dias
+      // recebia elevação pélvica e abdução nos três — com dez opções de glúteo
+      // no catálogo, e justamente no grupo que ela escolheu priorizar.
+      const vez = vezesDoGrupo[grupo] ?? 0;
+      vezesDoGrupo[grupo] = vez + 1;
+      const cands =
+        ordenados.length > 2 && vez > 0
+          ? [ordenados[0], ...rodar(ordenados.slice(1), vez)]
+          : ordenados;
+
       if (!cands.length) {
         avisos.push(
           `Sem exercício de ${grupo} disponível para "${p.local}". Esse grupo ficou de fora — vale ` +
@@ -725,8 +763,15 @@ export async function montarPlano(
   for (const d of dias) {
     const minutos = d.diaSemana !== null ? (p.minutosPorDia[d.diaSemana] ?? 60) : 60;
     cortarParaCaber(d, minutos, avisos, volumeAtual, pisos, p.objetivo);
-    d.minutos = emMinutos(estimarDuracao(paraEstimativa(d)).totalSeg);
   }
+
+  // Nesta ordem: primeiro junta o volume picado (menos exercícios, mais séries
+  // em cada), depois usa o tempo que sobrou. Ao contrário, encheria de série um
+  // exercício que ia sair de qualquer jeito.
+  consolidar(dias);
+  preencherTempo(dias, p, avisos);
+
+  for (const d of dias) d.minutos = emMinutos(estimarDuracao(paraEstimativa(d)).totalSeg);
 
   const limite = limitacaoDoLocal(p.local);
   if (limite) avisos.push(limite);
@@ -907,6 +952,21 @@ function contarVolume(dias: DiaGerado[]): Record<string, number> {
  * ali por outro motivo.
  */
 function aparExcesso(dias: DiaGerado[], p: PerfilDoTreino) {
+  // No grupo que a pessoa priorizou, o excesso é medido só pelo trabalho
+  // DIRETO.
+  //
+  // A contagem fracionada é honesta para auditar, mas usá-la como teto do que
+  // prescrever punia exatamente quem tinha sido escolhido: agachamento e stiff
+  // despejam meia série de glúteo cada, o total estourava, e o aparador cortava
+  // o trabalho direto até sobrar UM exercício de glúteo — num programa com foco
+  // em glúteo, e com dez opções no catálogo.
+  //
+  // Volume indireto não substitui o direto. Agachamento carrega o glúteo com o
+  // quadril fletido; elevação pélvica carrega no fim da extensão. São estímulos
+  // em comprimentos musculares diferentes, e é por isso que quem quer glúteo faz
+  // as duas coisas. Tratar um como se pagasse o outro é o erro que transforma
+  // "priorizar" em "prescrever menos".
+  const emFoco = pesosDaEnfase(p.focos).alvos;
   // Teto de voltas: só uma rede de segurança contra laço infinito — a saída de
   // verdade é `!cortou`, quando não sobra série direta para tirar.
   //
@@ -922,8 +982,15 @@ function aparExcesso(dias: DiaGerado[], p: PerfilDoTreino) {
     // a lista inteira importa: quando o excesso do pior grupo vem só de volume
     // indireto não há série direta para tirar, e parar ali deixaria os outros
     // grupos estourados para sempre.
+    const direto: Record<string, number> = {};
+    for (const d of dias)
+      for (const e of d.exercicios) direto[e.grupo] = (direto[e.grupo] ?? 0) + e.series;
+
     const estourados = Object.entries(vol)
-      .map(([g, v]) => ({ g, excesso: v - alvoSemanal(g as Grupo, p) }))
+      .map(([g, v]) => ({
+        g,
+        excesso: (emFoco.has(g) ? (direto[g] ?? 0) : v) - alvoSemanal(g as Grupo, p),
+      }))
       .filter((x) => x.excesso >= 1)
       .sort((a, b) => b.excesso - a.excesso);
 
@@ -948,6 +1015,117 @@ function aparExcesso(dias: DiaGerado[], p: PerfilDoTreino) {
     // Nenhum grupo estourado tem série direta para tirar: o excesso é todo
     // indireto e não há o que fazer sem mexer nos compostos.
     if (!cortou) return;
+  }
+}
+
+/**
+ * Junta o volume picado: menos exercícios, mais séries em cada.
+ *
+ * O aparador corta série direta até o piso de 2 por exercício, e o resultado
+ * era uma sessão de OITO exercícios com duas séries cada. Isso é o pior formato
+ * possível para o mesmo volume: duas séries mal aquecem o movimento, a primeira
+ * quase sempre é reconhecimento de carga, e cada troca de aparelho custa 90 s
+ * de nada. Três exercícios de peito com 2 séries rendem menos que dois com 3.
+ *
+ * Aqui o total de séries do grupo no dia não muda — muda em quantas peças ele
+ * está dividido. Sai exercício do fim (o menos prioritário) e as séries dele
+ * voltam para quem ficou, até cada um ter ao menos 3.
+ */
+function consolidar(dias: DiaGerado[]) {
+  const MIN_SERIES = 3;
+  for (const d of dias) {
+    const grupos = [...new Set(d.exercicios.filter((e) => e.grupo !== 'cardio').map((e) => e.grupo))];
+    for (const g of grupos) {
+      const doGrupo = d.exercicios.filter((e) => e.grupo === g);
+      const total = doGrupo.reduce((s, e) => s + e.series, 0);
+      const cabem = Math.max(1, Math.min(doGrupo.length, Math.floor(total / MIN_SERIES)));
+      if (cabem >= doGrupo.length) continue;
+
+      // Os que ficam são os primeiros: a ordem já reflete prioridade.
+      const ficam = doGrupo.slice(0, cabem);
+      const saem = new Set(doGrupo.slice(cabem).map((e) => e.nome));
+      d.exercicios = d.exercicios.filter((e) => !(e.grupo === g && saem.has(e.nome)));
+
+      const base = Math.floor(total / ficam.length);
+      const resto = total % ficam.length;
+      ficam.forEach((e, i) => {
+        e.series = Math.min(TETO_SERIES_SESSAO, base + (i < resto ? 1 : 0));
+      });
+    }
+  }
+}
+
+/**
+ * Usa o tempo que sobrou — sem estourar o que a recuperação aguenta.
+ *
+ * O tempo informado no questionário era só um TETO: o gerador cortava quando
+ * passava e nunca reagia quando sobrava. Quem dizia ter 1h30 recebia sessões de
+ * 44 minutos e 208 minutos ociosos na semana, sem uma linha explicando por quê.
+ *
+ * A ordem de uso não é "encher por encher". Série a mais só entra em grupo que
+ * ainda está ABAIXO do alvo semanal — volume acima do teto custa recuperação e
+ * não paga em hipertrofia, e seria trocar um erro por outro. Quando todo grupo
+ * do dia já está no alvo, o tempo sobra mesmo, e aí o plano diz isso: o limite
+ * passou a ser a recuperação, não a agenda.
+ */
+function preencherTempo(dias: DiaGerado[], p: PerfilDoTreino, avisos: string[]) {
+  const FOLGA_ACEITAVEL = 8 * 60; // menos que isso não vale mexer
+  let algumDiaSobrando = false;
+
+  for (const d of dias) {
+    const disponivel = (d.diaSemana !== null ? p.minutosPorDia[d.diaSemana] ?? 60 : 60) * 60;
+
+    for (let volta = 0; volta < 40; volta++) {
+      const usado = estimarDuracao(paraEstimativa(d)).totalSeg;
+      if (disponivel - usado < FOLGA_ACEITAVEL) break;
+
+      const volume = contarVolume(dias);
+      // Candidato: exercício de grupo abaixo do alvo, o de menos séries
+      // primeiro — subir de 2 para 3 vale mais que de 4 para 5.
+      // Teto de 4 por exercício mesmo tendo tempo: a partir da quinta série o
+      // mesmo movimento rende cada vez menos, e o resultado fica feio de um
+      // jeito que denuncia o que aconteceu — seis séries de panturrilha em pé
+      // não é programa, é sobra de tempo empilhada.
+      const cand = d.exercicios
+        .filter((e) => e.grupo !== 'cardio' && e.series < 4)
+        .filter((e) => (volume[e.grupo] ?? 0) + 1 <= alvoSemanal(e.grupo as Grupo, p))
+        .sort((a, b) => a.series - b.series)[0];
+
+      if (!cand) {
+        algumDiaSobrando = true;
+        break;
+      }
+      cand.series += 1;
+    }
+  }
+
+  if (!algumDiaSobrando) return;
+
+  // Quantos dias o treino da semana realmente ocupa, no tempo que a pessoa tem.
+  // É divisão simples e sai exata: o volume semanal não muda com o número de
+  // dias (quem o limita é a recuperação), então espalhar em mais dias só torna
+  // cada sessão mais curta. Dizer isso com o número dela na frente vale mais
+  // que qualquer explicação genérica sobre volume.
+  const totalSeg = dias.reduce((s, d) => s + estimarDuracao(paraEstimativa(d)).totalSeg, 0);
+  const porDia = p.minutosPorDia[p.diasDisponiveis[0] ?? 1] ?? 60;
+  const diasQueOcupa = Math.max(1, Math.ceil(totalSeg / 60 / porDia));
+  const media = Math.round(totalSeg / 60 / dias.length);
+
+  if (diasQueOcupa < dias.length) {
+    avisos.push(
+      `Seu treino soma ${Math.round(totalSeg / 60)} min de musculação na semana. Com ${porDia} min ` +
+        `por dia isso cabe em ${diasQueOcupa} dia${diasQueOcupa > 1 ? 's' : ''} — você marcou ` +
+        `${dias.length}, então cada sessão fica com ${media} min em média. O volume semanal é o ` +
+        `MESMO nos dois casos: quem limita é a recuperação, não a agenda. Mais dias espalha melhor ` +
+        `(cada músculo aparece mais vezes na semana); menos dias usa o tempo que você tem. ` +
+        `As duas funcionam — escolha pela sua rotina, não porque a sessão parece curta.`
+    );
+  } else {
+    avisos.push(
+      'Sobra tempo em alguns dias, e isso é de propósito: todo grupo já está no volume semanal ' +
+        'que a recuperação acompanha. Daqui em diante o que faz diferença é carga, não minuto — ' +
+        'use a sobra para aquecer melhor, descansar o quanto o app pede e subir o peso.'
+    );
   }
 }
 
@@ -980,17 +1158,24 @@ function avisarExcessoIndireto(dias: DiaGerado[], p: PerfilDoTreino, avisos: str
   for (const d of dias)
     for (const e of d.exercicios) direto[e.grupo] = (direto[e.grupo] ?? 0) + e.series;
 
+  // Um aviso só, com a lista. Quatro parágrafos dizendo a mesma coisa sobre
+  // quatro músculos diferentes viram texto que ninguém lê — e aí o aviso que
+  // importa se perde no meio.
+  const estourados: string[] = [];
   for (const [g, v] of Object.entries(total)) {
     if (g === 'abdomen' || g === 'cardio') continue;
     const alvo = alvoSemanal(g as Grupo, p);
     const indireto = v - (direto[g] ?? 0);
-    // Só avisa quando estourou de verdade E a causa é o volume indireto.
+    // Só entra quando estourou de verdade E a causa é o volume indireto.
     if (v <= alvo * 1.3 || indireto < v / 2) continue;
+    estourados.push(`${COMO_SE_FALA[g] ?? g} (${Math.round(v)}, sendo ${direto[g] ?? 0} diretas)`);
+  }
+
+  if (estourados.length) {
     avisos.push(
-      `Seu ${COMO_SE_FALA[g] ?? g} soma ${Math.round(v)} séries por semana, mas só ` +
-        `${direto[g] ?? 0} são de exercício direto — o resto vem dos compostos, que trabalham ` +
-        `esse músculo junto. O trabalho direto ficou enxuto de propósito: somado, o total já ` +
-        `passa do que a recuperação acompanha. Não acrescente exercício desse grupo por conta.`
+      `${estourados.join(', ')} — nesses grupos o total semanal passa do alvo por causa dos ` +
+        `compostos, que os treinam junto. Por isso o trabalho DIRETO neles ficou enxuto: não é ` +
+        `esquecimento, é a conta fechando. Acrescentar exercício por conta aí só custa recuperação.`
     );
   }
 }

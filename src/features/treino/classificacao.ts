@@ -38,6 +38,29 @@ export const COMPOSTOS = [
   'Afundo com halteres',
   'Afundo com barra',
   'Elevação pélvica com barra',
+  'Hip thrust com barra',
+  'Agachamento ajoelhado com barra',
+  'Pull through na polia',
+  'Ponte de glúteo',
+  'Elevação pélvica unilateral',
+  'Subida no banco',
+  'Stiff com halteres',
+  'Bom dia com barra',
+  'Flexão nórdica',
+  'Glute ham raise na máquina',
+  'Agachamento livre sem peso',
+  'Agachamento na cadeira',
+  'Afundo caminhando',
+  'Agachamento búlgaro',
+  'Agachamento goblet',
+  'Agachamento com halteres',
+  'Agachamento sumô com halter',
+  'Subida no banco com halteres',
+  'Afundo reverso com halteres',
+  'Flexão inclinada',
+  'Flexão com pés elevados',
+  'Remada invertida',
+  'Flexão pique',
 ];
 
 /** Compostos pesados: os que mais cobram sistema nervoso e mais precisam de pausa. */
@@ -52,6 +75,12 @@ export const COMPOSTOS_PESADOS = [
   'Leg press',
   'Hack machine',
   'Barra fixa',
+  'Hip thrust com barra',
+  'Bom dia com barra',
+  'Agachamento búlgaro',
+  'Agachamento goblet',
+  'Agachamento com halteres',
+  'Stiff com halteres',
 ];
 
 export function ehComposto(nome: string): boolean {
