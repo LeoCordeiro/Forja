@@ -96,12 +96,29 @@ for (const foco of [['gluteo'], ['costas'], ['inferior']]) {
 
 // ── 4. Foco realmente aumenta o volume do alvo ─────────────────────────────
 console.log('\n4. Ênfase entrega mais série no alvo');
-const semFoco = contarSeries(await montarPlano({ ...base, focos: [] }, fonte));
-const comGluteo = contarSeries(await montarPlano({ ...base, focos: ['gluteo'] }, fonte));
-ok('glúteo sobe quando é o foco', comGluteo.gluteo > semFoco.gluteo,
-   `${semFoco.gluteo} → ${comGluteo.gluteo}`);
+// A régua é o volume DIRETO, não o total. O total esbarra no teto de
+// recuperação e fica parado nos dois casos — o que muda com o foco é quanto
+// daquele total é trabalho dirigido em vez de sobra de composto. Medir o total
+// dizia "o foco não fez nada" enquanto o glúteo direto subia 50%.
+const soDireto = (plano) => {
+  const c = {};
+  for (const d of plano.dias) for (const e of d.exercicios) c[e.grupo] = (c[e.grupo] ?? 0) + e.series;
+  return c;
+};
+const planoNeutro = await montarPlano({ ...base, focos: [] }, fonte);
+const planoGluteo = await montarPlano({ ...base, focos: ['gluteo'] }, fonte);
+const semFoco = soDireto(planoNeutro);
+const comGluteo = soDireto(planoGluteo);
+ok('glúteo direto sobe quando é o foco', comGluteo.gluteo > semFoco.gluteo,
+   `${semFoco.gluteo} → ${comGluteo.gluteo} séries diretas`);
 ok('peito cede quando não é o foco', comGluteo.peito <= semFoco.peito,
    `${semFoco.peito} → ${comGluteo.peito}`);
+
+// O total não pode estourar por causa do foco: o teto existe por um motivo.
+const totalNeutro = contarSeries(planoNeutro);
+const totalGluteo = contarSeries(planoGluteo);
+ok('o total não dispara junto', totalGluteo.gluteo <= totalNeutro.gluteo + 4,
+   `${totalNeutro.gluteo} → ${totalGluteo.gluteo} no total`);
 
 // ── 5. Nenhum grupo grande fica abaixo do piso ─────────────────────────────
 console.log('\n5. Volume semanal dentro da faixa da literatura');
@@ -135,6 +152,71 @@ for (const cenario of [
   ok(`${cenario.nome}: excesso indireto vem explicado`, explicados,
      estourados.length ? `total alto em: ${estourados.join(', ')}` : 'nenhum grupo estourou');
 }
+
+// ── 5b. O foco muda a DIVISÃO, não só o volume ─────────────────────────────
+//
+// Era o buraco de verdade: `SPLITS` é indexado só por dias, então quem marcava
+// "superiores" e treinava 5 dias recebia o mesmo esqueleto de sempre, com DOIS
+// dias de perna. O app perguntava o foco e montava a semana como se não tivesse
+// perguntado.
+console.log('\n5b. Foco muda a estrutura da semana');
+const INFERIOR = ['quadriceps', 'posterior', 'gluteo', 'panturrilha'];
+const diasDe = (plano, grupos) =>
+  plano.dias.filter((d) => {
+    const cont = {};
+    for (const e of d.exercicios) cont[e.grupo] = (cont[e.grupo] ?? 0) + e.series;
+    const alvo = grupos.reduce((s, g) => s + (cont[g] ?? 0), 0);
+    const total = Object.values(cont).reduce((s, v) => s + v, 0);
+    return total > 0 && alvo / total > 0.5; // o dia é majoritariamente daquilo
+  }).length;
+
+for (const cen of [
+  { foco: ['superior'], dias: 5, esperaPerna: 1 },
+  { foco: ['superior'], dias: 4, esperaPerna: 1 },
+  { foco: ['superior'], dias: 6, esperaPerna: 1 },
+]) {
+  const plano = await montarPlano(
+    { ...base, dias: cen.dias, diasDisponiveis: [1, 2, 3, 4, 5, 6].slice(0, cen.dias), focos: cen.foco },
+    fonte
+  );
+  const perna = diasDe(plano, INFERIOR);
+  ok(`foco superior, ${cen.dias} dias: ${cen.esperaPerna} dia de perna`, perna === cen.esperaPerna,
+     `${perna} dia(s) — ${plano.dias.map((d) => d.nome.replace(/^[A-F] — /, '')).join(' / ')}`);
+  ok(`foco superior, ${cen.dias} dias: avisa o custo da frequência`,
+     plano.avisos.some((a) => a.includes('1× por semana')));
+}
+
+// Foco em inferiores não é simétrico ao de superiores, e isso é de propósito.
+// "Superior" são cinco grupos (peito, costas, ombro, bíceps, tríceps): empurrar
+// todos para um único dia da semana é pior do que o ganho de abrir mais um dia
+// de perna. Então em 4 dias a resposta certa é 2 e 2 — o que muda é que os dias
+// de perna passam a ser especializados (um de quadríceps, um de posterior e
+// glúteo) em vez de dois dias iguais. De 5 dias em diante sobra folga e o foco
+// vira dia a mais de verdade.
+for (const { dias, minimo } of [{ dias: 4, minimo: 2 }, { dias: 5, minimo: 3 }, { dias: 6, minimo: 3 }]) {
+  const disp = [1, 2, 3, 4, 5, 6].slice(0, dias);
+  const plano = await montarPlano({ ...base, dias, diasDisponiveis: disp, focos: ['inferior'] }, fonte);
+  const semFocoAqui = await montarPlano({ ...base, dias, diasDisponiveis: disp, focos: [] }, fonte);
+  const perna = diasDe(plano, INFERIOR);
+  const nomes = plano.dias.map((d) => d.nome.replace(/^[A-F] — /, '')).join(' / ');
+
+  ok(`foco inferior, ${dias} dias: pelo menos ${minimo} dias de perna`, perna >= minimo,
+     `${perna} de ${dias} — ${nomes}`);
+  ok(`foco inferior, ${dias} dias: nunca menos perna que sem foco`,
+     perna >= diasDe(semFocoAqui, INFERIOR),
+     `${perna} com foco x ${diasDe(semFocoAqui, INFERIOR)} sem`);
+  // Dias de perna especializados: nenhum par de dias de perna igual.
+  const nomesPerna = plano.dias
+    .filter((d) => d.exercicios.some((e) => INFERIOR.includes(e.grupo)))
+    .map((d) => d.nome);
+  ok(`foco inferior, ${dias} dias: dias de perna não se repetem`,
+     new Set(nomesPerna).size === nomesPerna.length);
+}
+
+// Sem foco, a divisão equilibrada de sempre.
+const neutro = await montarPlano({ ...base, dias: 5, diasDisponiveis: [1, 2, 3, 4, 5], focos: [] }, fonte);
+ok('sem foco: continua a divisão equilibrada', diasDe(neutro, INFERIOR) === 2,
+   `${diasDe(neutro, INFERIOR)} dia(s) de perna`);
 
 // ── 6. Casa sem equipamento não sai sem perna ──────────────────────────────
 console.log('\n6. Em casa, sem equipamento');

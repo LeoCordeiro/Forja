@@ -182,6 +182,108 @@ const SPLITS: Record<number, ModeloDia[]> = {
   ],
 };
 
+/**
+ * Divisões quando a pessoa escolheu priorizar uma REGIÃO do corpo.
+ *
+ * ── O buraco que isto fecha ──────────────────────────────────────────────
+ *
+ * `SPLITS` é indexado só por número de dias. A ênfase mudava séries e ordem,
+ * mas nunca a estrutura da semana — então quem marcava "superiores" e treinava
+ * 5 dias recebia o mesmo esqueleto de sempre, com DOIS dias de perna. O app
+ * perguntava o foco e depois montava a semana como se não tivesse perguntado.
+ *
+ * Priorizar uma região é, antes de tudo, dar mais DIAS a ela. Nenhuma
+ * quantidade de série extra num dia de perna transforma o programa em foco de
+ * superior se metade da semana continua sendo perna.
+ *
+ * O agrupamento aqui é por sinergista — peito com tríceps, costas com bíceps —
+ * e não por "empurrar/puxar" genérico. A diferença aparece no descanso: com
+ * peito e tríceps no mesmo dia, o tríceps só volta a ser exigido no próximo dia
+ * de peito. Espalhado, ele leva estímulo em dias seguidos sem ninguém pedir.
+ *
+ * Perna 1× por semana fica ABAIXO das 2× que o ACSM pede. É escolha legítima de
+ * quem prioriza superior, e o plano avisa uma vez em vez de decidir sozinho.
+ */
+const SPLITS_FOCO: Record<'superior' | 'inferior', Record<number, ModeloDia[]>> = {
+  superior: {
+    4: [
+      { nome: 'A — Peito e tríceps', cor: COR.empurrar, grupos: ['peito', 'triceps', 'ombro'] },
+      { nome: 'B — Costas e bíceps', cor: COR.puxar, grupos: ['costas', 'biceps', 'trapezio'] },
+      { nome: 'C — Inferior completo', cor: COR.perna, grupos: ['quadriceps', 'posterior', 'gluteo', 'panturrilha'] },
+      { nome: 'D — Ombro e braços', cor: COR.ombro, grupos: ['ombro', 'triceps', 'biceps', 'abdomen'] },
+    ],
+    5: [
+      { nome: 'A — Peito e tríceps', cor: COR.empurrar, grupos: ['peito', 'triceps', 'ombro'] },
+      { nome: 'B — Costas e bíceps', cor: COR.puxar, grupos: ['costas', 'biceps', 'trapezio'] },
+      { nome: 'C — Inferior completo', cor: COR.perna, grupos: ['quadriceps', 'posterior', 'gluteo', 'panturrilha'] },
+      { nome: 'D — Peito e tríceps', cor: COR.empurrar, grupos: ['peito', 'triceps', 'ombro', 'abdomen'] },
+      { nome: 'E — Costas e bíceps', cor: COR.puxar, grupos: ['costas', 'biceps', 'trapezio'] },
+    ],
+    6: [
+      { nome: 'A — Peito e tríceps', cor: COR.empurrar, grupos: ['peito', 'triceps'] },
+      { nome: 'B — Costas e bíceps', cor: COR.puxar, grupos: ['costas', 'biceps'] },
+      { nome: 'C — Ombro e braços', cor: COR.ombro, grupos: ['ombro', 'triceps', 'biceps', 'trapezio'] },
+      { nome: 'D — Inferior completo', cor: COR.perna, grupos: ['quadriceps', 'posterior', 'gluteo', 'panturrilha'] },
+      { nome: 'E — Peito e tríceps', cor: COR.empurrar, grupos: ['peito', 'triceps', 'ombro'] },
+      { nome: 'F — Costas e bíceps', cor: COR.puxar, grupos: ['costas', 'biceps', 'abdomen'] },
+    ],
+  },
+  inferior: {
+    4: [
+      { nome: 'A — Inferior, foco quadríceps', cor: COR.perna, grupos: ['quadriceps', 'gluteo', 'panturrilha'] },
+      { nome: 'B — Superior', cor: COR.empurrar, grupos: ['peito', 'costas', 'ombro', 'triceps', 'biceps'] },
+      { nome: 'C — Inferior, foco posterior e glúteo', cor: COR.perna, grupos: ['gluteo', 'posterior', 'panturrilha', 'abdomen'] },
+      { nome: 'D — Superior', cor: COR.puxar, grupos: ['costas', 'peito', 'ombro', 'biceps', 'triceps'] },
+    ],
+    5: [
+      { nome: 'A — Inferior, foco quadríceps', cor: COR.perna, grupos: ['quadriceps', 'gluteo', 'panturrilha'] },
+      { nome: 'B — Superior, empurrar', cor: COR.empurrar, grupos: ['peito', 'ombro', 'triceps'] },
+      { nome: 'C — Inferior, foco posterior', cor: COR.perna, grupos: ['posterior', 'gluteo', 'panturrilha'] },
+      { nome: 'D — Superior, puxar', cor: COR.puxar, grupos: ['costas', 'biceps', 'trapezio'] },
+      { nome: 'E — Inferior, foco glúteo', cor: COR.perna, grupos: ['gluteo', 'quadriceps', 'posterior', 'abdomen'] },
+    ],
+    6: [
+      { nome: 'A — Inferior, foco quadríceps', cor: COR.perna, grupos: ['quadriceps', 'gluteo', 'panturrilha'] },
+      { nome: 'B — Superior, empurrar', cor: COR.empurrar, grupos: ['peito', 'ombro', 'triceps'] },
+      { nome: 'C — Inferior, foco posterior', cor: COR.perna, grupos: ['posterior', 'gluteo', 'panturrilha'] },
+      { nome: 'D — Superior, puxar', cor: COR.puxar, grupos: ['costas', 'biceps', 'trapezio'] },
+      { nome: 'E — Inferior, foco glúteo', cor: COR.perna, grupos: ['gluteo', 'quadriceps', 'posterior'] },
+      { nome: 'F — Superior', cor: COR.ombro, grupos: ['ombro', 'peito', 'costas', 'abdomen'] },
+    ],
+  },
+};
+
+/**
+ * Qual região a pessoa priorizou — se é que priorizou uma.
+ *
+ * Aceita tanto a região inteira ('superiores') quanto músculo solto: quem marca
+ * glúteo e posterior está pedindo foco em inferiores mesmo sem dizer a palavra.
+ * Empate não é foco: marcar peito E glúteo pede um programa equilibrado, e
+ * inventar uma preferência ali seria adivinhar.
+ */
+export function regiaoDoFoco(focos: string[]): 'superior' | 'inferior' | null {
+  const alvos = gruposEnfatizados(focos);
+  if (!alvos.size) return null;
+  const conta = (r: 'superior' | 'inferior') => REGIOES[r].filter((g) => alvos.has(g)).length;
+  const sup = conta('superior');
+  const inf = conta('inferior');
+  if (sup === inf) return null;
+  return sup > inf ? 'superior' : 'inferior';
+}
+
+/**
+ * A divisão da semana, já considerando o foco.
+ *
+ * Até 3 dias não existe versão com foco: a exigência de 2× por grupo por semana
+ * come toda a folga, e qualquer priorização deixaria algum grupo grande em 1×.
+ * Aí corpo todo continua sendo a resposta certa, tenha foco ou não.
+ */
+function escolherSplit(dias: number, focos: string[]): ModeloDia[] {
+  const d = Math.max(1, Math.min(6, dias));
+  const regiao = regiaoDoFoco(focos);
+  return (regiao && SPLITS_FOCO[regiao][d]) || SPLITS[d];
+}
+
 export function divisaoDe(dias: number): { nome: string; porque: string } {
   const d = Math.max(1, Math.min(6, dias));
   if (d <= 2)
@@ -502,9 +604,26 @@ export async function montarPlano(
     (e) => (!e.equipamento || equipamentos.has(e.equipamento)) && !proibidos.has(e.nome)
   );
 
-  const modelo = SPLITS[Math.max(1, Math.min(6, p.dias))];
+  const modelo = escolherSplit(p.dias, p.focos);
   const aparicoes: Record<string, number> = {};
   for (const d of modelo) for (const g of d.grupos) aparicoes[g] = (aparicoes[g] ?? 0) + 1;
+
+  // Priorizar uma região custa frequência na outra, e esse custo tem que estar
+  // escrito. O ACSM pede 2× por semana em cada grupo; quem escolhe foco pesado
+  // aceita ficar em 1× do outro lado. É escolha legítima — só não pode ser
+  // surpresa em cima de quem esperava o padrão.
+  const preterida = regiaoDoFoco(p.focos) === 'superior' ? 'inferior' : 'superior';
+  if (regiaoDoFoco(p.focos)) {
+    const umaVezSo = REGIOES[preterida].filter((g) => (aparicoes[g] ?? 0) === 1);
+    if (umaVezSo.length >= 2) {
+      avisos.push(
+        `Seu foco é ${preterida === 'inferior' ? 'superiores' : 'inferiores'}, então ` +
+          `${preterida === 'inferior' ? 'perna' : 'o superior'} entra 1× por semana. O padrão da ` +
+          `literatura é 2× por grupo — em 1× o ganho fica menor, mas não é erro: é o preço de ` +
+          `concentrar a semana no que você escolheu. Para voltar a 2×, tire o foco ou some um dia.`
+      );
+    }
+  }
 
   const { alvos: emFoco } = pesosDaEnfase(p.focos);
 
