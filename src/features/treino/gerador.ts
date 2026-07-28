@@ -59,8 +59,30 @@ const PEQUENOS: Grupo[] = ['biceps', 'triceps', 'panturrilha', 'abdomen', 'trape
 export const PISO_SEMANAL = 10;
 /** Acima disso o retorno não paga a recuperação. */
 export const TETO_SEMANAL = 20;
-/** Mais que isso numa sessão só rende pouco: melhor distribuir na semana. */
-const MAX_SERIES_SESSAO = 6;
+/**
+ * Teto de séries do mesmo grupo numa sessão.
+ *
+ * ── Por que 10 e não 6 ───────────────────────────────────────────────────
+ *
+ * Existe um teto de verdade: empilhar série demais no mesmo músculo numa
+ * sessão rende cada vez menos, e o caminho melhor é distribuir na semana.
+ *
+ * Só que o valor 6 estava DERRUBANDO o alvo semanal em silêncio. A conta é
+ * direta: um avançado com ênfase pede 20 séries na semana; numa divisão de 4
+ * dias o grupo aparece 2 vezes; 2 × 6 = 12. Ele recebia 12 e o app achava que
+ * tinha entregado 20 — 40% do volume sumia sem nenhum aviso, e volume semanal é
+ * justamente o principal determinante de hipertrofia segundo o Position Stand
+ * do ACSM de 2026. O teto anulava o modelo inteiro que ele deveria proteger.
+ *
+ * A perda atingia todo mundo de intermediário para cima em qualquer divisão de
+ * 4, 5 ou 6 dias.
+ *
+ * Com 10, todas as combinações de experiência e ênfase cabem: o pior caso
+ * (20 séries, grupo 2× na semana) fecha exatamente em 2 × 10. E quando a
+ * frequência do grupo é maior, o cálculo entrega menos por sessão sozinho —
+ * distribuir continua sendo o comportamento padrão, não a exceção.
+ */
+const TETO_SERIES_SESSAO = 10;
 
 const VOLUME_POR_EXPERIENCIA: Record<string, number> = {
   iniciante: 10,
@@ -190,6 +212,8 @@ export interface DiaGerado {
     id: number;
     nome: string;
     grupo: string;
+    /** Grupos que o exercício trabalha indiretamente. Cada série vale 0,5 neles. */
+    secundarios: string[];
     series: number;
     repsMin: number;
     repsMax: number;
@@ -299,7 +323,10 @@ export async function montarPlano(p: PerfilDoTreino): Promise<Plano> {
 
     for (const grupo of md.grupos) {
       const alvo = alvoSemanal(grupo, p);
-      const naSessao = Math.min(MAX_SERIES_SESSAO, Math.max(2, Math.round(alvo / aparicoes[grupo])));
+      // Arredonda para CIMA: com 10 séries semanais em 3 aparições, arredondar
+      // para baixo dá 3 por sessão e entrega 9 — ficar um pouco acima do alvo
+      // custa menos que ficar cronicamente abaixo dele.
+      const naSessao = Math.max(2, Math.min(TETO_SERIES_SESSAO, Math.ceil(alvo / aparicoes[grupo])));
 
       const cands = ordenar(
         disponiveis.filter((e) => e.grupo_primario === grupo && !usadosNoDia.has(e.nome)),
@@ -324,6 +351,7 @@ export async function montarPlano(p: PerfilDoTreino): Promise<Plano> {
           id: e.id,
           nome: e.nome,
           grupo,
+          secundarios: e.grupos_secundarios.split(',').map((x) => x.trim()).filter(Boolean),
           series: porExercicio,
           repsMin: e.tipo_carga === 'tempo' ? 0 : rmin,
           repsMax: e.tipo_carga === 'tempo' ? 0 : rmax,
@@ -340,6 +368,7 @@ export async function montarPlano(p: PerfilDoTreino): Promise<Plano> {
         id: c.id,
         nome: c.nome,
         grupo: 'cardio',
+        secundarios: [],
         series: 1,
         repsMin: 0,
         repsMax: 0,
@@ -352,9 +381,22 @@ export async function montarPlano(p: PerfilDoTreino): Promise<Plano> {
 
   // ── Encaixar na semana e no tempo de cada dia ────────────────────────────
   distribuirNaSemana(dias, p, avisos);
+
+  // A ORDEM aqui é o conserto. Aparar o excesso ANTES de cortar por tempo
+  // resolve dois problemas de uma vez: o grupo que estava 13 séries acima do
+  // alvo volta ao alvo, e os minutos que ele devolve são exatamente os que
+  // evitam que o corte por tempo coma os acessórios do fim da sessão.
+  aparExcesso(dias, p);
+
+  // Piso por grupo: 70% do alvo. Abaixo disso o estímulo daquele músculo deixa
+  // de valer a pena, e é preferível a sessão passar um pouco do tempo.
+  const volumeAtual = contarVolume(dias);
+  const pisos: Record<string, number> = {};
+  for (const g of Object.keys(volumeAtual)) pisos[g] = alvoSemanal(g as Grupo, p) * 0.7;
+
   for (const d of dias) {
     const minutos = d.diaSemana !== null ? (p.minutosPorDia[d.diaSemana] ?? 60) : 60;
-    cortarParaCaber(d, minutos, avisos);
+    cortarParaCaber(d, minutos, avisos, volumeAtual, pisos);
     d.minutos = emMinutos(estimarDuracao(paraEstimativa(d)).totalSeg);
   }
 
@@ -391,19 +433,46 @@ function paraEstimativa(d: DiaGerado) {
  * composto pesado, que é onde está o corpo inteiro e o maior estímulo. Quem
  * corta pelo começo troca o treino pelo aquecimento.
  */
-function cortarParaCaber(d: DiaGerado, minutos: number, avisos: string[]) {
+function cortarParaCaber(
+  d: DiaGerado,
+  minutos: number,
+  avisos: string[],
+  volumeAtual: Record<string, number>,
+  pisos: Record<string, number>
+) {
   const limite = minutos * 60;
   let cortados = 0;
 
   while (d.exercicios.length > 3 && estimarDuracao(paraEstimativa(d)).totalSeg > limite) {
+    // Primeiro tenta tirar do grupo que ainda fica no alvo sem este exercício.
+    // Cortar sempre do fim parece justo e não é: o fim da sessão é SEMPRE o
+    // mesmo grupo, então bíceps e trapézio não perdiam volume de vez em quando
+    // — perdiam toda semana, e a auditoria mostrava 3 séries num alvo de 8.
     let alvo = -1;
     for (let i = d.exercicios.length - 1; i > 0; i--) {
-      if (!ehPesado(d.exercicios[i].nome)) {
+      const e = d.exercicios[i];
+      if (ehPesado(e.nome)) continue;
+      if ((volumeAtual[e.grupo] ?? 0) - e.series >= (pisos[e.grupo] ?? 0)) {
         alvo = i;
         break;
       }
     }
+
+    // Nenhum candidato sobra sem derrubar algum grupo abaixo do piso: aí vale
+    // mais tirar o último acessório do que estourar o tempo da pessoa, porque
+    // treino que não cabe não é feito.
+    if (alvo < 0) {
+      for (let i = d.exercicios.length - 1; i > 0; i--) {
+        if (!ehPesado(d.exercicios[i].nome)) {
+          alvo = i;
+          break;
+        }
+      }
+    }
     if (alvo < 0) break;
+
+    const removido = d.exercicios[alvo];
+    volumeAtual[removido.grupo] = (volumeAtual[removido.grupo] ?? 0) - removido.series;
     d.exercicios.splice(alvo, 1);
     cortados++;
   }
@@ -420,18 +489,82 @@ function cortarParaCaber(d: DiaGerado, minutos: number, avisos: string[]) {
  * Volume semanal com contagem fracionada.
  *
  * Série que trabalha o grupo como secundário conta meia. Sem isso, remada não
- * conta nada para o bíceps e o app acha que o braço está com metade do volume
- * que de fato recebe.
+ * conta nada para o bíceps e agachamento não conta nada para o glúteo — e o app
+ * acredita que entregou o alvo quando na verdade entregou quase o dobro.
+ *
+ * É a MESMA conta que a tela de auditoria de volume faz. Antes elas divergiam:
+ * o gerador somava só série direta e a auditoria somava direta + 0,5 × indireta,
+ * então o gerador prescrevia 14 séries de glúteo achando que estava no alvo
+ * enquanto a auditoria, corretamente, mostrava 27. Duas contas diferentes para a
+ * mesma grandeza é como um app mente para si mesmo.
  */
 function contarVolume(dias: DiaGerado[]): Record<string, number> {
   const out: Record<string, number> = {};
+  const somar = (g: string, v: number) => {
+    if (!g || g === 'cardio') return;
+    out[g] = (out[g] ?? 0) + v;
+  };
   for (const d of dias) {
     for (const e of d.exercicios) {
       if (e.grupo === 'cardio') continue;
-      out[e.grupo] = (out[e.grupo] ?? 0) + e.series;
+      somar(e.grupo, e.series);
+      for (const s of e.secundarios) somar(s, e.series * 0.5);
     }
   }
+  for (const k of Object.keys(out)) out[k] = Math.round(out[k] * 10) / 10;
   return out;
+}
+
+/**
+ * Devolve ao alvo o grupo que passou dele.
+ *
+ * Quem estoura o alvo não é o isolador que a gente escolheu — é o volume
+ * indireto: agachamento e terra despejam meia série de glúteo e posterior cada,
+ * e em duas sessões de perna isso vira mais de dez séries que ninguém pediu.
+ * Séries que não foram prescritas custam recuperação e tempo iguais às que
+ * foram.
+ *
+ * Tira uma série por vez do exercício DIRETO mais carregado do grupo, e nunca
+ * abaixo de 2 séries — um exercício de série única não é estímulo, é presença.
+ * Não mexe em volume indireto, porque ele é consequência de um composto que está
+ * ali por outro motivo.
+ */
+function aparExcesso(dias: DiaGerado[], p: PerfilDoTreino) {
+  // Teto de voltas: garante término mesmo se nenhum corte reduzir o excesso.
+  for (let volta = 0; volta < 60; volta++) {
+    const vol = contarVolume(dias);
+
+    // Todos os grupos acima do alvo, do mais estourado para o menos. Percorrer
+    // a lista inteira importa: quando o excesso do pior grupo vem só de volume
+    // indireto não há série direta para tirar, e parar ali deixaria os outros
+    // grupos estourados para sempre.
+    const estourados = Object.entries(vol)
+      .map(([g, v]) => ({ g, excesso: v - alvoSemanal(g as Grupo, p) }))
+      .filter((x) => x.excesso >= 1)
+      .sort((a, b) => b.excesso - a.excesso);
+
+    if (!estourados.length) return;
+
+    let cortou = false;
+    for (const { g } of estourados) {
+      let alvoEx: DiaGerado['exercicios'][number] | null = null;
+      for (const d of dias) {
+        for (const e of d.exercicios) {
+          if (e.grupo !== g || e.series <= 2) continue;
+          if (!alvoEx || e.series > alvoEx.series) alvoEx = e;
+        }
+      }
+      if (alvoEx) {
+        alvoEx.series -= 1;
+        cortou = true;
+        break;
+      }
+    }
+
+    // Nenhum grupo estourado tem série direta para tirar: o excesso é todo
+    // indireto e não há o que fazer sem mexer nos compostos.
+    if (!cortou) return;
+  }
 }
 
 /** Distância circular entre dois dias da semana. Domingo encosta na segunda. */
