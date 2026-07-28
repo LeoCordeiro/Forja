@@ -27,15 +27,18 @@ export function getDb(): Promise<SQLite.SQLiteDatabase> {
       if (m.versao <= atual) continue;
       // Comando a comando: um ALTER TABLE de coluna que já existe (banco criado
       // pelo DDL novo) não pode derrubar o resto da migração.
-      for (const cmd of m.sql.split(';')) {
-        // Tira as linhas de comentário ANTES de decidir se há comando.
-        // Testar `startsWith('--')` no bloco inteiro descartava todo comando
-        // que viesse logo abaixo de um comentário — que é quase todos.
-        const sql = cmd
-          .split('\n')
-          .filter((l) => !l.trim().startsWith('--'))
-          .join('\n')
-          .trim();
+      // Comentários saem ANTES de dividir por ';'. Um ponto e vírgula dentro de
+      // comentário — `data:image/jpeg;base64` foi o caso real — partia o comando
+      // ao meio e derrubava a criação da tabela, enquanto o user_version subia
+      // do mesmo jeito. Resultado: migração marcada como aplicada e tabela
+      // inexistente, sem jeito de rodar de novo.
+      const limpo = m.sql
+        .split('\n')
+        .filter((l) => !l.trim().startsWith('--'))
+        .join('\n');
+
+      for (const cmd of limpo.split(';')) {
+        const sql = cmd.trim();
         if (!sql) continue;
         try {
           await db.execAsync(sql);

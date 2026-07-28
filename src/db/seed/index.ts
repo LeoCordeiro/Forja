@@ -3,7 +3,7 @@ import { EXERCICIOS, MEDIA_BASE } from './exercicios';
 import { ALIMENTOS, RECEITAS, type SeedReceita } from './alimentos';
 import { RECEITAS_FIT } from './receitas-fit';
 import { CUSTO_100G, MARMITAS } from './marmitas';
-import { CONQUISTAS, ROTINAS_PADRAO } from './conquistas';
+import { CONQUISTAS } from './conquistas';
 
 /**
  * Popula o banco na primeira abertura. Idempotente: se já tem exercício
@@ -109,47 +109,17 @@ export async function seedIfEmpty(db: SQLite.SQLiteDatabase) {
       );
     }
 
-    // ── Rotinas prontas ───────────────────────────────────────────────────
-    const exIds = new Map<string, number>();
-    const exs = await db.getAllAsync<{ id: number; nome: string }>(
-      'SELECT id, nome FROM exercises'
-    );
-    for (const e of exs) exIds.set(e.nome, e.id);
-
-    for (const rot of ROTINAS_PADRAO) {
-      const rres = await db.runAsync(
-        `INSERT INTO routines (nome, descricao, ativa, criado_em) VALUES (?,?,1,?)`,
-        [rot.nome, rot.descricao, agora]
-      );
-      const routineId = rres.lastInsertRowId;
-
-      for (let d = 0; d < rot.dias.length; d++) {
-        const dia = rot.dias[d];
-        const dres = await db.runAsync(
-          `INSERT INTO routine_days (routine_id, nome, cor, ordem) VALUES (?,?,?,?)`,
-          [routineId, dia.nome, dia.cor, d]
-        );
-        const dayId = dres.lastInsertRowId;
-
-        for (let i = 0; i < dia.exercicios.length; i++) {
-          const [nomeEx, series, rmin, rmax, descanso] = dia.exercicios[i] as [
-            string,
-            number,
-            number,
-            number,
-            number,
-          ];
-          const eid = exIds.get(nomeEx);
-          if (!eid) continue;
-          await db.runAsync(
-            `INSERT INTO routine_exercises
-               (routine_day_id, exercise_id, ordem, series_alvo, reps_min, reps_max, descanso_seg)
-             VALUES (?,?,?,?,?,?,?)`,
-            [dayId, eid, i, series, rmin || null, rmax || null, descanso]
-          );
-        }
-      }
-    }
+    // ── Rotina ────────────────────────────────────────────────────────────
+    // Não existe mais rotina de exemplo aqui, de propósito.
+    //
+    // O seed criava DUAS rotinas prontas, as duas com `ativa = 1`. A tela de
+    // treino lista os dias de toda rotina ativa, então quem terminava o
+    // cadastro via seis treinos misturados de dois planos diferentes e não
+    // sabia qual era o dele. Foi exatamente o que aconteceu no cadastro da
+    // Deise.
+    //
+    // Agora a rotina nasce do gerador no fim do questionário — uma só, ativa,
+    // com os dias da semana já distribuídos.
 
     // ── Estado inicial de gamificação ─────────────────────────────────────
     await db.runAsync(

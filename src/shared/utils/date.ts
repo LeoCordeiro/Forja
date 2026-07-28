@@ -80,3 +80,17 @@ export function ultimosDias(n: number): string[] {
   for (let i = n - 1; i >= 0; i--) out.push(somarDias(hoje(), -i));
   return out;
 }
+
+/**
+ * Semanas fechadas terminando na semana atual, sempre começando num domingo.
+ *
+ * O mapa de constância desenha uma linha por semana com sete colunas rotuladas
+ * D S T Q Q S S. Alimentá-lo com "os últimos 28 dias" faz a primeira coluna cair
+ * num dia qualquer — o desenho fica certo e a leitura, errada.
+ */
+export function semanasFechadas(semanas: number): string[] {
+  const base = new Date(`${hoje()}T12:00:00`);
+  const domingoDestaSemana = somarDias(hoje(), -base.getDay());
+  const inicio = somarDias(domingoDestaSemana, -(semanas - 1) * 7);
+  return Array.from({ length: semanas * 7 }, (_, i) => somarDias(inicio, i));
+}

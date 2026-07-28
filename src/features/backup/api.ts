@@ -53,16 +53,30 @@ const TABELAS = [
   'notas_exercicio',
 ];
 
+/**
+ * Fotos ficam fora por padrão.
+ *
+ * Uma foto reduzida ocupa perto de 200 KB; o resto do histórico inteiro — anos
+ * de séries, refeições e medidas — não chega a 2 MB. Incluir as fotos multiplica
+ * o arquivo por dez ou mais, e um arquivo grande demais é um arquivo que a
+ * pessoa desiste de gerar toda semana.
+ *
+ * Então é escolha explícita, com o tamanho na tela antes de decidir.
+ */
+const TABELA_FOTOS = 'fotos_progresso';
+
 export interface Backup {
   versao: 1;
   app: 'forja';
   criado_em: string;
+  comFotos?: boolean;
   tabelas: Record<string, Record<string, unknown>[]>;
 }
 
-export async function gerarBackup(): Promise<Backup> {
+export async function gerarBackup(comFotos = false): Promise<Backup> {
   const tabelas: Record<string, Record<string, unknown>[]> = {};
-  for (const t of TABELAS) {
+  const lista = comFotos ? [...TABELAS, TABELA_FOTOS] : TABELAS;
+  for (const t of lista) {
     try {
       tabelas[t] = await all<Record<string, unknown>>(`SELECT * FROM ${t}`);
     } catch {
@@ -70,7 +84,7 @@ export async function gerarBackup(): Promise<Backup> {
       // backup nenhum, então segue.
     }
   }
-  return { versao: 1, app: 'forja', criado_em: new Date().toISOString(), tabelas };
+  return { versao: 1, app: 'forja', criado_em: new Date().toISOString(), comFotos, tabelas };
 }
 
 export function resumirBackup(b: Backup) {
@@ -94,10 +108,44 @@ export function nomeDoArquivo(): string {
   return `forja-${new Date().toISOString().slice(0, 10)}.json`;
 }
 
-export async function baixarBackup(): Promise<boolean> {
-  if (Platform.OS !== 'web') return false;
+/**
+ * Exporta no aplicativo instalado.
+ *
+ * No Android o app escreve numa pasta que só ele enxerga — um arquivo salvo lá
+ * e nunca compartilhado é backup no papel e nada na prática, porque some junto
+ * com o app se o aparelho for trocado. Por isso escreve e abre a folha de
+ * compartilhamento na mesma ação: o arquivo só vira backup quando sai daqui.
+ */
+async function exportarNativo(comFotos: boolean): Promise<boolean> {
   try {
-    const b = await gerarBackup();
+    const [{ File, Paths }, Sharing] = await Promise.all([
+      import('expo-file-system'),
+      import('expo-sharing'),
+    ]);
+    if (!(await Sharing.isAvailableAsync())) return false;
+
+    const b = await gerarBackup(comFotos);
+    const arquivo = new File(Paths.cache, nomeDoArquivo());
+    if (arquivo.exists) arquivo.delete();
+    arquivo.create();
+    arquivo.write(JSON.stringify(b));
+
+    await Sharing.shareAsync(arquivo.uri, {
+      mimeType: 'application/json',
+      dialogTitle: 'Salvar backup da Forja',
+      UTI: 'public.json',
+    });
+    marcarBackupFeito();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function baixarBackup(comFotos = false): Promise<boolean> {
+  if (Platform.OS !== 'web') return exportarNativo(comFotos);
+  try {
+    const b = await gerarBackup(comFotos);
     const doc = (globalThis as unknown as { document?: Document }).document;
     const URLc = (globalThis as unknown as { URL?: typeof URL }).URL;
     const Blobc = (globalThis as unknown as { Blob?: typeof Blob }).Blob;
@@ -132,7 +180,7 @@ export async function restaurar(b: Backup): Promise<{ ok: boolean; erro?: string
   const db = await getDb();
   try {
     await db.execAsync('PRAGMA foreign_keys = OFF');
-    for (const t of TABELAS) {
+    for (const t of [...TABELAS, TABELA_FOTOS]) {
       const linhas = b.tabelas[t];
       if (!linhas) continue;
       try {

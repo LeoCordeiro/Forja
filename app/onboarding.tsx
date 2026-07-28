@@ -13,7 +13,7 @@ import Animated, {
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { colors, motion, radius, spacing } from '@/theme';
 import { Button, Card, Chip, Input, Press, Txt } from '@/shared/ui';
-import { salvarMedida, salvarMeta, salvarPerfil } from '@/features/perfil/api';
+import { salvarMedida, salvarMeta, salvarPerfil, salvarTempoPorDia } from '@/features/perfil/api';
 import {
   DESC_ATIVIDADE,
   LABEL_ATIVIDADE,
@@ -31,12 +31,11 @@ import {
   LABEL_OBJETIVO_V2,
   macrosRecomposicao,
 } from '@/features/perfil/recomposicao';
-import {
-  DESC_EXPERIENCIA,
-  divisaoRecomendada,
-  LABEL_EXPERIENCIA,
-  planoRetorno,
-} from '@/features/treino/periodizacao';
+import { DESC_EXPERIENCIA, LABEL_EXPERIENCIA, planoRetorno } from '@/features/treino/periodizacao';
+import { LOCAIS, type LocalTreino } from '@/features/treino/local';
+import { divisaoDe, gerarEAplicar, type Grupo, type Plano } from '@/features/treino/gerador';
+import { REGIOES_DOR } from '@/features/perfil/diagnostico';
+import { OPCOES_EQUIPAMENTO } from '@/features/treino/equipamento';
 import { metaDiaria as metaDiariaAgua } from '@/features/agua/api';
 import { DESC_HORARIO, LABEL_HORARIO, type HorarioTreino } from '@/features/dieta/timing';
 import { hoje as hojeIso } from '@/shared/utils/date';
@@ -47,7 +46,36 @@ import { num } from '@/shared/utils/format';
 import { buzz } from '@/shared/utils/haptics';
 import { useApp } from '@/shared/estado';
 
-const PASSOS = 7;
+const PASSOS = 9;
+
+const NOMES_DIA = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+
+/**
+ * Quanto tempo por sessão.
+ *
+ * Pergunta direta, porque é o recurso que ninguém consegue aumentar — e o que
+ * decide quantos exercícios cabem. Prescrever 8 exercícios para quem tem 50
+ * minutos não é rigor: é garantir que os 3 últimos nunca sejam feitos.
+ */
+const TEMPOS = [
+  { v: 50, l: '50 min', d: 'Almoço, sem folga' },
+  { v: 60, l: '1 h', d: 'Cravado' },
+  { v: 75, l: '1h15', d: 'Dá para respirar' },
+  { v: 90, l: '1h30', d: 'Confortável' },
+  { v: 120, l: '2 h', d: 'Sem correria' },
+];
+
+/** Grupos que fazem sentido priorizar. A ênfase soma série, nunca tira de outro. */
+const ENFASES: { v: Grupo | null; l: string }[] = [
+  { v: null, l: 'Equilibrado' },
+  { v: 'peito', l: 'Peito' },
+  { v: 'costas', l: 'Costas' },
+  { v: 'ombro', l: 'Ombro' },
+  { v: 'biceps', l: 'Braço' },
+  { v: 'quadriceps', l: 'Perna' },
+  { v: 'gluteo', l: 'Glúteo' },
+  { v: 'abdomen', l: 'Abdômen' },
+];
 
 export default function Onboarding() {
   const router = useRouter();
@@ -65,9 +93,20 @@ export default function Onboarding() {
   const [nivel, setNivel] = useState<NivelAtividade>('moderado');
   const [objetivo, setObjetivo] = useState<Objetivo>('recomposicao');
   const [experiencia, setExperiencia] = useState<Experiencia>('iniciante');
-  const [diasSemana, setDiasSemana] = useState(3);
   const [mesesParado, setMesesParado] = useState(0);
   const [horarioTreino, setHorarioTreino] = useState<HorarioTreino>('manha');
+  const [local, setLocal] = useState<LocalTreino>('academia');
+  // Dias marcados são a fonte da verdade: a quantidade sai deles, e não o
+  // contrário. Perguntar "quantos dias" e depois "quais dias" é o tipo de
+  // pergunta em duas etapas que faz a pessoa responder a segunda no automático.
+  const [diasMarcados, setDiasMarcados] = useState<number[]>([1, 3, 5]);
+  const [minutos, setMinutos] = useState(75);
+  const [equipamento, setEquipamento] = useState('ambos');
+  const [dores, setDores] = useState<string[]>([]);
+  const [enfase, setEnfase] = useState<Grupo | null>(null);
+  const [plano, setPlano] = useState<Plano | null>(null);
+
+  const diasSemana = diasMarcados.length || 3;
 
   const prog = useSharedValue(0);
   const barra = useAnimatedStyle(() => ({ width: `${prog.value * 100}%` }));
@@ -88,6 +127,8 @@ export default function Onboarding() {
     nascimento.length === 10 && idadeN >= 10 && idadeN < 100,
     alturaN >= 100 && alturaN <= 250 && pesoN >= 30 && pesoN <= 300,
     true,
+    true,
+    diasMarcados.length >= 1,
     true,
     true,
     true,
@@ -123,9 +164,36 @@ export default function Onboarding() {
         horario_treino: horarioTreino,
         // Quem treina em jejum acorda mais cedo; muda os horários das refeições.
         hora_acorda: horarioTreino === 'jejum' ? '05:30' : '06:30',
+        local_treino: local,
+        dias_disponiveis: diasMarcados.join(','),
+        enfase,
+        preferencia_equipamento: equipamento,
+        dores: dores.join(','),
       });
       await salvarMedida({ peso_kg: pesoN });
       if (m) await salvarMeta(m);
+
+      // O treino sai daqui pronto: divisão, exercícios, séries e dia da semana
+      // de cada sessão. Terminar o questionário e cair num app que ainda pede
+      // para você montar o treino é o mesmo que não ter perguntado nada.
+      await salvarTempoPorDia(
+        Array.from({ length: 7 }, (_, i) => (i === 0 || i === 6 ? Math.round(minutos * 1.2) : minutos))
+      );
+      const gerado = await gerarEAplicar({
+        dias: diasMarcados.length,
+        diasDisponiveis: diasMarcados,
+        minutosPorDia: Array.from({ length: 7 }, (_, i) =>
+          i === 0 || i === 6 ? Math.round(minutos * 1.2) : minutos
+        ),
+        experiencia,
+        objetivo,
+        local,
+        preferenciaEquipamento: equipamento,
+        dores,
+        enfase,
+      });
+      setPlano(gerado);
+
       await avaliarConquistas();
       buzz.ok();
       // Avisa o gate antes de navegar, senão ele devolve para o passo 1.
@@ -344,14 +412,33 @@ export default function Onboarding() {
             </View>
 
             <View style={{ height: spacing.lg }} />
-            <Txt v="label">Quantos dias por semana você consegue treinar?</Txt>
+            <Txt v="label">Em quais dias você consegue treinar?</Txt>
+            <Txt v="small" cor={colors.textFaint} style={{ marginBottom: spacing.sm }}>
+              Marque os dias de verdade, não os ideais. É com eles que o app monta a agenda — e
+              cada treino vai ter dia com nome, não "3× por semana".
+            </Txt>
             <View style={s.linha}>
-              {[2, 3, 4, 5, 6].map((d) => (
-                <Chip key={d} label={`${d}`} ativo={diasSemana === d} onPress={() => setDiasSemana(d)} />
+              {NOMES_DIA.map((d, i) => (
+                <Press
+                  key={i}
+                  onPress={() => {
+                    buzz.leve();
+                    setDiasMarcados((v) =>
+                      v.includes(i) ? v.filter((x) => x !== i) : [...v, i].sort((a, b) => a - b)
+                    );
+                  }}
+                  style={[s.diaSemana, diasMarcados.includes(i) && s.diaSemanaAtivo]}
+                >
+                  <Txt v="small" bold cor={diasMarcados.includes(i) ? '#1A0800' : colors.textDim}>
+                    {d}
+                  </Txt>
+                </Press>
               ))}
             </View>
             <Txt v="small" cor={colors.textFaint}>
-              {divisaoRecomendada(diasSemana).nome} — {divisaoRecomendada(diasSemana).motivo}
+              {diasMarcados.length
+                ? `${divisaoDe(diasSemana).nome} — ${divisaoDe(diasSemana).porque}`
+                : 'Marque pelo menos um dia.'}
             </Txt>
 
             <View style={{ height: spacing.lg }} />
@@ -428,8 +515,109 @@ export default function Onboarding() {
           </Bloco>
         )}
 
-        {passo === 6 && m && (
-          <Bloco key="p6" titulo="Tudo pronto" sub="Seus números, calculados a partir do que você informou">
+        {passo === 6 && (
+          <Bloco key="p6" titulo="Onde você treina" sub="É o que decide quais exercícios entram no seu plano">
+            <View style={{ gap: spacing.sm }}>
+              {LOCAIS.map((l) => (
+                <Card key={l.chave} onPress={() => setLocal(l.chave)} destaque={local === l.chave} padding={spacing.md}>
+                  <View style={s.entre}>
+                    <View style={{ flex: 1 }}>
+                      <Txt v="h3" size={15}>
+                        {l.emoji}  {l.label}
+                      </Txt>
+                      <Txt v="small" size={11} cor={colors.textFaint}>
+                        {l.descricao}
+                      </Txt>
+                      {local === l.chave ? (
+                        <Txt v="small" size={11} cor={colors.primary} style={{ marginTop: 4 }}>
+                          {l.efeito}
+                        </Txt>
+                      ) : null}
+                    </View>
+                    {local === l.chave ? (
+                      <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
+                    ) : null}
+                  </View>
+                </Card>
+              ))}
+            </View>
+
+            <View style={{ height: spacing.lg }} />
+            <Txt v="label">Quanto tempo você tem por sessão?</Txt>
+            <View style={s.linha}>
+              {TEMPOS.map((t) => (
+                <Chip key={t.v} label={t.l} ativo={minutos === t.v} onPress={() => setMinutos(t.v)} />
+              ))}
+            </View>
+            <Txt v="small" cor={colors.textFaint}>
+              {TEMPOS.find((t) => t.v === minutos)?.d}. O descanso entre séries é mais de 60% da
+              sessão — por isso o app conta o tempo real antes de montar, e corta acessório em vez
+              de encurtar o descanso do composto pesado.
+            </Txt>
+
+            <View style={{ height: spacing.lg }} />
+            <Txt v="label">Máquina ou peso livre?</Txt>
+            <View style={s.linha}>
+              {OPCOES_EQUIPAMENTO.map((o) => (
+                <Chip
+                  key={o.chave}
+                  label={o.label}
+                  ativo={equipamento === o.chave}
+                  onPress={() => setEquipamento(o.chave)}
+                />
+              ))}
+            </View>
+            <Txt v="small" cor={colors.textFaint}>
+              Isto é preferência de verdade: 13 estudos com 1.016 pessoas não acharam diferença de
+              hipertrofia entre os dois. Escolha o que faz você voltar na semana seguinte.
+            </Txt>
+          </Bloco>
+        )}
+
+        {passo === 7 && (
+          <Bloco key="p7" titulo="O que priorizar" sub="E o que evitar, para o treino não te machucar">
+            <Txt v="label">Tem alguma parte que você quer priorizar?</Txt>
+            <View style={s.linha}>
+              {ENFASES.map((e) => (
+                <Chip
+                  key={e.l}
+                  label={e.l}
+                  ativo={enfase === e.v}
+                  onPress={() => setEnfase(e.v)}
+                />
+              ))}
+            </View>
+            <Txt v="small" cor={colors.textFaint}>
+              Prioridade acrescenta séries no grupo escolhido — nunca tira dos outros, e nunca passa
+              do teto útil de 20 séries semanais, onde o ganho extra deixa de pagar a recuperação.
+            </Txt>
+
+            <View style={{ height: spacing.lg }} />
+            <Txt v="label">Sente dor em alguma dessas regiões?</Txt>
+            <View style={s.linha}>
+              {REGIOES_DOR.map((r) => (
+                <Chip
+                  key={r.chave}
+                  label={r.label}
+                  ativo={dores.includes(r.chave)}
+                  onPress={() =>
+                    setDores((v) =>
+                      v.includes(r.chave) ? v.filter((x) => x !== r.chave) : [...v, r.chave]
+                    )
+                  }
+                />
+              ))}
+            </View>
+            <Txt v="small" cor={colors.textFaint}>
+              {dores.length
+                ? `Os exercícios de risco para ${dores.length === 1 ? 'essa região' : 'essas regiões'} saem do plano e entra um equivalente que treina o mesmo músculo. Dor persistente é caso de fisioterapeuta — o app só evita piorar.`
+                : 'Se não sente nada, deixe em branco. Não vamos tirar exercício por precaução.'}
+            </Txt>
+          </Bloco>
+        )}
+
+        {passo === 8 && m && (
+          <Bloco key="p8" titulo="Tudo pronto" sub="Seus números, calculados a partir do que você informou">
             <Card>
               <View style={s.entre}>
                 <View>
@@ -548,6 +736,17 @@ function calcIdade(br: string) {
 }
 
 const s = StyleSheet.create({
+  diaSemana: {
+    flex: 1,
+    minWidth: 44,
+    paddingVertical: 12,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    backgroundColor: colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  diaSemanaAtivo: { backgroundColor: colors.primary, borderColor: colors.primary },
   root: { flex: 1, backgroundColor: colors.bg },
   trilho: {
     height: 3,

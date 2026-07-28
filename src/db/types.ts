@@ -57,6 +57,12 @@ export interface Profile {
   hora_acorda: string;
   hora_dorme: string;
   hora_treino: string | null;
+  /** Onde treina — decide quais exercícios sequer entram no plano. */
+  local_treino: string;
+  /** CSV de índices de dia da semana (0 = domingo) que a pessoa consegue treinar. */
+  dias_disponiveis: string | null;
+  /** Grupo muscular a priorizar. Acrescenta séries, nunca tira de outro. */
+  enfase: string | null;
 }
 
 export interface BodyMetric {
@@ -149,6 +155,10 @@ export interface RoutineDay {
   nome: string;
   cor: string | null;
   ordem: number;
+  /** Dia da semana marcado, 0 = domingo. Nulo = ainda sem dia. */
+  dia_semana: number | null;
+  tipo: string;
+  foco: string | null;
 }
 
 export interface RoutineExercise {

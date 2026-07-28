@@ -4,303 +4,337 @@ import { useRouter } from 'expo-router';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { colors, radius, spacing } from '@/theme';
-import { Button, Card, Chip, Empty, Input, Press, Screen, Sheet, Txt } from '@/shared/ui';
+import { Card, Chip, Empty, Press, Screen, Txt } from '@/shared/ui';
 import { useDados } from '@/shared/hooks/useDados';
-import {
-  criarDia,
-  criarRotina,
-  estatisticas,
-  historicoSessoes,
-  listarDias,
-} from '@/features/treino/api';
+import { diasComTempo, estatisticas, historicoSessoes } from '@/features/treino/api';
 import { dataAmigavel, duracaoDe } from '@/shared/utils/sessao';
-import { duracao, num, volume } from '@/shared/utils/format';
+import { duracao, volume } from '@/shared/utils/format';
 
-const CORES_DIA = [
-  colors.primary,
-  colors.info,
-  colors.success,
-  colors.xp,
-  colors.warn,
-  colors.danger,
-];
+/**
+ * Treino.
+ *
+ * ── O que esta tela responde, nesta ordem ────────────────────────────────
+ *
+ *  1. O que eu treino hoje?
+ *  2. Em que dia cai cada treino?
+ *  3. Quais são os meus treinos?
+ *
+ * A versão anterior respondia na ordem inversa: seis cartões de navegação
+ * ocupavam a tela inteira e os treinos — o motivo de a aba existir — ficavam
+ * abaixo da dobra. Cada recurso novo virava mais um cartão, porque não havia
+ * regra de onde as coisas moram.
+ *
+ * A regra agora é: **a aba mostra o conteúdo dela; o resto é uma lista no fim.**
+ * Lista compacta em vez de grade de cartões não é gosto — cartão grande diz
+ * "isto é importante", e seis coisas importantes ao mesmo tempo é o mesmo que
+ * nenhuma.
+ */
+
+const LETRAS = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
+const NOMES = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
+const CURTO = ['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB'];
+
+/** Destinos secundários. Cada um aparece em UM lugar do app — aqui. */
+const MAIS = [
+  {
+    rota: '/programa',
+    icone: 'analytics-outline',
+    titulo: 'Objetivo e volume',
+    sub: 'Para que serve este treino e se o volume por músculo fecha',
+  },
+  {
+    rota: '/cardio',
+    icone: 'pulse-outline',
+    titulo: 'Cardio',
+    sub: 'Zona 2, HIIT e como encaixar sem atrapalhar a força',
+  },
+  {
+    rota: '/mobilidade',
+    icone: 'body-outline',
+    titulo: 'Mobilidade',
+    sub: 'Aquecimento e alongamento com vídeo',
+  },
+  {
+    rota: '/diagnostico-treino',
+    icone: 'medkit-outline',
+    titulo: 'O que travou',
+    sub: 'Exercícios parados e cópia dos seus dados',
+  },
+  {
+    rota: '/exercicios',
+    icone: 'search-outline',
+    titulo: 'Buscar exercício',
+    sub: 'Catálogo com execução em vídeo',
+  },
+  {
+    rota: '/agenda',
+    icone: 'construct-outline',
+    titulo: 'Ajustar meus treinos',
+    sub: 'Trocar o dia da semana, editar ou refazer o plano',
+  },
+] as const;
 
 export default function Treino() {
   const router = useRouter();
-  const [aba, setAba] = useState<'rotinas' | 'historico'>('rotinas');
-  const [criando, setCriando] = useState(false);
-  const [nomeDia, setNomeDia] = useState('');
-  const [corDia, setCorDia] = useState<string>(colors.primary);
+  const [aba, setAba] = useState<'treinos' | 'historico'>('treinos');
 
   const { dados, recarregar } = useDados(async () => {
     const [dias, hist, stats] = await Promise.all([
-      listarDias(),
+      diasComTempo(),
       historicoSessoes(30),
       estatisticas(),
     ]);
     return { dias, hist, stats };
   }, []);
 
-  async function salvarDia() {
-    if (nomeDia.trim().length < 2) return;
-    // Sem rotina ainda: cria uma "Minha rotina" para pendurar o dia.
-    let routineId = dados?.dias[0]?.routine_id;
-    if (!routineId) routineId = await criarRotina('Minha rotina');
-    const id = await criarDia(routineId, nomeDia.trim(), corDia);
-    setCriando(false);
-    setNomeDia('');
-    await recarregar();
-    router.push(`/dia/${id}`);
-  }
+  const hoje = new Date().getDay();
+  const dias = dados?.dias ?? [];
+  const doDia = dias.find((d) => d.dia_semana === hoje) ?? null;
 
   return (
     <Screen
       titulo="Treino"
       subtitulo={
         dados
-          ? `${dados.stats.treinos} treinos · ${volume(dados.stats.volume)} levantados`
+          ? `${dias.length} treino${dias.length === 1 ? '' : 's'} · ${dados.stats.treinos} sessões · ${volume(dados.stats.volume)}`
           : undefined
       }
       onRefresh={recarregar}
-      acaoTopo={
-        <Press onPress={() => router.push('/exercicios')} style={s.iconeBtn} scale={0.92}>
-          <Ionicons name="search" size={19} color={colors.textDim} />
-        </Press>
-      }
     >
       <View style={s.abas}>
-        <Chip label="Minhas divisões" ativo={aba === 'rotinas'} onPress={() => setAba('rotinas')} />
+        <Chip label="Meus treinos" ativo={aba === 'treinos'} onPress={() => setAba('treinos')} />
         <Chip label="Histórico" ativo={aba === 'historico'} onPress={() => setAba('historico')} />
       </View>
 
-      {aba === 'rotinas' ? (
+      {aba === 'treinos' ? (
         <>
-          {/* A pergunta que a lista de dias não responde: para que serve tudo
-              isto e por quanto tempo eu fico nele. */}
-          <Card faixa={colors.primary} onPress={() => router.push('/programa')} padding={spacing.md}>
-            <View style={s.entre}>
-              <View style={{ flex: 1, gap: 2 }}>
-                <Txt v="h3" size={15}>
-                  Objetivo e plano do bloco
+          {/* ── A semana ─────────────────────────────────────────────────
+              Vem antes da lista porque responde o que a lista não responde:
+              em que dia cada treino cai, e o que é hoje. */}
+          {dias.length > 0 && (
+            <Animated.View entering={FadeInDown.duration(280)}>
+              <Txt v="label" style={{ marginBottom: spacing.sm }}>
+                Sua semana
+              </Txt>
+              <Card padding={spacing.md}>
+                <View style={s.semana}>
+                  {LETRAS.map((letra, i) => {
+                    const d = dias.find((x) => x.dia_semana === i);
+                    const ehHoje = i === hoje;
+                    return (
+                      <Press
+                        key={i}
+                        onPress={() => d && router.push(`/dia/${d.id}`)}
+                        style={s.colDia}
+                        scale={d ? 0.94 : 1}
+                      >
+                        <Txt
+                          v="small"
+                          size={10}
+                          cor={ehHoje ? colors.primary : colors.textFaint}
+                          bold={ehHoje}
+                        >
+                          {letra}
+                        </Txt>
+                        <View
+                          style={[
+                            s.marcaDia,
+                            { backgroundColor: d ? (d.cor ?? colors.primary) : colors.surfaceAlt },
+                            ehHoje && s.marcaHoje,
+                          ]}
+                        >
+                          <Txt v="small" size={12} bold cor={d ? '#0A0B0F' : colors.textFaint}>
+                            {d ? letraDoTreino(d.nome) : '·'}
+                          </Txt>
+                        </View>
+                      </Press>
+                    );
+                  })}
+                </View>
+                <Txt v="small" size={11} cor={colors.textFaint} style={{ marginTop: spacing.sm }}>
+                  {doDia
+                    ? `Hoje é ${NOMES[hoje]}: ${doDia.nome}.`
+                    : `Hoje é ${NOMES[hoje]} — descanso. É dormindo e descansando que o músculo do treino anterior é construído.`}
                 </Txt>
-                <Txt v="small" size={11} cor={colors.textFaint}>
-                  Para que serve este treino, quantas semanas dura e se o volume por músculo fecha
-                </Txt>
-              </View>
-              <Ionicons name="analytics-outline" size={22} color={colors.primary} />
-            </View>
-          </Card>
+              </Card>
+            </Animated.View>
+          )}
 
-          <View style={{ flexDirection: 'row', gap: spacing.sm }}>
-            <Card
-              onPress={() => router.push('/diagnostico')}
-              padding={spacing.md}
-              style={{ flex: 1 }}
-            >
-              <Ionicons name="clipboard-outline" size={22} color={colors.warn} />
-              <Txt v="h3" size={14} style={{ marginTop: 6 }}>
-                Ajustar o plano
+          {/* ── Os treinos ──────────────────────────────────────────────── */}
+          {dias.length ? (
+            <>
+              <Txt v="label" style={{ marginTop: spacing.lg }}>
+                Meus treinos
               </Txt>
-              <Txt v="small" size={10} cor={colors.textFaint}>
-                O que mais te incomoda hoje
-              </Txt>
-            </Card>
-            <Card onPress={() => router.push('/cardio')} padding={spacing.md} style={{ flex: 1 }}>
-              <Ionicons name="pulse-outline" size={22} color={colors.info} />
-              <Txt v="h3" size={14} style={{ marginTop: 6 }}>
-                Cardio
-              </Txt>
-              <Txt v="small" size={10} cor={colors.textFaint}>
-                Zona 2, HIIT e sprints
-              </Txt>
-            </Card>
-          </View>
+              {dias.map((d, i) => (
+                <Animated.View key={d.id} entering={FadeInDown.delay(i * 40).duration(280)}>
+                  <Card
+                    faixa={d.cor ?? colors.primary}
+                    onPress={() => router.push(`/dia/${d.id}`)}
+                    padding={spacing.md}
+                    destaque={d.dia_semana === hoje}
+                  >
+                    <View style={s.entre}>
+                      <View style={{ flex: 1, gap: 4 }}>
+                        <View style={s.linhaBadge}>
+                          <View
+                            style={[
+                              s.badgeDia,
+                              d.dia_semana === hoje && { backgroundColor: colors.primary },
+                            ]}
+                          >
+                            <Txt
+                              v="small"
+                              size={10}
+                              bold
+                              cor={d.dia_semana === hoje ? '#1A0800' : colors.textDim}
+                            >
+                              {d.dia_semana === null ? 'SEM DIA' : CURTO[d.dia_semana]}
+                            </Txt>
+                          </View>
+                          {d.dia_semana === hoje && (
+                            <Txt v="small" size={10} bold cor={colors.primary}>
+                              HOJE
+                            </Txt>
+                          )}
+                        </View>
 
-          <View style={{ flexDirection: 'row', gap: spacing.sm }}>
-            <Card
-              onPress={() => router.push('/diagnostico-treino')}
-              padding={spacing.md}
-              style={{ flex: 1 }}
-            >
-              <Ionicons name="pulse" size={22} color={colors.success} />
-              <Txt v="h3" size={14} style={{ marginTop: 6 }}>
-                Como vai o treino
-              </Txt>
-              <Txt v="small" size={10} cor={colors.textFaint}>
-                O que travou e o backup
-              </Txt>
-            </Card>
-            <Card onPress={() => router.push('/liga')} padding={spacing.md} style={{ flex: 1 }}>
-              <Ionicons name="trophy-outline" size={22} color={colors.xp} />
-              <Txt v="h3" size={14} style={{ marginTop: 6 }}>
-                Liga
-              </Txt>
-              <Txt v="small" size={10} cor={colors.textFaint}>
-                Check-in e ranking
-              </Txt>
-            </Card>
-          </View>
+                        <Txt v="h3">{d.nome}</Txt>
 
-          <View style={{ flexDirection: 'row', gap: spacing.sm }}>
-            <Card onPress={() => router.push('/agenda')} padding={spacing.md} style={{ flex: 1 }}>
-              <Ionicons name="calendar-outline" size={22} color={colors.primary} />
-              <Txt v="h3" size={14} style={{ marginTop: 6 }}>
-                Agenda
-              </Txt>
-              <Txt v="small" size={10} cor={colors.textFaint}>
-                Qual treino em cada dia
-              </Txt>
-            </Card>
-            <Card onPress={() => router.push('/tempo')} padding={spacing.md} style={{ flex: 1 }}>
-              <Ionicons name="alarm-outline" size={22} color={colors.warn} />
-              <Txt v="h3" size={14} style={{ marginTop: 6 }}>
-                Tempo e alarmes
-              </Txt>
-              <Txt v="small" size={10} cor={colors.textFaint}>
-                Quanto você tem por dia
-              </Txt>
-            </Card>
-          </View>
-
-          {dados?.dias.length ? (
-            dados.dias.map((d, i) => (
-              <Animated.View key={d.id} entering={FadeInDown.delay(i * 45).duration(280)}>
-                <Card faixa={d.cor ?? colors.primary} onPress={() => router.push(`/dia/${d.id}`)}>
-                  <View style={s.entre}>
-                    <View style={{ flex: 1, gap: 3 }}>
-                      <Txt v="label" cor={colors.textFaint} size={10}>
-                        {d.rotina}
-                      </Txt>
-                      <Txt v="h2">{d.nome}</Txt>
-                      <Txt v="small">
-                        {d.qtd_exercicios} exercício{d.qtd_exercicios === 1 ? '' : 's'}
-                        {d.ultima_vez ? ` · ${dataAmigavel(d.ultima_vez)}` : ' · nunca treinado'}
-                      </Txt>
+                        <Txt v="small" size={11} cor={colors.textFaint}>
+                          {d.qtd_exercicios} exercício{d.qtd_exercicios === 1 ? '' : 's'} · ~
+                          {d.minutos} min
+                          {d.ultima_vez ? ` · ${dataAmigavel(d.ultima_vez)}` : ' · nunca treinado'}
+                        </Txt>
+                      </View>
+                      <Ionicons name="chevron-forward" size={20} color={colors.textFaint} />
                     </View>
-                    <Ionicons name="chevron-forward" size={20} color={colors.textFaint} />
-                  </View>
-                </Card>
-              </Animated.View>
-            ))
+                  </Card>
+                </Animated.View>
+              ))}
+            </>
           ) : (
             <Empty
               icone="barbell-outline"
-              titulo="Sem divisões de treino"
-              texto="Crie um dia de treino (Peito e tríceps, Perna completa…) e monte a lista de exercícios."
+              titulo="Nenhum treino montado"
+              texto="Refaça o questionário no Perfil: o app monta a divisão, os exercícios e o dia de cada sessão de uma vez."
             />
           )}
 
-          <Button
-            titulo="Criar dia de treino"
-            icone="add"
-            variante="secundario"
-            full
-            onPress={() => setCriando(true)}
-          />
+          {/* ── Mais ─────────────────────────────────────────────────────
+              Lista, não grade de cartões: isto é navegação secundária e
+              precisa parecer secundária. */}
+          <Txt v="label" style={{ marginTop: spacing.xl }}>
+            Mais
+          </Txt>
+          <Card padding={0}>
+            {MAIS.map((m, i) => (
+              <Press
+                key={m.rota}
+                onPress={() => router.push(m.rota as never)}
+                style={[s.linhaMais, i > 0 && s.comBorda]}
+              >
+                <Ionicons name={m.icone as never} size={20} color={colors.textDim} />
+                <View style={{ flex: 1 }}>
+                  <Txt v="body" size={14}>
+                    {m.titulo}
+                  </Txt>
+                  <Txt v="small" size={11} cor={colors.textFaint}>
+                    {m.sub}
+                  </Txt>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
+              </Press>
+            ))}
+          </Card>
         </>
+      ) : dados?.hist.length ? (
+        dados.hist.map((h, i) => (
+          <Animated.View key={h.id} entering={FadeInDown.delay(i * 35).duration(260)}>
+            <Card padding={spacing.md}>
+              <View style={s.entre}>
+                <View style={{ flex: 1, gap: 3 }}>
+                  <Txt v="body" size={14}>
+                    {h.nome}
+                  </Txt>
+                  <Txt v="small" size={11} cor={colors.textFaint}>
+                    {dataAmigavel(h.iniciado_em)} ·{' '}
+                    {duracao(duracaoDe(h.iniciado_em, h.finalizado_em))} · {h.qtd_series} séries
+                  </Txt>
+                </View>
+                <View style={{ alignItems: 'flex-end', gap: 3 }}>
+                  <Txt v="h3" cor={colors.primary}>
+                    {volume(h.volume_total_kg)}
+                  </Txt>
+                  {h.qtd_prs > 0 ? (
+                    <View style={s.prTag}>
+                      <Ionicons name="trophy" size={10} color={colors.warn} />
+                      <Txt v="small" cor={colors.warn} size={10}>
+                        {h.qtd_prs} PR
+                      </Txt>
+                    </View>
+                  ) : null}
+                </View>
+              </View>
+            </Card>
+          </Animated.View>
+        ))
       ) : (
-        <>
-          {dados?.hist.length ? (
-            dados.hist.map((h, i) => (
-              <Animated.View key={h.id} entering={FadeInDown.delay(i * 35).duration(260)}>
-                <Card padding={spacing.md}>
-                  <View style={s.entre}>
-                    <View style={{ flex: 1, gap: 3 }}>
-                      <Txt v="h3">{h.nome}</Txt>
-                      <Txt v="small">
-                        {dataAmigavel(h.iniciado_em)} ·{' '}
-                        {duracao(duracaoDe(h.iniciado_em, h.finalizado_em))} · {h.qtd_series} séries
-                      </Txt>
-                    </View>
-                    <View style={{ alignItems: 'flex-end', gap: 3 }}>
-                      <Txt v="h3" cor={colors.primary}>
-                        {volume(h.volume_total_kg)}
-                      </Txt>
-                      {h.qtd_prs > 0 ? (
-                        <View style={s.prTag}>
-                          <Ionicons name="trophy" size={10} color={colors.warn} />
-                          <Txt v="small" cor={colors.warn} size={10}>
-                            {h.qtd_prs} PR
-                          </Txt>
-                        </View>
-                      ) : null}
-                    </View>
-                  </View>
-                </Card>
-              </Animated.View>
-            ))
-          ) : (
-            <Empty
-              icone="time-outline"
-              titulo="Nenhum treino registrado"
-              texto="Quando você concluir um treino, ele aparece aqui com volume, duração e recordes."
-            />
-          )}
-        </>
+        <Empty
+          icone="time-outline"
+          titulo="Nenhum treino registrado"
+          texto="Quando você concluir um treino, ele aparece aqui com volume, duração e recordes."
+        />
       )}
-
-      <Sheet aberto={criando} onFechar={() => setCriando(false)} titulo="Novo dia de treino" altura={0.6}>
-        <View style={{ gap: spacing.lg }}>
-          <Input
-            rotulo="Nome"
-            placeholder="A — Peito e tríceps"
-            value={nomeDia}
-            onChangeText={setNomeDia}
-            autoFocus
-            maxLength={40}
-          />
-          <View style={{ gap: spacing.sm }}>
-            <Txt v="label">Cor</Txt>
-            <View style={s.cores}>
-              {CORES_DIA.map((c) => (
-                <Press
-                  key={c}
-                  onPress={() => setCorDia(c)}
-                  haptic="selecao"
-                  scale={0.88}
-                  style={[
-                    s.cor,
-                    { backgroundColor: c },
-                    corDia === c && { borderWidth: 3, borderColor: colors.text },
-                  ]}
-                />
-              ))}
-            </View>
-          </View>
-          <Button
-            titulo="Criar e adicionar exercícios"
-            full
-            onPress={salvarDia}
-            desabilitado={nomeDia.trim().length < 2}
-          />
-        </View>
-      </Sheet>
     </Screen>
   );
 }
 
+/** "A — Superior" vira "A". Sem letra, cai na inicial do nome. */
+function letraDoTreino(nome: string): string {
+  const m = nome.match(/^([A-F])\s*[—-]/);
+  return m ? m[1] : (nome.trim()[0]?.toUpperCase() ?? '?');
+}
+
 const s = StyleSheet.create({
-  abas: { flexDirection: 'row', gap: spacing.sm },
-  entre: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md },
-  iconeBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
+  abas: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md },
+  entre: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+
+  semana: { flexDirection: 'row', gap: 6 },
+  colDia: { flex: 1, alignItems: 'center', gap: 6 },
+  marcaDia: {
+    width: '100%',
+    aspectRatio: 1,
+    borderRadius: radius.sm,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  marcaHoje: { borderWidth: 2, borderColor: colors.text },
+
+  linhaBadge: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  badgeDia: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    backgroundColor: colors.surfaceHigh,
+  },
+
+  linhaMais: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+  },
+  comBorda: { borderTopWidth: 1, borderTopColor: colors.border },
+
   prTag: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 3,
+    backgroundColor: colors.warnSoft,
     paddingHorizontal: 6,
     paddingVertical: 2,
-    borderRadius: radius.full,
-    backgroundColor: colors.warnSoft,
+    borderRadius: 6,
   },
-  cores: { flexDirection: 'row', gap: spacing.md, flexWrap: 'wrap' },
-  cor: { width: 42, height: 42, borderRadius: 21 },
 });

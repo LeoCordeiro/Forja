@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
+import { useRouter } from 'expo-router';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { colors, radius, spacing } from '@/theme';
@@ -16,9 +17,10 @@ import { estatisticas, treinosPorDia, volumePorGrupo } from '@/features/treino/a
 import { historicoCalorias } from '@/features/dieta/api';
 import { avaliarConquistas } from '@/features/gamificacao/api';
 import { classificacaoImc } from '@/features/perfil/calculos';
-import { dataCurta, diaSemanaDe, hoje, ultimosDias } from '@/shared/utils/date';
+import { dataCurta, diaSemanaDe, hoje, semanasFechadas } from '@/shared/utils/date';
 import { kcal, nomeGrupo, num, peso as fmtPeso, volume } from '@/shared/utils/format';
 import { buzz } from '@/shared/utils/haptics';
+import { estadoDaCadencia } from '@/features/progresso/api';
 
 type Metrica = 'peso' | 'cintura' | 'braco' | 'coxa' | 'peito';
 
@@ -31,11 +33,12 @@ const METRICAS: { chave: Metrica; label: string; campo: string; sufixo: string }
 ];
 
 export default function Evolucao() {
+  const router = useRouter();
   const [metrica, setMetrica] = useState<Metrica>('peso');
   const [registrando, setRegistrando] = useState(false);
 
   const { dados, recarregar } = useDados(async () => {
-    const [r, medidas, stats, porGrupo, porDia, cal, qtdMedidas] = await Promise.all([
+    const [r, medidas, stats, porGrupo, porDia, cal, qtdMedidas, fotos] = await Promise.all([
       resumo(),
       historicoMedidas(90),
       estatisticas(),
@@ -43,8 +46,9 @@ export default function Evolucao() {
       treinosPorDia(28),
       historicoCalorias(14),
       contarMedidas(),
+      estadoDaCadencia(),
     ]);
-    return { r, medidas, stats, porGrupo, porDia, cal, qtdMedidas };
+    return { r, medidas, stats, porGrupo, porDia, cal, qtdMedidas, fotos };
   }, []);
 
   if (!dados?.r) return <Screen titulo="Carregando…">{null}</Screen>;
@@ -59,7 +63,8 @@ export default function Evolucao() {
   const semanas = agruparSemanas(porDia);
   const maxGrupo = Math.max(...porGrupo.map((g) => g.volume), 1);
 
-  const dias28 = ultimosDias(28);
+  // Quatro semanas fechadas: a coluna 1 é sempre domingo, como diz o cabeçalho.
+  const dias28 = semanasFechadas(4);
   const mapaDias = new Map(porDia.map((d) => [d.dia, d]));
 
   return (
@@ -73,6 +78,36 @@ export default function Evolucao() {
         </Press>
       }
     >
+      {/* ── Foto de progresso ──
+          Fica antes do gráfico de propósito: em recomposição o peso pode ficar
+          parado por meses enquanto o corpo muda, e quem só olha o número
+          desiste antes de ver o resultado que já estava acontecendo. */}
+      <Animated.View entering={FadeInDown.duration(280)} style={{ marginBottom: spacing.lg }}>
+        <Card
+          onPress={() => router.push('/progresso')}
+          faixa={dados.fotos.naHora ? colors.primary : colors.border}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md }}>
+            <Ionicons
+              name="camera"
+              size={22}
+              color={dados.fotos.naHora ? colors.primary : colors.textDim}
+            />
+            <View style={{ flex: 1 }}>
+              <Txt v="body" bold>
+                {dados.fotos.naHora ? 'Hora da foto de progresso' : 'Foto de progresso'}
+              </Txt>
+              <Txt v="small" cor={colors.textFaint} style={{ marginTop: 2, lineHeight: 17 }}>
+                {dados.fotos.temFoto
+                  ? dados.fotos.mensagem
+                  : 'A medida que a balança não pega. Em recomposição, o peso mente e a foto não.'}
+              </Txt>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
+          </View>
+        </Card>
+      </Animated.View>
+
       {/* ── Corpo ── */}
       <Animated.View entering={FadeInDown.duration(300)} style={{ gap: spacing.md }}>
         <Txt v="label">Composição corporal</Txt>
@@ -125,32 +160,39 @@ export default function Evolucao() {
       <Animated.View entering={FadeInDown.delay(60).duration(300)} style={{ gap: spacing.md }}>
         <Txt v="label">Constância — últimas 4 semanas</Txt>
         <Card>
-          <View style={s.heatLegenda}>
+          {/* Uma linha por semana, sempre 7 colunas.
+              A versão anterior punha as 28 células numa única lista com quebra
+              automática e largura fixa de 30 px: em tela larga cabiam 18 numa
+              linha, e nenhuma coluna caía embaixo da letra do dia. Um mapa de
+              calor semanal que não alinha com o dia da semana não informa nada. */}
+          <View style={s.heatLinha}>
             {['D', 'S', 'T', 'Q', 'Q', 'S', 'S'].map((d, i) => (
-              <Txt key={i} v="small" size={10} cor={colors.textFaint} style={s.heatCol}>
+              <Txt key={i} v="small" size={10} cor={colors.textFaint} center style={{ flex: 1 }}>
                 {d}
               </Txt>
             ))}
           </View>
-          <View style={s.heat}>
-            {dias28.map((dia) => {
-              const info = mapaDias.get(dia);
-              const intensidade = info ? Math.min(1, info.volume / 6000) : 0;
-              return (
-                <View
-                  key={dia}
-                  style={[
-                    s.heatCel,
-                    {
-                      backgroundColor: info
-                        ? `rgba(255, 90, 31, ${0.3 + intensidade * 0.7})`
-                        : colors.surfaceHigh,
-                    },
-                  ]}
-                />
-              );
-            })}
-          </View>
+          {[0, 1, 2, 3].map((semana) => (
+            <View key={semana} style={s.heatLinha}>
+              {dias28.slice(semana * 7, semana * 7 + 7).map((dia) => {
+                const info = mapaDias.get(dia);
+                const intensidade = info ? Math.min(1, info.volume / 6000) : 0;
+                return (
+                  <View
+                    key={dia}
+                    style={[
+                      s.heatCel,
+                      {
+                        backgroundColor: info
+                          ? `rgba(255, 90, 31, ${0.3 + intensidade * 0.7})`
+                          : colors.surfaceHigh,
+                      },
+                    ]}
+                  />
+                );
+              })}
+            </View>
+          ))}
           <Txt v="small" cor={colors.textFaint} style={{ marginTop: spacing.sm }}>
             {porDia.length} treinos em 28 dias · quanto mais forte a cor, maior o volume
           </Txt>
@@ -320,8 +362,6 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  heat: { flexDirection: 'row', flexWrap: 'wrap', gap: 5 },
-  heatLegenda: { flexDirection: 'row', gap: 5, marginBottom: 6 },
-  heatCol: { width: 30, textAlign: 'center' },
-  heatCel: { width: 30, height: 30, borderRadius: 6 },
+  heatLinha: { flexDirection: 'row', gap: 5, marginBottom: 5 },
+  heatCel: { flex: 1, aspectRatio: 1, borderRadius: 6, maxWidth: 44 },
 });

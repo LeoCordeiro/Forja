@@ -25,11 +25,11 @@
       "versionCode": 1,
       "permissions": [
         "android.permission.VIBRATE",
-        "android.permission.WAKE_LOCK"
+        "android.permission.WAKE_LOCK",
+        "android.permission.CAMERA"
       ],
       "blockedPermissions": [
         "android.permission.RECORD_AUDIO",
-        "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE"
       ]
     },
@@ -41,7 +41,20 @@
     "plugins": [
       "expo-router",
       "expo-sqlite",
-      "expo-font"
+      "expo-font",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "A Forja usa a câmera só para a foto de progresso. A imagem fica guardada no próprio aparelho e não é enviada para lugar nenhum.",
+          "recordAudioAndroid": false
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Para usar uma foto que você já tem como ponto de partida da comparação. Nada é enviado para fora do aparelho."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

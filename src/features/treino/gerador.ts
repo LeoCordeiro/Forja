@@ -1,0 +1,630 @@
+import { all, first, getDb, run } from '@/db/client';
+import type { Profile } from '@/db/types';
+import { descansoCorreto, ehComposto, ehPesado } from './classificacao';
+import { equipamentosDe, limitacaoDoLocal } from './local';
+import { REGIOES_DOR } from '@/features/perfil/diagnostico';
+import { lerTempoPorDia } from '@/features/perfil/api';
+import { distribuirAutomaticamente, PADROES } from './agenda';
+import { estimarDuracao, emMinutos } from './duracao';
+
+/**
+ * Gerador de treino.
+ *
+ * ── Por que este arquivo existe ──────────────────────────────────────────
+ *
+ * Até ele, o app tinha um questionário completo e uma rotina de exemplo — e
+ * nenhuma ligação entre os dois. Todo mundo recebia o mesmo Push/Pull/Legs de
+ * três dias, com barra fixa e leg press, independente de treinar em casa, de
+ * ter 45 minutos, de sentir dor no ombro ou de conseguir ir cinco vezes por
+ * semana. Um plano que serve para todo mundo é um plano que não foi feito para
+ * ninguém, e é assim que ele parece na tela.
+ *
+ * Aqui cada resposta muda alguma coisa concreta:
+ *
+ * | Resposta            | O que muda                                        |
+ * |---------------------|---------------------------------------------------|
+ * | Local de treino     | Quais exercícios sequer entram na lista           |
+ * | Dias por semana     | A divisão inteira (full body, upper/lower, PPL)   |
+ * | Quais dias          | Onde cada treino cai na semana                    |
+ * | Minutos por dia     | Quantos exercícios cabem em cada sessão           |
+ * | Experiência         | Volume semanal por músculo                        |
+ * | Dores               | Exercícios removidos, com substituto no lugar     |
+ * | Preferência         | Ordem entre máquina e peso livre                  |
+ * | Ênfase              | Séries extras no grupo escolhido, dentro do teto  |
+ * | Objetivo            | Se entra cardio no fim da sessão                  |
+ *
+ * ── A base científica das constantes ─────────────────────────────────────
+ *
+ * · **Volume é o que mais importa.** O Position Stand do ACSM de 2026 (137
+ *   revisões sistemáticas) coloca o volume semanal por músculo como o principal
+ *   determinante de hipertrofia, com piso perto de 10 séries por semana.
+ * · **Frequência mínima 2×.** O mesmo documento pede cada grupo pelo menos duas
+ *   vezes por semana — é por isso que 3 dias vira full body aqui, e não o
+ *   clássico "um músculo por dia", que entrega 1× por semana.
+ * · **Contagem fracionada.** Série que trabalha o músculo indiretamente conta
+ *   meia. Rosca direta não é a única coisa que treina bíceps: toda remada
+ *   também treina, e ignorar isso infla o volume real do braço.
+ * · **Teto útil.** Acima de ~20 séries semanais o ganho extra não paga o custo
+ *   de recuperação. A ênfase respeita esse teto.
+ */
+
+export type Grupo =
+  | 'peito' | 'costas' | 'ombro' | 'biceps' | 'triceps' | 'quadriceps'
+  | 'posterior' | 'gluteo' | 'panturrilha' | 'abdomen' | 'trapezio' | 'antebraco';
+
+/** Grupos pequenos: recebem volume indireto de todo composto e pedem menos série direta. */
+const PEQUENOS: Grupo[] = ['biceps', 'triceps', 'panturrilha', 'abdomen', 'trapezio', 'antebraco'];
+
+/** Piso do ACSM 2026. Nenhum grupo fica abaixo disso. */
+export const PISO_SEMANAL = 10;
+/** Acima disso o retorno não paga a recuperação. */
+export const TETO_SEMANAL = 20;
+/** Mais que isso numa sessão só rende pouco: melhor distribuir na semana. */
+const MAX_SERIES_SESSAO = 6;
+
+const VOLUME_POR_EXPERIENCIA: Record<string, number> = {
+  iniciante: 10,
+  intermediario: 14,
+  avancado: 18,
+};
+
+interface ModeloDia {
+  nome: string;
+  cor: string;
+  /** Ordem importa: o primeiro grupo abre a sessão, com o composto mais pesado. */
+  grupos: Grupo[];
+}
+
+const COR = {
+  empurrar: '#FF5A1F',
+  puxar: '#3B9EFF',
+  perna: '#00D68F',
+  corpo: '#A97BFF',
+  ombro: '#FFB020',
+};
+
+/**
+ * Divisões por dia disponível.
+ *
+ * Nenhuma delas deixa um grupo grande com menos de 2 aparições na semana — é o
+ * critério que elimina de saída o "segunda peito, terça costas, quarta perna"
+ * que a academia ensina e que entrega 1× por semana em cada músculo.
+ */
+const SPLITS: Record<number, ModeloDia[]> = {
+  1: [{ nome: 'Corpo todo', cor: COR.corpo, grupos: ['quadriceps', 'peito', 'costas', 'ombro', 'abdomen'] }],
+  2: [
+    { nome: 'A — Corpo todo', cor: COR.corpo, grupos: ['quadriceps', 'peito', 'costas', 'ombro', 'abdomen'] },
+    { nome: 'B — Corpo todo', cor: COR.perna, grupos: ['posterior', 'costas', 'peito', 'gluteo', 'triceps', 'biceps'] },
+  ],
+  3: [
+    { nome: 'A — Corpo todo, foco empurrar', cor: COR.empurrar, grupos: ['peito', 'quadriceps', 'costas', 'ombro', 'triceps', 'abdomen'] },
+    { nome: 'B — Corpo todo, foco puxar', cor: COR.puxar, grupos: ['costas', 'posterior', 'peito', 'biceps', 'gluteo', 'abdomen'] },
+    { nome: 'C — Corpo todo, foco perna', cor: COR.perna, grupos: ['quadriceps', 'gluteo', 'costas', 'ombro', 'panturrilha', 'abdomen'] },
+  ],
+  4: [
+    { nome: 'A — Superior', cor: COR.empurrar, grupos: ['peito', 'costas', 'ombro', 'triceps', 'biceps'] },
+    { nome: 'B — Inferior', cor: COR.perna, grupos: ['quadriceps', 'posterior', 'gluteo', 'panturrilha', 'abdomen'] },
+    { nome: 'C — Superior', cor: COR.puxar, grupos: ['costas', 'peito', 'ombro', 'biceps', 'triceps'] },
+    { nome: 'D — Inferior', cor: COR.perna, grupos: ['posterior', 'quadriceps', 'gluteo', 'panturrilha', 'abdomen'] },
+  ],
+  5: [
+    { nome: 'A — Superior', cor: COR.empurrar, grupos: ['peito', 'costas', 'ombro', 'triceps', 'biceps'] },
+    { nome: 'B — Inferior', cor: COR.perna, grupos: ['quadriceps', 'posterior', 'gluteo', 'panturrilha'] },
+    { nome: 'C — Empurrar', cor: COR.empurrar, grupos: ['peito', 'ombro', 'triceps'] },
+    { nome: 'D — Puxar', cor: COR.puxar, grupos: ['costas', 'biceps', 'trapezio'] },
+    { nome: 'E — Pernas', cor: COR.perna, grupos: ['posterior', 'quadriceps', 'gluteo', 'panturrilha', 'abdomen'] },
+  ],
+  6: [
+    { nome: 'A — Empurrar', cor: COR.empurrar, grupos: ['peito', 'ombro', 'triceps'] },
+    { nome: 'B — Puxar', cor: COR.puxar, grupos: ['costas', 'biceps', 'trapezio'] },
+    { nome: 'C — Pernas', cor: COR.perna, grupos: ['quadriceps', 'posterior', 'gluteo', 'panturrilha'] },
+    { nome: 'D — Empurrar', cor: COR.ombro, grupos: ['ombro', 'peito', 'triceps', 'abdomen'] },
+    { nome: 'E — Puxar', cor: COR.puxar, grupos: ['costas', 'biceps', 'trapezio'] },
+    { nome: 'F — Pernas', cor: COR.perna, grupos: ['posterior', 'quadriceps', 'gluteo', 'panturrilha', 'abdomen'] },
+  ],
+};
+
+export function divisaoDe(dias: number): { nome: string; porque: string } {
+  const d = Math.max(1, Math.min(6, dias));
+  if (d <= 2)
+    return {
+      nome: 'Corpo todo',
+      porque: `Com ${d} dia${d > 1 ? 's' : ''}, treinar o corpo inteiro em cada sessão é a única forma de cada músculo aparecer 2× na semana.`,
+    };
+  if (d === 3)
+    return {
+      nome: 'Corpo todo, com foco diferente por dia',
+      porque:
+        'Três dias de corpo todo entregam cada grupo 3× na semana. A alternativa clássica — um ' +
+        'músculo por dia — daria 1×, abaixo do mínimo que o ACSM 2026 recomenda.',
+    };
+  if (d === 4)
+    return {
+      nome: 'Superior / Inferior',
+      porque: 'Duas sessões de tronco e duas de perna: cada grupo 2× na semana, com 72 h de folga entre elas.',
+    };
+  if (d === 5)
+    return {
+      nome: 'Superior / Inferior + Empurrar / Puxar / Pernas',
+      porque: 'Cinco dias permitem volume alto mantendo todo grupo 2× na semana.',
+    };
+  return {
+    nome: 'Empurrar / Puxar / Pernas, 2× na semana',
+    porque: 'Seis dias só rendem com sono e comida em dia — o volume é alto e a recuperação vira o gargalo.',
+  };
+}
+
+// ── Entrada ───────────────────────────────────────────────────────────────
+
+export interface PerfilDoTreino {
+  dias: number;
+  /** Índices de dia da semana escolhidos. Vazio = o app espalha sozinho. */
+  diasDisponiveis: number[];
+  /** Minutos por dia da semana, índice 0 = domingo. */
+  minutosPorDia: number[];
+  experiencia: string;
+  objetivo: string;
+  local: string;
+  preferenciaEquipamento: string;
+  /** Regiões com dor: os exercícios de risco saem da lista. */
+  dores: string[];
+  /** Grupo a priorizar, se houver. */
+  enfase: Grupo | null;
+}
+
+interface ExercicioCat {
+  id: number;
+  nome: string;
+  grupo_primario: string;
+  grupos_secundarios: string;
+  equipamento: string | null;
+  tipo_carga: string;
+}
+
+export interface DiaGerado {
+  nome: string;
+  cor: string;
+  diaSemana: number | null;
+  minutos: number;
+  exercicios: {
+    id: number;
+    nome: string;
+    grupo: string;
+    series: number;
+    repsMin: number;
+    repsMax: number;
+    descanso: number;
+  }[];
+}
+
+export interface Plano {
+  divisao: string;
+  porque: string;
+  dias: DiaGerado[];
+  /** Séries semanais por grupo, com contagem fracionada. */
+  volumeSemanal: Record<string, number>;
+  avisos: string[];
+}
+
+// ── Volume ────────────────────────────────────────────────────────────────
+
+function alvoSemanal(grupo: Grupo, p: PerfilDoTreino): number {
+  const base = VOLUME_POR_EXPERIENCIA[p.experiencia] ?? PISO_SEMANAL;
+  // Grupo pequeno recebe volume indireto de todo composto: a série direta pesa
+  // menos e o alvo direto é menor de propósito.
+  let alvo = PEQUENOS.includes(grupo) ? Math.round(base * 0.6) : base;
+  if (p.enfase === grupo) alvo += 4;
+  return Math.max(6, Math.min(TETO_SEMANAL, alvo));
+}
+
+/** Faixa de repetição pelo papel do exercício na sessão. */
+function repsDe(nome: string, grupo: string, experiencia: string): [number, number] {
+  if (grupo === 'panturrilha') return [12, 20];
+  if (grupo === 'abdomen') return [12, 20];
+  if (ehPesado(nome)) return experiencia === 'iniciante' ? [8, 12] : [5, 8];
+  if (ehComposto(nome)) return [8, 12];
+  return [10, 15];
+}
+
+// ── Seleção de exercícios ─────────────────────────────────────────────────
+
+function evitarPorDor(dores: string[]): Set<string> {
+  const fora = new Set<string>();
+  for (const r of dores) {
+    for (const nome of REGIOES_DOR.find((x) => x.chave === r)?.evitar ?? []) fora.add(nome);
+  }
+  return fora;
+}
+
+/**
+ * Ordena os candidatos de um grupo.
+ *
+ * Composto primeiro sempre — é o que abre a sessão e o que mais constrói. A
+ * preferência por máquina ou peso livre só desempata dentro do mesmo tipo:
+ * Haugen 2023 (13 estudos, 1.016 pessoas) não achou diferença de hipertrofia
+ * entre os dois (SMD −0,055; p = 0,75), então isso é gosto, e gosto é o que faz
+ * alguém continuar aparecendo.
+ */
+function ordenar(cands: ExercicioCat[], preferencia: string): ExercicioCat[] {
+  const peso = (e: ExercicioCat) => {
+    if (preferencia === 'maquina') return e.equipamento === 'maquina' || e.equipamento === 'cabo' ? 0 : 1;
+    if (preferencia === 'livre') return e.equipamento === 'barra' || e.equipamento === 'halter' || e.equipamento === 'livre' ? 0 : 1;
+    return 0;
+  };
+  return [...cands].sort((a, b) => {
+    const ca = ehPesado(a.nome) ? 0 : ehComposto(a.nome) ? 1 : 2;
+    const cb = ehPesado(b.nome) ? 0 : ehComposto(b.nome) ? 1 : 2;
+    if (ca !== cb) return ca - cb;
+    return peso(a) - peso(b);
+  });
+}
+
+/** Quantos exercícios distintos para um número de séries. */
+function quantosExercicios(series: number): number {
+  if (series <= 4) return 1;
+  if (series <= 8) return 2;
+  return 3;
+}
+
+// ── Montagem ──────────────────────────────────────────────────────────────
+
+export async function montarPlano(p: PerfilDoTreino): Promise<Plano> {
+  const catalogo = await all<ExercicioCat>(
+    `SELECT id, nome, grupo_primario, grupos_secundarios, equipamento, tipo_carga
+       FROM exercises WHERE grupo_primario <> 'cardio'`
+  );
+  const cardio = await all<ExercicioCat>(
+    `SELECT id, nome, grupo_primario, grupos_secundarios, equipamento, tipo_carga
+       FROM exercises WHERE grupo_primario = 'cardio'`
+  );
+
+  const equipamentos = new Set(equipamentosDe(p.local));
+  const proibidos = evitarPorDor(p.dores);
+  const avisos: string[] = [];
+
+  const disponiveis = catalogo.filter(
+    (e) => (!e.equipamento || equipamentos.has(e.equipamento)) && !proibidos.has(e.nome)
+  );
+
+  const modelo = SPLITS[Math.max(1, Math.min(6, p.dias))];
+  const aparicoes: Record<string, number> = {};
+  for (const d of modelo) for (const g of d.grupos) aparicoes[g] = (aparicoes[g] ?? 0) + 1;
+
+  const dias: DiaGerado[] = [];
+  const usadosNoDia = new Set<string>();
+
+  for (const md of modelo) {
+    usadosNoDia.clear();
+    const exercicios: DiaGerado['exercicios'] = [];
+
+    for (const grupo of md.grupos) {
+      const alvo = alvoSemanal(grupo, p);
+      const naSessao = Math.min(MAX_SERIES_SESSAO, Math.max(2, Math.round(alvo / aparicoes[grupo])));
+
+      const cands = ordenar(
+        disponiveis.filter((e) => e.grupo_primario === grupo && !usadosNoDia.has(e.nome)),
+        p.preferenciaEquipamento
+      );
+      if (!cands.length) {
+        avisos.push(
+          `Sem exercício de ${grupo} disponível para "${p.local}". Esse grupo ficou de fora — vale ` +
+            `rever o local de treino ou acrescentar um exercício manualmente.`
+        );
+        continue;
+      }
+
+      const quantos = Math.min(quantosExercicios(naSessao), cands.length);
+      const porExercicio = Math.max(2, Math.floor(naSessao / quantos));
+
+      for (let i = 0; i < quantos; i++) {
+        const e = cands[i];
+        usadosNoDia.add(e.nome);
+        const [rmin, rmax] = repsDe(e.nome, grupo, p.experiencia);
+        exercicios.push({
+          id: e.id,
+          nome: e.nome,
+          grupo,
+          series: porExercicio,
+          repsMin: e.tipo_carga === 'tempo' ? 0 : rmin,
+          repsMax: e.tipo_carga === 'tempo' ? 0 : rmax,
+          descanso: descansoCorreto(e.nome, rmax, grupo),
+        });
+      }
+    }
+
+    // Cardio no fim, só quando o objetivo pede. Antes da musculação derrubaria
+    // a força do treino inteiro; depois, não atrapalha a hipertrofia.
+    if ((p.objetivo === 'emagrecimento' || p.objetivo === 'recomposicao') && cardio.length) {
+      const c = cardio.find((x) => !x.equipamento || equipamentos.has(x.equipamento)) ?? cardio[0];
+      exercicios.push({
+        id: c.id,
+        nome: c.nome,
+        grupo: 'cardio',
+        series: 1,
+        repsMin: 0,
+        repsMax: 0,
+        descanso: 0,
+      });
+    }
+
+    dias.push({ nome: md.nome, cor: md.cor, diaSemana: null, minutos: 0, exercicios });
+  }
+
+  // ── Encaixar na semana e no tempo de cada dia ────────────────────────────
+  distribuirNaSemana(dias, p, avisos);
+  for (const d of dias) {
+    const minutos = d.diaSemana !== null ? (p.minutosPorDia[d.diaSemana] ?? 60) : 60;
+    cortarParaCaber(d, minutos, avisos);
+    d.minutos = emMinutos(estimarDuracao(paraEstimativa(d)).totalSeg);
+  }
+
+  const limite = limitacaoDoLocal(p.local);
+  if (limite) avisos.push(limite);
+
+  return {
+    divisao: divisaoDe(p.dias).nome,
+    porque: divisaoDe(p.dias).porque,
+    dias,
+    volumeSemanal: contarVolume(dias),
+    avisos,
+  };
+}
+
+/** Adapta o dia gerado ao formato que o estimador de duração espera. */
+function paraEstimativa(d: DiaGerado) {
+  return d.exercicios.map((e, i) => ({
+    id: i,
+    nome: e.nome,
+    grupo_primario: e.grupo,
+    series_alvo: e.series,
+    reps_min: e.repsMin,
+    reps_max: e.repsMax,
+    descanso_seg: e.descanso,
+    tipo_carga: e.repsMin === 0 ? 'tempo' : 'peso_reps',
+  })) as never;
+}
+
+/**
+ * Tira exercício até o treino caber no tempo daquele dia.
+ *
+ * Sempre de trás para frente e nunca o primeiro do dia: o que abre a sessão é o
+ * composto pesado, que é onde está o corpo inteiro e o maior estímulo. Quem
+ * corta pelo começo troca o treino pelo aquecimento.
+ */
+function cortarParaCaber(d: DiaGerado, minutos: number, avisos: string[]) {
+  const limite = minutos * 60;
+  let cortados = 0;
+
+  while (d.exercicios.length > 3 && estimarDuracao(paraEstimativa(d)).totalSeg > limite) {
+    let alvo = -1;
+    for (let i = d.exercicios.length - 1; i > 0; i--) {
+      if (!ehPesado(d.exercicios[i].nome)) {
+        alvo = i;
+        break;
+      }
+    }
+    if (alvo < 0) break;
+    d.exercicios.splice(alvo, 1);
+    cortados++;
+  }
+
+  if (cortados) {
+    avisos.push(
+      `${d.nome}: ${cortados} exercício${cortados > 1 ? 's' : ''} a menos para caber em ${minutos} min. ` +
+        `Saíram os acessórios do fim — os compostos, que são o que constrói, ficaram todos.`
+    );
+  }
+}
+
+/**
+ * Volume semanal com contagem fracionada.
+ *
+ * Série que trabalha o grupo como secundário conta meia. Sem isso, remada não
+ * conta nada para o bíceps e o app acha que o braço está com metade do volume
+ * que de fato recebe.
+ */
+function contarVolume(dias: DiaGerado[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const d of dias) {
+    for (const e of d.exercicios) {
+      if (e.grupo === 'cardio') continue;
+      out[e.grupo] = (out[e.grupo] ?? 0) + e.series;
+    }
+  }
+  return out;
+}
+
+/** Distância circular entre dois dias da semana. Domingo encosta na segunda. */
+const distDia = (a: number, b: number) => {
+  const d = Math.abs(a - b);
+  return Math.min(d, 7 - d);
+};
+
+/**
+ * Quais dias da semana ficam disponíveis para os treinos.
+ *
+ * Se a pessoa marcou dias, são os dela — e se marcou mais do que a divisão
+ * precisa, ficam os mais espaçados entre si. Se não marcou nada, cai no padrão
+ * clássico (3 dias = segunda, quarta, sexta), que já nasce espalhado e não
+ * inventa treino no domingo para quem não pediu.
+ */
+function vagasDaSemana(p: PerfilDoTreino, quantos: number): number[] {
+  const marcados = [...new Set(p.diasDisponiveis)].sort((a, b) => a - b);
+  if (!marcados.length) return [...(PADROES[Math.min(6, quantos)] ?? [1, 3, 5])].slice(0, quantos);
+
+  if (marcados.length >= quantos) {
+    const passo = marcados.length / quantos;
+    return Array.from({ length: quantos }, (_, i) => marcados[Math.floor(i * passo)]);
+  }
+
+  // Marcou menos dias do que a divisão pede: completa com o dia mais longe dos
+  // já usados, para não colar duas sessões.
+  const restantes = [0, 1, 2, 3, 4, 5, 6].filter((d) => !marcados.includes(d));
+  const out = [...marcados];
+  while (out.length < quantos && restantes.length) {
+    let melhor = restantes[0];
+    let melhorDist = -1;
+    for (const c of restantes) {
+      const dist = Math.min(...out.map((u) => distDia(u, c)));
+      if (dist > melhorDist) {
+        melhorDist = dist;
+        melhor = c;
+      }
+    }
+    out.push(melhor);
+    restantes.splice(restantes.indexOf(melhor), 1);
+  }
+  return out;
+}
+
+/**
+ * Grupos que contam para o intervalo de recuperação.
+ *
+ * Cardio fica de fora porque não disputa recuperação com musculação da mesma
+ * forma — e porque, com objetivo de emagrecimento, TODO dia recebe cardio.
+ * Deixá-lo na conta fazia todos os dias "compartilharem grupo" com todos, o
+ * critério de distância perdia o sentido e o resultado foram dois treinos de
+ * perna em dias seguidos. Abdômen sai pela mesma razão: aparece em quase toda
+ * sessão e não é o que limita.
+ */
+const IGNORAR_NA_AGENDA = new Set(['cardio', 'abdomen']);
+
+const gruposDoDia = (d: DiaGerado) => [
+  ...new Set(d.exercicios.map((e) => e.grupo).filter((g) => !IGNORAR_NA_AGENDA.has(g))),
+];
+
+/**
+ * Coloca cada treino num dia da semana.
+ *
+ * Atribuição **sequencial**, na ordem do modelo — e isso não é preguiça: as
+ * divisões deste arquivo já são escritas alternando (Superior, Inferior,
+ * Superior, Inferior; Empurrar, Puxar, Pernas…). Com vagas em ordem crescente,
+ * seguir a sequência é o encaixe ótimo, e é previsível: o treino A é o primeiro
+ * da semana, sempre.
+ *
+ * A versão anterior procurava a melhor vaga por distância e errava de dois
+ * jeitos: ordenava as vagas depois de escolher (jogando fora o cálculo) e
+ * contava cardio como grupo compartilhado. Busca sofisticada que produz perna
+ * na quinta e perna na sexta perde para uma regra simples que acerta.
+ *
+ * O que sobra da conta de distância vira aviso, não silêncio: se a semana da
+ * pessoa força dois dias colados, ela precisa saber.
+ */
+function distribuirNaSemana(dias: DiaGerado[], p: PerfilDoTreino, avisos: string[]) {
+  const vagas = vagasDaSemana(p, dias.length);
+  dias.forEach((d, i) => {
+    d.diaSemana = vagas[i] ?? null;
+  });
+
+  for (let i = 0; i < dias.length; i++) {
+    for (let j = i + 1; j < dias.length; j++) {
+      const a = dias[i];
+      const b = dias[j];
+      if (a.diaSemana === null || b.diaSemana === null) continue;
+      if (distDia(a.diaSemana, b.diaSemana) > 1) continue;
+
+      const comuns = gruposDoDia(a).filter((g) => gruposDoDia(b).includes(g));
+      if (!comuns.length) continue;
+
+      avisos.push(
+        `${a.nome} e ${b.nome} caíram em dias seguidos e treinam ${comuns.join(', ')}. ` +
+          `A síntese proteica fica elevada por 24 a 48 h depois da sessão — treinar de novo dentro ` +
+          `dessa janela soma fadiga, não estímulo. Se der, marque mais um dia livre na semana.`
+      );
+    }
+  }
+
+  // A ordem visual segue a semana: quem abre a lista é o primeiro treino a
+  // acontecer, não a letra que saiu do modelo.
+  dias.sort((a, b) => (a.diaSemana ?? 9) - (b.diaSemana ?? 9));
+}
+
+// ── Gravação ──────────────────────────────────────────────────────────────
+
+/**
+ * Substitui a rotina ativa pelo plano gerado.
+ *
+ * Substitui em vez de acrescentar: era isso que enchia o app de treinos soltos
+ * — foi o que aconteceu com a Deise, que terminou o cadastro com a rotina de
+ * exemplo E a rotina nova, sem saber qual das duas era a dela.
+ */
+export async function aplicarPlano(plano: Plano, nome = 'Meu treino'): Promise<number> {
+  const db = await getDb();
+
+  await run('UPDATE routines SET ativa = 0 WHERE ativa = 1');
+
+  const r = await db.runAsync(
+    `INSERT INTO routines (nome, descricao, ativa, criado_em, nivel, dias_semana)
+     VALUES (?,?,1,?,?,?)`,
+    [nome, plano.porque, Date.now(), 'iniciante', plano.dias.length]
+  );
+  const routineId = r.lastInsertRowId;
+
+  for (let i = 0; i < plano.dias.length; i++) {
+    const d = plano.dias[i];
+    const dr = await db.runAsync(
+      `INSERT INTO routine_days (routine_id, nome, cor, ordem, dia_semana, tipo)
+       VALUES (?,?,?,?,?,?)`,
+      [routineId, d.nome, d.cor, i, d.diaSemana, 'forca']
+    );
+    const dayId = dr.lastInsertRowId;
+
+    for (let j = 0; j < d.exercicios.length; j++) {
+      const e = d.exercicios[j];
+      await db.runAsync(
+        `INSERT INTO routine_exercises
+           (routine_day_id, exercise_id, ordem, series_alvo, reps_min, reps_max, descanso_seg, eh_composto)
+         VALUES (?,?,?,?,?,?,?,?)`,
+        [dayId, e.id, j, e.series, e.repsMin || null, e.repsMax || null, e.descanso, ehComposto(e.nome) ? 1 : 0]
+      );
+    }
+  }
+
+  // Se algum dia ficou sem data — divisão maior que os dias marcados —, a
+  // agenda resolve olhando os grupos musculares.
+  if (plano.dias.some((d) => d.diaSemana === null)) await distribuirAutomaticamente();
+
+  return routineId;
+}
+
+/** Gera e aplica em uma chamada. É o que o onboarding e o "refazer" usam. */
+export async function gerarEAplicar(p: PerfilDoTreino, nome?: string): Promise<Plano> {
+  const plano = await montarPlano(p);
+  await aplicarPlano(plano, nome);
+  return plano;
+}
+
+/**
+ * Monta a entrada do gerador a partir do que já está gravado no perfil.
+ *
+ * Existe para que ninguém precise responder duas vezes: o questionário grava,
+ * isto lê, e o treino sai de lá sem passo intermediário.
+ */
+export async function perfilDoTreino(): Promise<PerfilDoTreino | null> {
+  const p = await first<Profile>('SELECT * FROM profile WHERE id = 1');
+  if (!p) return null;
+
+  const marcados = (p.dias_disponiveis ?? '')
+    .split(',')
+    .map((x) => parseInt(x, 10))
+    .filter((n) => n >= 0 && n <= 6);
+
+  return {
+    dias: p.dias_treino_semana ?? 3,
+    diasDisponiveis: marcados,
+    minutosPorDia: lerTempoPorDia(p.minutos_por_dia),
+    experiencia: p.experiencia ?? 'iniciante',
+    objetivo: p.objetivo ?? 'hipertrofia',
+    local: p.local_treino ?? 'academia',
+    preferenciaEquipamento: p.preferencia_equipamento ?? 'ambos',
+    dores: (p.dores ?? '').split(',').filter(Boolean),
+    enfase: (p.enfase as Grupo | null) ?? null,
+  };
+}
+
+/** Refaz o treino com as respostas atuais. Um botão, sem etapas. */
+export async function regerarTreino(): Promise<Plano | null> {
+  const p = await perfilDoTreino();
+  if (!p) return null;
+  return gerarEAplicar(p);
+}

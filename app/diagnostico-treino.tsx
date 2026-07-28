@@ -3,7 +3,8 @@ import { StyleSheet, View } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { colors, radius, spacing } from '@/theme';
-import { Button, Card, Tela, Txt } from '@/shared/ui';
+import { Button, Card, Press, Tela, Txt } from '@/shared/ui';
+import { espacoUsado } from '@/features/progresso/api';
 import { useDados } from '@/shared/hooks/useDados';
 import { resumo } from '@/features/perfil/api';
 import { detectarTravados, evoluindo, type Travado } from '@/features/treino/estagnacao';
@@ -29,6 +30,7 @@ import { buzz } from '@/shared/utils/haptics';
  */
 export default function DiagnosticoTreino() {
   const [baixando, setBaixando] = useState(false);
+  const [comFotos, setComFotos] = useState(false);
 
   const { dados, recarregar } = useDados(async () => {
     const [r, rotina, sono] = await Promise.all([resumo(), rotinaAtiva(), sonoRecente(14)]);
@@ -50,7 +52,14 @@ export default function DiagnosticoTreino() {
 
     const sobe = await evoluindo(60);
     const bkp = await gerarBackup();
-    return { travados, sobe, resumoBkp: resumirBackup(bkp), diasBkp: diasDesdeBackup() };
+    const espacoFotos = await espacoUsado();
+    return {
+      travados,
+      sobe,
+      resumoBkp: resumirBackup(bkp),
+      diasBkp: diasDesdeBackup(),
+      espacoFotos,
+    };
   }, []);
 
   return (
@@ -90,6 +99,29 @@ export default function DiagnosticoTreino() {
             </View>
           ) : null}
 
+          {dados && dados.espacoFotos.fotos > 0 && (
+            <Press
+              onPress={() => setComFotos((v) => !v)}
+              style={[s.opcaoFotos, comFotos && { borderColor: colors.primary }]}
+            >
+              <Ionicons
+                name={comFotos ? 'checkbox' : 'square-outline'}
+                size={20}
+                color={comFotos ? colors.primary : colors.textFaint}
+              />
+              <View style={{ flex: 1 }}>
+                <Txt v="small" bold>
+                  Incluir as {dados.espacoFotos.fotos} fotos de progresso
+                </Txt>
+                <Txt v="small" size={11} cor={colors.textFaint}>
+                  {comFotos
+                    ? `O arquivo vai para perto de ${dados.espacoFotos.mb} MB. Sem isso, restaurar traz o histórico mas não traz as fotos.`
+                    : `Fora do arquivo ele fica leve. Com elas, cresce ${dados.espacoFotos.mb} MB — e um arquivo pesado é o que faz a pessoa parar de gerar backup.`}
+                </Txt>
+              </View>
+            </Press>
+          )}
+
           <Button
             titulo="Baixar cópia agora"
             icone="download-outline"
@@ -100,7 +132,7 @@ export default function DiagnosticoTreino() {
             onPress={async () => {
               setBaixando(true);
               try {
-                const ok = await baixarBackup();
+                const ok = await baixarBackup(comFotos);
                 if (ok) buzz.ok();
                 recarregar();
               } finally {
@@ -220,6 +252,17 @@ function Num({ label, valor }: { label: string; valor: number }) {
 
 const s = StyleSheet.create({
   entre: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  opcaoFotos: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceAlt,
+  },
   numeros: {
     flexDirection: 'row',
     gap: spacing.sm,

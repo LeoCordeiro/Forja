@@ -35,7 +35,12 @@ type CamposV2 =
   | 'cardio_sessoes'
   | 'minutos_por_dia'
   | 'lembretes_ativos'
-  | 'lembrete_medida';
+  | 'lembrete_medida'
+  | 'local_treino'
+  | 'dias_disponiveis'
+  | 'enfase'
+  | 'preferencia_equipamento'
+  | 'dores';
 
 type PerfilEntrada = Omit<Profile, 'id' | 'criado_em' | CamposV2> &
   Partial<Pick<Profile, CamposV2>>;
@@ -47,8 +52,9 @@ export async function salvarPerfil(p: PerfilEntrada) {
         peso_meta_kg, onboarding_completo, criado_em,
         tmb_medido_kcal, usa_tmb_medido, meta_agua_ml, gordura_meta_pct,
         experiencia, dias_treino_semana, retomou_em, meses_parado, papel,
-        horario_treino, hora_acorda, hora_dorme, hora_treino)
-     VALUES (1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        horario_treino, hora_acorda, hora_dorme, hora_treino,
+        local_treino, dias_disponiveis, enfase, preferencia_equipamento, dores)
+     VALUES (1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(id) DO UPDATE SET
        nome = excluded.nome,
        data_nascimento = excluded.data_nascimento,
@@ -70,7 +76,12 @@ export async function salvarPerfil(p: PerfilEntrada) {
        horario_treino = excluded.horario_treino,
        hora_acorda = excluded.hora_acorda,
        hora_dorme = excluded.hora_dorme,
-       hora_treino = excluded.hora_treino`,
+       hora_treino = excluded.hora_treino,
+       local_treino = excluded.local_treino,
+       dias_disponiveis = excluded.dias_disponiveis,
+       enfase = excluded.enfase,
+       preferencia_equipamento = excluded.preferencia_equipamento,
+       dores = excluded.dores`,
     [
       p.nome,
       p.data_nascimento,
@@ -94,6 +105,11 @@ export async function salvarPerfil(p: PerfilEntrada) {
       p.hora_acorda ?? '06:30',
       p.hora_dorme ?? '23:00',
       p.hora_treino ?? null,
+      p.local_treino ?? 'academia',
+      p.dias_disponiveis ?? null,
+      p.enfase ?? null,
+      p.preferencia_equipamento ?? 'ambos',
+      p.dores ?? null,
     ]
   );
 }

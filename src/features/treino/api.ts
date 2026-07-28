@@ -1,3 +1,4 @@
+import { emMinutos, estimarDuracao } from './duracao';
 import { all, first, run } from '@/db/client';
 import type {
   Exercise,
@@ -81,6 +82,49 @@ export async function listarDias(): Promise<DiaComResumo[]> {
      WHERE r.ativa = 1
      ORDER BY r.id, rd.ordem
   `);
+}
+
+/**
+ * Os dias com o que a tela de treino precisa mostrar de uma vez: dia da semana,
+ * quantos exercícios, quanto tempo leva e quando foi a última vez.
+ *
+ * Uma consulta só para os exercícios de todos os dias, em vez de uma por dia:
+ * a tela abre com 4 a 6 treinos, e 6 idas ao banco para montar uma lista é o
+ * tipo de coisa que faz o app parecer lento sem motivo.
+ */
+export async function diasComTempo(): Promise<(DiaComResumo & { minutos: number })[]> {
+  const dias = await listarDias();
+  if (!dias.length) return [];
+
+  const marcas = dias.map(() => '?').join(',');
+  const exs = await all<{
+    routine_day_id: number;
+    nome: string;
+    grupo_primario: string;
+    series_alvo: number;
+    reps_min: number | null;
+    reps_max: number | null;
+    descanso_seg: number;
+    tipo_carga: string;
+  }>(
+    `SELECT re.routine_day_id, e.nome, e.grupo_primario, re.series_alvo,
+            re.reps_min, re.reps_max, re.descanso_seg, e.tipo_carga
+       FROM routine_exercises re
+       JOIN exercises e ON e.id = re.exercise_id
+      WHERE re.routine_day_id IN (${marcas})`,
+    dias.map((d) => d.id)
+  );
+
+  const porDia = new Map<number, typeof exs>();
+  for (const e of exs) {
+    if (!porDia.has(e.routine_day_id)) porDia.set(e.routine_day_id, []);
+    porDia.get(e.routine_day_id)!.push(e);
+  }
+
+  return dias.map((d) => ({
+    ...d,
+    minutos: emMinutos(estimarDuracao((porDia.get(d.id) ?? []) as never).totalSeg),
+  }));
 }
 
 export async function getDia(id: number): Promise<DiaComResumo | null> {

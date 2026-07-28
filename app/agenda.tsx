@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import Ionicons from '@expo/vector-icons/Ionicons';
@@ -13,6 +14,7 @@ import {
   type DiaDaAgenda,
 } from '@/features/treino/agenda';
 import { nomeDoGrupo } from '@/features/treino/volume';
+import { regerarTreino } from '@/features/treino/gerador';
 import { buzz } from '@/shared/utils/haptics';
 
 /**
@@ -23,6 +25,9 @@ import { buzz } from '@/shared/utils/haptics';
  * cara antes de virar três semanas de peito em dias seguidos.
  */
 export default function Agenda() {
+  const [refazendo, setRefazendo] = useState(false);
+  const [refeito, setRefeito] = useState<string | null>(null);
+
   const { dados, recarregar } = useDados(async () => {
     const [semana, hoje] = await Promise.all([agendaSemanal(), oQueFazerHoje()]);
     return { semana, hoje, conflitos: acharConflitos(semana) };
@@ -109,6 +114,55 @@ export default function Agenda() {
         Espalha os treinos em vez de amontoar: com 3, segunda/quarta/sexta. É a distribuição que
         maximiza a distância entre sessões do mesmo grupo.
       </Txt>
+
+      {/* ── Refazer o plano inteiro ──────────────────────────────────────
+          Mexer num dia resolve um dia. Quando o que mudou foi a vida — mudou
+          de academia, ganhou ou perdeu um dia livre, começou a doer o ombro —
+          o certo é refazer, não remendar. */}
+      <Card style={{ marginTop: spacing.xl }} faixa={colors.warn}>
+        <Txt v="h3" size={15}>
+          Refazer meu treino
+        </Txt>
+        <Txt v="small" size={11} cor={colors.textFaint} style={{ marginTop: 4, lineHeight: 17 }}>
+          Monta tudo de novo com as suas respostas atuais: divisão, exercícios, séries, descanso e o
+          dia da semana de cada sessão. O histórico do que você já treinou não é apagado.
+        </Txt>
+
+        {refeito ? (
+          <View style={s.refeito}>
+            <Ionicons name="checkmark-circle" size={16} color={colors.success} />
+            <Txt v="small" size={11} cor={colors.success} style={{ flex: 1 }}>
+              {refeito}
+            </Txt>
+          </View>
+        ) : null}
+
+        <Button
+          titulo="Refazer com minhas respostas"
+          icone="sparkles-outline"
+          full
+          carregando={refazendo}
+          style={{ marginTop: spacing.md }}
+          onPress={async () => {
+            setRefazendo(true);
+            try {
+              const plano = await regerarTreino();
+              if (plano) {
+                setRefeito(
+                  `${plano.divisao} — ${plano.dias.length} treinos, ` +
+                    `${plano.dias.reduce((a, d) => a + d.exercicios.length, 0)} exercícios, já com dia marcado.`
+                );
+                buzz.ok();
+              } else {
+                setRefeito('Não achei suas respostas. Refaça o questionário no Perfil.');
+              }
+              recarregar();
+            } finally {
+              setRefazendo(false);
+            }
+          }}
+        />
+      </Card>
     </Tela>
   );
 }
@@ -178,6 +232,15 @@ function acharConflitos(semana: DiaDaAgenda[]): string[] {
 }
 
 const s = StyleSheet.create({
+  refeito: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+    padding: spacing.sm,
+    borderRadius: radius.sm,
+    backgroundColor: colors.successSoft,
+  },
   entre: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   dia: {
     width: 34,

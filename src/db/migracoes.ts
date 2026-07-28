@@ -303,6 +303,111 @@ ALTER TABLE profile ADD COLUMN lembretes_ativos INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE profile ADD COLUMN lembrete_medida INTEGER NOT NULL DEFAULT 1;
 `;
 
+/**
+ * v8 → v9: fotos de progresso.
+ *
+ * Para quem quer perder gordura E ganhar músculo ao mesmo tempo, a balança é o
+ * pior instrumento possível: o peso pode ficar parado por meses enquanto a
+ * cintura cai e o ombro cresce. Foto e fita métrica medem isso; a balança não.
+ *
+ * A imagem vai como data URI dentro do banco, não como caminho de arquivo. Um
+ * caminho quebra sozinho — a pasta de cache do sistema é limpa quando o
+ * armazenamento aperta, e é exatamente aí que a foto de 6 meses atrás some. O
+ * que está no banco entra no backup e na restauração junto com o resto.
+ *
+ * Uma foto por ângulo por dia: refazer no mesmo dia substitui em vez de
+ * empilhar quase-iguais.
+ */
+const V9 = `
+CREATE TABLE IF NOT EXISTS fotos_progresso (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  data      TEXT    NOT NULL,             -- YYYY-MM-DD
+  angulo    TEXT    NOT NULL,             -- frente|lado|costas
+  imagem    TEXT    NOT NULL,             -- data URI JPEG em base64
+  largura   INTEGER,
+  altura    INTEGER,
+  criado_em INTEGER NOT NULL,
+  UNIQUE (data, angulo)
+);
+CREATE INDEX IF NOT EXISTS ix_fotos_data ON fotos_progresso (data DESC);
+`;
+
+/**
+ * v9 → v10: conserto do degrau anterior.
+ *
+ * O V9 rodou quebrado em aparelho de teste: o executor dividia o SQL por ';' e
+ * um ponto e vírgula dentro de um comentário partiu o CREATE TABLE ao meio. O
+ * comando falhou, mas o `user_version` subiu para 9 do mesmo jeito — então a
+ * tabela não existia e a migração nunca mais rodaria.
+ *
+ * O executor já foi corrigido (comentário sai antes da divisão). Este degrau
+ * existe só para alcançar quem já subiu para a versão 9 sem a tabela: em banco
+ * são, o IF NOT EXISTS não faz nada.
+ *
+ * A lição é a mesma que gerou o V5, por outro caminho: migração que falha em
+ * silêncio é pior que migração que quebra na cara.
+ */
+const V10 = `
+CREATE TABLE IF NOT EXISTS fotos_progresso (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  data      TEXT    NOT NULL,
+  angulo    TEXT    NOT NULL,
+  imagem    TEXT    NOT NULL,
+  largura   INTEGER,
+  altura    INTEGER,
+  criado_em INTEGER NOT NULL,
+  UNIQUE (data, angulo)
+);
+CREATE INDEX IF NOT EXISTS ix_fotos_data ON fotos_progresso (data DESC);
+`;
+
+/**
+ * v10 → v11: o que faltava para o treino deixar de ser genérico.
+ *
+ * Até aqui a rotina era um modelo pronto igual para todo mundo — as respostas
+ * do questionário ficavam guardadas sem mudar um exercício sequer. Estes três
+ * campos são os que faltavam para gerar o treino de verdade:
+ *
+ * · **local_treino** decide o catálogo inteiro. Prescrever leg press para quem
+ *   treina em casa com dois halteres não é treino, é lista de desejos.
+ * · **dias_disponiveis** troca "3 vezes por semana" por segunda, quarta e
+ *   sexta. Sem dia com nome, a decisão de treinar é retomada todo dia.
+ * · **enfase** é o grupo que a pessoa quer priorizar. Não muda o volume mínimo
+ *   de nenhum outro: acrescenta séries onde ela quer, dentro do teto útil.
+ */
+const V11 = `
+ALTER TABLE profile ADD COLUMN local_treino TEXT NOT NULL DEFAULT 'academia';
+ALTER TABLE profile ADD COLUMN dias_disponiveis TEXT;
+ALTER TABLE profile ADD COLUMN enfase TEXT;
+`;
+
+/**
+ * v11 → v12: uma rotina ativa por vez.
+ *
+ * O seed criava duas rotinas de exemplo, ambas marcadas como ativas — e a tela
+ * de treino mostra os dias de TODA rotina ativa. O resultado era uma lista com
+ * "A — Peito, Ombro e Tríceps" logo acima de "A — Corpo todo", de planos
+ * diferentes, sem nada indicando que eram dois programas.
+ *
+ * Mantém a rotina com mais treinos registrados (é a que a pessoa está usando de
+ * verdade) e desativa as outras. Nada é apagado: desativar preserva o histórico
+ * e permite reativar pela tela de ajuste.
+ */
+const V12 = `
+UPDATE routines SET ativa = 0
+ WHERE ativa = 1
+   AND id <> (
+     SELECT r.id FROM routines r
+      WHERE r.ativa = 1
+      ORDER BY (
+        SELECT COUNT(*) FROM workout_sessions ws
+          JOIN routine_days rd ON rd.id = ws.routine_day_id
+         WHERE rd.routine_id = r.id
+      ) DESC, r.id ASC
+      LIMIT 1
+   );
+`;
+
 export const MIGRACOES: { versao: number; sql: string }[] = [
   { versao: 2, sql: V2 },
   { versao: 3, sql: V3 },
@@ -311,4 +416,8 @@ export const MIGRACOES: { versao: number; sql: string }[] = [
   { versao: 6, sql: V6 },
   { versao: 7, sql: V7 },
   { versao: 8, sql: V8 },
+  { versao: 9, sql: V9 },
+  { versao: 10, sql: V10 },
+  { versao: 11, sql: V11 },
+  { versao: 12, sql: V12 },
 ];
