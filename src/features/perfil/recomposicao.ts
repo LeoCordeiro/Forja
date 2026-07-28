@@ -67,6 +67,29 @@ export function avaliarRecomposicao(dados: {
  * Em déficit a necessidade SOBE, não desce: a proteína passa a ter dupla
  * função — construir e proteger o que já existe.
  */
+/**
+ * Percentual de gordura estimado pelo IMC (equação de Deurenberg, 1991).
+ *
+ * Serve para uma coisa só: dar uma base de massa magra a quem não tem balança
+ * de bioimpedância. Erra em quem tem muita massa muscular — o IMC não sabe
+ * distinguir músculo de gordura — e por isso o app segue pedindo a medição de
+ * verdade. Mas errar por alguns pontos percentuais é muito melhor que a
+ * alternativa anterior, que era calcular proteína para o peso inteiro como se
+ * gordura consumisse proteína.
+ */
+export function gorduraPorImc(
+  pesoKg: number,
+  alturaCm: number,
+  idade: number,
+  genero: string
+): number {
+  const bmi = pesoKg / (alturaCm / 100) ** 2;
+  const homem = genero === 'masculino' ? 1 : genero === 'feminino' ? 0 : 0.5;
+  const pct = 1.2 * bmi + 0.23 * idade - 10.8 * homem - 5.4;
+  // Fora desta faixa a equação deixa de ser plausível e é melhor não usar.
+  return Math.min(55, Math.max(8, Math.round(pct * 10) / 10));
+}
+
 export function proteinaPorKg(objetivo: Objetivo | 'recomposicao'): number {
   switch (objetivo) {
     case 'recomposicao':
@@ -90,13 +113,28 @@ export function proteinaPorKg(objetivo: Objetivo | 'recomposicao'): number {
 export function macrosRecomposicao(
   kcalAlvo: number,
   pesoKg: number,
-  gorduraPct: number | null
+  gorduraPct: number | null,
+  estimar?: { alturaCm: number; idade: number; genero: string }
 ): Macros & { baseCalculo: string } {
-  const massaMagra = gorduraPct !== null ? pesoKg * (1 - gorduraPct / 100) : null;
+  // Sem bioimpedância, ESTIMA em vez de cair no peso total.
+  //
+  // O comentário acima já dizia que 2,6 g/kg de 88 kg dá 229 g e que isso é
+  // desnecessário e caro — e o código fazia exatamente isso sempre que faltava
+  // a balança de bioimpedância, que é o caso de quase todo mundo. A conta ficava
+  // pior justamente em quem tem mais gordura: 84 kg com 42% de gordura pediam
+  // 218 g de proteína para alimentar 48 kg de tecido magro.
+  //
+  // A estimativa por IMC não substitui medir, mas erra muito menos que ignorar.
+  const pct =
+    gorduraPct ?? (estimar ? gorduraPorImc(pesoKg, estimar.alturaCm, estimar.idade, estimar.genero) : null);
+  const massaMagra = pct !== null ? pesoKg * (1 - pct / 100) : null;
 
-  // Sobre massa magra, o alvo por kg é maior — é tecido puro.
+  // 2,4 g por kg de massa magra. A faixa defensável para déficit é 2,2 a 3,1
+  // (Helms et al., 2014), e o topo dela é de atleta muito magro em corte
+  // agressivo — não de quem está começando recomposição. 2,4 protege a massa
+  // magra sem virar meta que ninguém cumpre e sem encarecer a lista de compras.
   const proteina_g = massaMagra
-    ? Math.round(massaMagra * 3.0)
+    ? Math.round(massaMagra * 2.4)
     : Math.round(pesoKg * proteinaPorKg('recomposicao'));
 
   // Gordura em 25% das calorias: abaixo de ~20% começa a atrapalhar hormônio.
@@ -111,7 +149,8 @@ export function macrosRecomposicao(
     carbo_g,
     gordura_g,
     baseCalculo: massaMagra
-      ? `3,0 g por kg de massa magra (${massaMagra.toFixed(1)} kg)`
+      ? `2,4 g por kg de massa magra (${massaMagra.toFixed(1)} kg` +
+        `${gorduraPct === null ? ', estimada pelo IMC' : ''})`
       : `2,6 g por kg de peso corporal`,
   };
 }

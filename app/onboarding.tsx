@@ -160,7 +160,7 @@ export default function Onboarding() {
   const alvo = gasto ? metaCalorica(gasto, objetivo) : 0;
   const m = alvo
     ? objetivo === 'recomposicao'
-      ? macrosRecomposicao(alvo, pesoN, null)
+      ? macrosRecomposicao(alvo, pesoN, null, { alturaCm: alturaN, idade: idadeN, genero })
       : macros(alvo, pesoN, objetivo)
     : null;
 

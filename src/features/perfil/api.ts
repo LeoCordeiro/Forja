@@ -251,7 +251,7 @@ export async function resumo(): Promise<Resumo | null> {
         carbo_g: salva.carbo_g,
         gordura_g: salva.gordura_g,
       }
-    : calcularMeta(gasto, pesoKg, perfil.objetivo, gorduraPct);
+    : calcularMeta(gasto, pesoKg, perfil.objetivo, gorduraPct, dadosParaEstimar(perfil));
 
   return {
     perfil,
@@ -275,14 +275,33 @@ export async function resumo(): Promise<Resumo | null> {
  * Recomposição tem regra própria: déficit leve e proteína calculada sobre a
  * massa magra, não sobre o peso total.
  */
+/**
+ * O que a estimativa de massa magra precisa do perfil.
+ *
+ * Devolve `undefined` se faltar algum campo: estimar com idade zerada daria um
+ * número plausível e errado, que é pior que não estimar.
+ */
+function dadosParaEstimar(
+  p: Profile
+): { alturaCm: number; idade: number; genero: string } | undefined {
+  const anos = idade(p.data_nascimento);
+  if (!p.altura_cm || !anos) return undefined;
+  return { alturaCm: p.altura_cm, idade: anos, genero: p.genero ?? 'outro' };
+}
+
 export function calcularMeta(
   gasto: number,
   pesoKg: number,
   objetivo: Profile['objetivo'],
-  gorduraPct: number | null
+  gorduraPct: number | null,
+  // Sem bioimpedância, permite estimar a massa magra pelo IMC em vez de
+  // calcular proteína para o peso inteiro.
+  estimar?: { alturaCm: number; idade: number; genero: string }
 ): Macros {
   if (objetivo === 'recomposicao') {
-    return macrosRecomposicao(Math.round(gasto * DEFICIT_RECOMPOSICAO), pesoKg, gorduraPct);
+    return macrosRecomposicao(
+      Math.round(gasto * DEFICIT_RECOMPOSICAO), pesoKg, gorduraPct, estimar
+    );
   }
   return macros(metaCalorica(gasto, objetivo), pesoKg, objetivo);
 }
@@ -291,7 +310,9 @@ export function calcularMeta(
 export async function recalcularMeta() {
   const r = await resumo();
   if (!r) return;
-  const nova = calcularMeta(r.tdeeValor, r.pesoKg, r.perfil.objetivo, r.gorduraPct);
+  const nova = calcularMeta(
+    r.tdeeValor, r.pesoKg, r.perfil.objetivo, r.gorduraPct, dadosParaEstimar(r.perfil)
+  );
   await salvarMeta(nova, 'auto');
 }
 
@@ -299,7 +320,9 @@ export async function recalcularMeta() {
 export async function definirMetaCalorica(kcal: number) {
   const r = await resumo();
   if (!r) return;
-  const base = calcularMeta(r.tdeeValor, r.pesoKg, r.perfil.objetivo, r.gorduraPct);
+  const base = calcularMeta(
+    r.tdeeValor, r.pesoKg, r.perfil.objetivo, r.gorduraPct, dadosParaEstimar(r.perfil)
+  );
   // Proteína e gordura são pisos de saúde; o ajuste sai do carboidrato.
   const restante = kcal - base.proteina_g * 4 - base.gordura_g * 9;
   await salvarMeta(
