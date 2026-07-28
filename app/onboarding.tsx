@@ -33,7 +33,7 @@ import {
 } from '@/features/perfil/recomposicao';
 import { DESC_EXPERIENCIA, LABEL_EXPERIENCIA, planoRetorno } from '@/features/treino/periodizacao';
 import { LOCAIS, type LocalTreino } from '@/features/treino/local';
-import { divisaoDe, gerarEAplicar, type Grupo, type Plano } from '@/features/treino/gerador';
+import { divisaoDe, gerarEAplicar, gruposEnfatizados, type Plano } from '@/features/treino/gerador';
 import { REGIOES_DOR } from '@/features/perfil/diagnostico';
 import { OPCOES_EQUIPAMENTO } from '@/features/treino/equipamento';
 import { metaDiaria as metaDiariaAgua } from '@/features/agua/api';
@@ -77,15 +77,26 @@ const TEMPOS = [
  */
 const ENFASES: { v: string | null; l: string; d: string }[] = [
   { v: null, l: 'Equilibrado', d: 'Volume parelho no corpo todo' },
-  { v: 'inferior', l: 'Membros inferiores', d: 'Glúteo, quadríceps, posterior e panturrilha' },
-  { v: 'superior', l: 'Membros superiores', d: 'Peito, costas, ombro e braço' },
-  { v: 'gluteo', l: 'Só glúteo', d: 'Volume extra em um grupo só' },
-  { v: 'peito', l: 'Só peito', d: 'Volume extra em um grupo só' },
-  { v: 'costas', l: 'Só costas', d: 'Volume extra em um grupo só' },
-  { v: 'ombro', l: 'Só ombro', d: 'Volume extra em um grupo só' },
-  { v: 'biceps', l: 'Só braço', d: 'Volume extra em um grupo só' },
-  { v: 'abdomen', l: 'Só abdômen', d: 'Volume extra em um grupo só' },
+  { v: 'inferior', l: 'Inferiores', d: 'Glúteo, quadríceps, posterior e panturrilha' },
+  { v: 'superior', l: 'Superiores', d: 'Peito, costas, ombro e braço' },
+  { v: 'gluteo', l: 'Glúteo', d: 'Um grupo específico' },
+  { v: 'quadriceps', l: 'Perna', d: 'Um grupo específico' },
+  { v: 'peito', l: 'Peito', d: 'Um grupo específico' },
+  { v: 'costas', l: 'Costas', d: 'Um grupo específico' },
+  { v: 'ombro', l: 'Ombro', d: 'Um grupo específico' },
+  { v: 'biceps', l: 'Braço', d: 'Um grupo específico' },
+  { v: 'abdomen', l: 'Abdômen', d: 'Um grupo específico' },
 ];
+
+/** Frase que traduz os focos escolhidos em quantas séries cada lado recebe. */
+function resumoDoFoco(focos: string[]): string {
+  const n = gruposEnfatizados(focos).size;
+  const bonus = Math.max(1, Math.min(4, Math.round(16 / n)));
+  const nomes = focos
+    .map((f) => ENFASES.find((e) => e.v === f)?.l.replace('Só ', '').toLowerCase() ?? f)
+    .join(', ');
+  return `${n} grupo${n > 1 ? 's' : ''} priorizado${n > 1 ? 's' : ''} (${nomes}): +${bonus} série${bonus > 1 ? 's' : ''} por semana em cada um, tiradas de quem não foi escolhido — nunca abaixo do mínimo em que o músculo ainda responde.`;
+}
 
 export default function Onboarding() {
   const router = useRouter();
@@ -113,7 +124,7 @@ export default function Onboarding() {
   const [minutos, setMinutos] = useState(75);
   const [equipamento, setEquipamento] = useState('ambos');
   const [dores, setDores] = useState<string[]>([]);
-  const [enfase, setEnfase] = useState<string | null>(null);
+  const [focos, setFocos] = useState<string[]>([]);
   const [plano, setPlano] = useState<Plano | null>(null);
 
   const diasSemana = diasMarcados.length || 3;
@@ -176,7 +187,7 @@ export default function Onboarding() {
         hora_acorda: horarioTreino === 'jejum' ? '05:30' : '06:30',
         local_treino: local,
         dias_disponiveis: diasMarcados.join(','),
-        enfase,
+        enfase: focos.join(','),
         preferencia_equipamento: equipamento,
         dores: dores.join(','),
       });
@@ -200,7 +211,7 @@ export default function Onboarding() {
         local,
         preferenciaEquipamento: equipamento,
         dores,
-        enfase,
+        focos,
       });
       setPlano(gerado);
 
@@ -586,23 +597,36 @@ export default function Onboarding() {
 
         {passo === 7 && (
           <Bloco key="p7" titulo="O que priorizar" sub="E o que evitar, para o treino não te machucar">
-            <Txt v="label">Tem alguma parte que você quer priorizar?</Txt>
+            <Txt v="label">O que você quer priorizar no treino?</Txt>
+            <Txt v="small" cor={colors.textFaint} style={{ marginBottom: spacing.sm }}>
+              Pode marcar mais de um. Até três.
+            </Txt>
             <View style={s.linha}>
               {ENFASES.map((e) => (
                 <Chip
                   key={e.l}
                   label={e.l}
-                  ativo={enfase === e.v}
-                  onPress={() => setEnfase(e.v)}
+                  ativo={e.v === null ? focos.length === 0 : focos.includes(e.v)}
+                  onPress={() => {
+                    buzz.leve();
+                    if (e.v === null) return setFocos([]);
+                    setFocos((v) =>
+                      v.includes(e.v!)
+                        ? v.filter((x) => x !== e.v)
+                        : // Teto de 3: com meio corpo marcado, o orçamento de
+                          // séries se dilui até a prioridade não significar nada.
+                          v.length >= 3
+                          ? v
+                          : [...v, e.v!]
+                    );
+                  }}
                 />
               ))}
             </View>
             <Txt v="small" cor={colors.textFaint}>
-              {enfase === 'inferior' || enfase === 'superior'
-                ? `Foco de região soma 4 séries semanais em cada músculo de ${enfase === 'inferior' ? 'membros inferiores' : 'membros superiores'} e tira 3 do outro lado — é a troca que muda a cara do treino sem estourar o seu tempo. Nada é abandonado: o outro lado continua sendo treinado 2× por semana.`
-                : enfase
-                  ? 'Prioridade em um grupo só acrescenta séries nele e não tira de ninguém. Sem o teto de 20 séries semanais ser ultrapassado, onde o ganho extra deixa de pagar a recuperação.'
-                  : 'Volume parelho. Escolha uma região se você quer que o treino tenha cara de foco — é assim que o app sabe, e não pelo seu gênero: o corpo responde igual, o que muda é onde você quer o resultado.'}
+              {focos.length === 0
+                ? 'Volume parelho no corpo todo. Marque o que você quer priorizar — pode ser mais de um. O app pergunta em vez de deduzir do seu gênero: o corpo responde igual, o que muda é onde você quer o resultado.'
+                : `${resumoDoFoco(focos)} Marcar mais dilui: o orçamento de séries é o mesmo, repartido entre o que você escolheu.${focos.length >= 3 ? ' Três é o limite — além disso prioridade deixa de significar prioridade.' : ''}`}
             </Txt>
 
             <View style={{ height: spacing.lg }} />

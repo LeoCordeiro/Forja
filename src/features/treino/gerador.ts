@@ -218,8 +218,11 @@ export interface PerfilDoTreino {
   preferenciaEquipamento: string;
   /** Regiões com dor: os exercícios de risco saem da lista. */
   dores: string[];
-  /** Região ('inferior' | 'superior') ou grupo único a priorizar. */
-  enfase: string | null;
+  /**
+   * O que a pessoa quer priorizar. Regiões ('inferior', 'superior') e músculos
+   * podem ser combinados — o orçamento de séries é repartido entre eles.
+   */
+  focos: string[];
 }
 
 interface ExercicioCat {
@@ -282,27 +285,75 @@ export const REGIOES: Record<string, Grupo[]> = {
   superior: ['peito', 'costas', 'ombro', 'biceps', 'triceps'],
 };
 
-/** Séries semanais somadas ao grupo enfatizado, sempre dentro do teto útil. */
-const BONUS_ENFASE = 4;
 /**
- * Séries tiradas da região OPOSTA quando há ênfase de região.
+ * Orçamento de séries semanais que a ênfase pode movimentar.
  *
- * Só somar não produz foco — produz sessão maior, que o corte por tempo desfaz
- * logo em seguida. Quem quer foco em inferiores quer mais perna E menos braço:
- * é a troca que faz o treino de fato mudar de cara sem estourar a hora que a
- * pessoa tem.
+ * ── Por que orçamento, e não bônus por foco ──────────────────────────────
  *
- * Vale só para ênfase de REGIÃO. Escolher "glúteo" não é motivo para tirar
- * volume do peito — são coisas de tamanho diferente.
+ * O foco é múltipla escolha, e aí aparece o problema óbvio: se cada foco
+ * somasse 4 séries, marcar cinco focos somaria 20 séries na semana. O treino
+ * não ficaria focado — ficaria só maior, e o corte por tempo desfaria tudo logo
+ * depois, tirando exatamente os acessórios que a pessoa acabou de pedir.
+ *
+ * **Marcar tudo é não marcar nada.** Então o que existe é um orçamento fixo,
+ * repartido entre os grupos escolhidos: um foco recebe o bônus inteiro, cinco
+ * focos recebem um pedaço cada. É o mesmo dinheiro dividido de outro jeito, e
+ * é isso que "prioridade" significa.
+ *
+ * O que sai daqui é tirado de quem não foi escolhido — nunca abaixo do piso em
+ * que o músculo ainda responde, e nunca derrubando a frequência de 2× por
+ * semana. Foco não é abandono.
  */
-const DESCONTO_OPOSTA = 3;
+const ORCAMENTO_ENFASE = 16;
+/** Nenhum grupo isolado ganha mais que isto, mesmo com um foco só. */
+const BONUS_MAXIMO = 4;
+/** Nenhum grupo preterido perde mais que isto. */
+const DESCONTO_MAXIMO = 3;
 
-const REGIAO_OPOSTA: Record<string, string> = { inferior: 'superior', superior: 'inferior' };
+/** Expande os focos escolhidos (regiões e músculos) na lista de grupos. */
+export function gruposEnfatizados(focos: string[]): Set<string> {
+  const out = new Set<string>();
+  for (const f of focos) {
+    const regiao = REGIOES[f];
+    if (regiao) regiao.forEach((g) => out.add(g));
+    else if (f) out.add(f);
+  }
+  return out;
+}
 
-function grupoTemEnfase(grupo: Grupo, enfase: string | null): boolean {
-  if (!enfase) return false;
-  const regiao = REGIOES[enfase];
-  return regiao ? regiao.includes(grupo) : enfase === grupo;
+/**
+ * Quanto cada grupo enfatizado ganha e quanto cada preterido perde.
+ *
+ * O desconto acompanha o bônus: se pouca gente foi escolhida, cada escolhido
+ * ganha muito e cada preterido cede pouco (são muitos dividindo a conta). Com
+ * meio corpo escolhido, a troca fica próxima de um para um.
+ */
+function pesosDaEnfase(focos: string[]): { alvos: Set<string>; bonus: number; desconto: number } {
+  const alvos = gruposEnfatizados(focos);
+  if (!alvos.size) return { alvos, bonus: 0, desconto: 0 };
+
+  const bonus = Math.max(1, Math.min(BONUS_MAXIMO, Math.round(ORCAMENTO_ENFASE / alvos.size)));
+
+  const TODOS: Grupo[] = [
+    'peito', 'costas', 'ombro', 'biceps', 'triceps',
+    'quadriceps', 'posterior', 'gluteo', 'panturrilha',
+  ];
+  const preteridos = TODOS.filter((g) => !alvos.has(g)).length;
+
+  // Priorizar o corpo inteiro é não priorizar nada, e isso precisa ser
+  // literalmente verdade no código. Sem ninguém para ceder volume, dar bônus a
+  // todo mundo não cria foco — só infla o programa: marcar "inferiores" E
+  // "superiores" levava o total semanal de 108 para 126 séries, com o corte por
+  // tempo desfazendo a diferença logo depois. Aqui a escolha simplesmente não
+  // produz efeito, que é o resultado honesto.
+  if (!preteridos) return { alvos: new Set<string>(), bonus: 0, desconto: 0 };
+
+  const desconto = Math.max(
+    1,
+    Math.min(DESCONTO_MAXIMO, Math.round((bonus * alvos.size) / preteridos))
+  );
+
+  return { alvos, bonus, desconto };
 }
 
 function alvoSemanal(grupo: Grupo, p: PerfilDoTreino): number {
@@ -312,14 +363,15 @@ function alvoSemanal(grupo: Grupo, p: PerfilDoTreino): number {
   const pequeno = PEQUENOS.includes(grupo);
   let alvo = pequeno ? Math.round(base * 0.6) : base;
 
-  if (grupoTemEnfase(grupo, p.enfase)) {
-    alvo += BONUS_ENFASE;
-  } else if (p.enfase && REGIOES[p.enfase]) {
-    // Região oposta cede volume — mas nunca abaixo do piso em que o músculo
-    // ainda responde. Foco não é abandono: quem foca perna continua treinando
-    // peito e costas 2× na semana, só com menos série.
-    const oposta = REGIOES[REGIAO_OPOSTA[p.enfase]] ?? [];
-    if (oposta.includes(grupo)) alvo = Math.max(pequeno ? 6 : PISO_SEMANAL, alvo - DESCONTO_OPOSTA);
+  const { alvos, bonus, desconto } = pesosDaEnfase(p.focos);
+  if (alvos.size) {
+    // Abdômen fica de fora da conta de troca: quase todo mundo quer, ele quase
+    // não cobra recuperação, e descontá-lo por não ter sido marcado só produz
+    // reclamação sem ganho nenhum.
+    if (alvos.has(grupo)) alvo += bonus;
+    else if (grupo !== 'abdomen' && grupo !== 'trapezio' && grupo !== 'antebraco') {
+      alvo = Math.max(pequeno ? 6 : PISO_SEMANAL, alvo - desconto);
+    }
   }
 
   return Math.max(6, Math.min(TETO_SEMANAL, alvo));
@@ -898,7 +950,7 @@ export async function perfilDoTreino(): Promise<PerfilDoTreino | null> {
     local: p.local_treino ?? 'academia',
     preferenciaEquipamento: p.preferencia_equipamento ?? 'ambos',
     dores: (p.dores ?? '').split(',').filter(Boolean),
-    enfase: p.enfase ?? null,
+    focos: (p.enfase ?? '').split(',').map((x) => x.trim()).filter(Boolean),
   };
 }
 
