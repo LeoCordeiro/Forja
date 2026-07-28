@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Modal, Platform, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { Image } from 'expo-image';
-import { CameraView, useCameraPermissions, type CameraType } from 'expo-camera';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useRouter } from 'expo-router';
@@ -295,9 +294,22 @@ function Captura({
   onSalvo: () => void;
 }) {
   const { height } = useWindowDimensions();
-  const cam = useRef<CameraView>(null);
-  const [permissao, pedirPermissao] = useCameraPermissions();
-  const [lado, setLado] = useState<CameraType>('front');
+  /**
+   * A câmera é carregada sob demanda, não importada no topo.
+   *
+   * `expo-camera` é módulo NATIVO: numa versão do app instalada antes de ele
+   * existir, um import estático quebra a tela inteira no momento em que a rota
+   * abre. E é exatamente esse o cenário de uma atualização por OTA, que entrega
+   * JavaScript novo para um binário antigo.
+   *
+   * Carregando aqui dentro, a falta do módulo vira o mesmo caminho de "sem
+   * câmera" que já existe para computador sem webcam: a tela abre e oferece a
+   * galeria. Degrada em vez de quebrar.
+   */
+  const cam = useRef<{ takePictureAsync: (o?: unknown) => Promise<{ uri?: string }> } | null>(null);
+  const [modulo, setModulo] = useState<typeof import('expo-camera') | null>(null);
+  const [permissao, setPermissao] = useState<boolean | null>(null);
+  const [lado, setLado] = useState<'front' | 'back'>('front');
   const [anterior, setAnterior] = useState<FotoProgresso | null>(null);
   const [fantasma, setFantasma] = useState(true);
   const [segundos, setSegundos] = useState(0);
@@ -323,6 +335,30 @@ function Captura({
       setAnterior(lista[0] ?? null);
     })();
   }, [angulo.chave]);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const m = await import('expo-camera');
+        setModulo(m);
+        const atual = await m.Camera.getCameraPermissionsAsync();
+        setPermissao(atual.granted);
+      } catch {
+        // Binário sem o módulo nativo: cai no caminho da galeria.
+        setSemCamera(true);
+      }
+    })();
+  }, []);
+
+  async function pedirPermissao() {
+    if (!modulo) return;
+    try {
+      const r = await modulo.Camera.requestCameraPermissionsAsync();
+      setPermissao(r.granted);
+    } catch {
+      setSemCamera(true);
+    }
+  }
 
   // Contagem regressiva do temporizador.
   useEffect(() => {
@@ -369,13 +405,13 @@ function Captura({
   function aoFalharCamera() {
     if (!tentouVirar.current) {
       tentouVirar.current = true;
-      setLado((v) => (v === 'front' ? 'back' : 'front'));
+      setLado((v: 'front' | 'back') => (v === 'front' ? 'back' : 'front'));
       return;
     }
     setSemCamera(true);
   }
 
-  const semPermissao = (permissao && !permissao.granted) || semCamera;
+  const semPermissao = permissao === false || semCamera || !modulo;
 
   return (
     <Modal visible animationType="slide" onRequestClose={onFechar}>
@@ -432,8 +468,8 @@ function Captura({
           </View>
         ) : (
           <>
-            <CameraView
-              ref={cam}
+            <modulo.CameraView
+              ref={cam as never}
               style={StyleSheet.absoluteFill}
               facing={lado}
               mirror={false}
@@ -475,7 +511,7 @@ function Captura({
 
             <View style={s.barraInferior}>
               <Press
-                onPress={() => setLado((v) => (v === 'front' ? 'back' : 'front'))}
+                onPress={() => setLado((v: 'front' | 'back') => (v === 'front' ? 'back' : 'front'))}
                 style={s.iconeCam}
               >
                 <Ionicons name="camera-reverse-outline" size={22} color={colors.text} />
