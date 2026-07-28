@@ -141,6 +141,27 @@ export default function Treino() {
             </Card>
           </View>
 
+          <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+            <Card onPress={() => router.push('/agenda')} padding={spacing.md} style={{ flex: 1 }}>
+              <Ionicons name="calendar-outline" size={22} color={colors.primary} />
+              <Txt v="h3" size={14} style={{ marginTop: 6 }}>
+                Agenda
+              </Txt>
+              <Txt v="small" size={10} cor={colors.textFaint}>
+                Qual treino em cada dia
+              </Txt>
+            </Card>
+            <Card onPress={() => router.push('/tempo')} padding={spacing.md} style={{ flex: 1 }}>
+              <Ionicons name="alarm-outline" size={22} color={colors.warn} />
+              <Txt v="h3" size={14} style={{ marginTop: 6 }}>
+                Tempo e alarmes
+              </Txt>
+              <Txt v="small" size={10} cor={colors.textFaint}>
+                Quanto você tem por dia
+              </Txt>
+            </Card>
+          </View>
+
           {dados?.dias.length ? (
             dados.dias.map((d, i) => (
               <Animated.View key={d.id} entering={FadeInDown.delay(i * 45).duration(280)}>

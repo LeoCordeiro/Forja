@@ -32,7 +32,10 @@ type CamposV2 =
   | 'dores'
   | 'minutos_sessao'
   | 'passos_alvo'
-  | 'cardio_sessoes';
+  | 'cardio_sessoes'
+  | 'minutos_por_dia'
+  | 'lembretes_ativos'
+  | 'lembrete_medida';
 
 type PerfilEntrada = Omit<Profile, 'id' | 'criado_em' | CamposV2> &
   Partial<Pick<Profile, CamposV2>>;
@@ -300,6 +303,24 @@ export async function definirMetaAgua(ml: number) {
 
 export async function definirPreferenciaEquipamento(pref: string) {
   await run('UPDATE profile SET preferencia_equipamento = ? WHERE id = 1', [pref]);
+}
+
+export async function salvarTempoPorDia(minutosPorDia: number[]) {
+  await run('UPDATE profile SET minutos_por_dia = ? WHERE id = 1', [minutosPorDia.join(',')]);
+}
+
+export async function salvarLembretes(ativos: boolean, medida: boolean) {
+  await run('UPDATE profile SET lembretes_ativos = ?, lembrete_medida = ? WHERE id = 1', [
+    ativos ? 1 : 0,
+    medida ? 1 : 0,
+  ]);
+}
+
+/** Domingo a sábado. Sem configuração, 60 min na semana e 90 no fim de semana. */
+export function lerTempoPorDia(csv: string | null): number[] {
+  if (!csv) return [90, 60, 60, 60, 60, 60, 90];
+  const v = csv.split(',').map((x) => parseInt(x, 10));
+  return v.length === 7 && v.every((n) => n > 0) ? v : [90, 60, 60, 60, 60, 60, 90];
 }
 
 export async function salvarDiagnostico(d: {

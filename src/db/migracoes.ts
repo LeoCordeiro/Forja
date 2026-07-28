@@ -288,6 +288,21 @@ const V7 = `
 ALTER TABLE routine_days ADD COLUMN dia_semana INTEGER;
 `;
 
+/**
+ * v7 → v8: tempo disponível por dia da semana e lembretes.
+ *
+ * Um número só ("60 min por sessão") não descreve a vida de ninguém: quem
+ * treina no almoço tem 1 h cravada de segunda a sexta e 2 h no sábado. Sem
+ * isso o app prescreve um treino que não cabe — e o que fica de fora é sempre
+ * o final da sessão, onde estão os isoladores que a pessoa mais queria.
+ */
+const V8 = `
+-- CSV de 7 números, domingo a sábado, em minutos.
+ALTER TABLE profile ADD COLUMN minutos_por_dia TEXT;
+ALTER TABLE profile ADD COLUMN lembretes_ativos INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE profile ADD COLUMN lembrete_medida INTEGER NOT NULL DEFAULT 1;
+`;
+
 export const MIGRACOES: { versao: number; sql: string }[] = [
   { versao: 2, sql: V2 },
   { versao: 3, sql: V3 },
@@ -295,4 +310,5 @@ export const MIGRACOES: { versao: number; sql: string }[] = [
   { versao: 5, sql: V5 },
   { versao: 6, sql: V6 },
   { versao: 7, sql: V7 },
+  { versao: 8, sql: V8 },
 ];

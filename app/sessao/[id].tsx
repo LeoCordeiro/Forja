@@ -61,6 +61,11 @@ import {
   salvarDescanso,
   type DescansoAtivo,
 } from '@/features/treino/descanso';
+import {
+  agendarFimDoDescanso,
+  cancelarAlarmeDescanso,
+  pedirPermissao as pedirPermissaoSistema,
+} from '@/features/notificacoes/api';
 import { avaliarConquistas } from '@/features/gamificacao/api';
 import { checkin } from '@/features/liga/api';
 import type { Exercise, RoutineExerciseFull } from '@/db/types';
@@ -156,6 +161,7 @@ export default function Execucao() {
       // fresco. Pedir quando o descanso acaba seria tarde — o pop-up não
       // aparece com a aba escondida, que é justo quando ela faria falta.
       void pedirPermissaoAviso();
+      void pedirPermissaoSistema();
       const sessao = await getSessao(sessionId);
       if (!sessao) return router.back();
       setNome(sessao.nome);
@@ -270,6 +276,7 @@ export default function Execucao() {
     setDescansoAtivo(null);
     salvarDescanso(null);
     manterAcordado(false);
+    void cancelarAlarmeDescanso(); // seguiu antes: o alarme não pode tocar depois
   }, []);
 
   /** Some sozinho depois de 5 min de atraso: a essa altura virou intervalo. */
@@ -482,6 +489,9 @@ export default function Execucao() {
       setDescansoAtivo(novo);
       salvarDescanso(novo);
       manterAcordado(true);
+      // Alarme do sistema: toca com a tela apagada e o celular no bolso, que
+      // é o cenário real de quem descansa 3 minutos entre séries pesadas.
+      void agendarFimDoDescanso(ex.descanso_seg, novo.proximo);
     }
 
     if (prs.length > 0) mostrarPR(ex.nome, prs[0]);

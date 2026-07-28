@@ -41,6 +41,10 @@ export interface Profile {
   minutos_sessao: number | null;
   passos_alvo: number | null;
   cardio_sessoes: number | null;
+  /** CSV de 7 números, domingo a sábado, em minutos. */
+  minutos_por_dia: string | null;
+  lembretes_ativos: number;
+  lembrete_medida: number;
   gordura_meta_pct: number | null;
   experiencia: Experiencia;
   dias_treino_semana: number;
