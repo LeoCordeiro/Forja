@@ -57,6 +57,15 @@ const NOMES_DIA = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
  * decide quantos exercícios cabem. Prescrever 8 exercícios para quem tem 50
  * minutos não é rigor: é garantir que os 3 últimos nunca sejam feitos.
  */
+/** Faixas de barra fixa. Guarda o pior caso: quem marca "3 a 5" recebe 3. */
+const BARRAS = [
+  { v: 0, l: 'Nenhuma' },
+  { v: 1, l: '1 ou 2' },
+  { v: 3, l: '3 a 5' },
+  { v: 6, l: '6 a 9' },
+  { v: 10, l: '10 ou mais' },
+];
+
 const TEMPOS = [
   { v: 50, l: '50 min', d: 'Almoço, sem folga' },
   { v: 60, l: '1 h', d: 'Cravado' },
@@ -125,6 +134,7 @@ export default function Onboarding() {
   const [equipamento, setEquipamento] = useState('ambos');
   const [dores, setDores] = useState<string[]>([]);
   const [focos, setFocos] = useState<string[]>([]);
+  const [barras, setBarras] = useState(-1);
   const [plano, setPlano] = useState<Plano | null>(null);
 
   const diasSemana = diasMarcados.length || 3;
@@ -188,6 +198,7 @@ export default function Onboarding() {
         local_treino: local,
         dias_disponiveis: diasMarcados.join(','),
         enfase: focos.join(','),
+        barra_fixa_reps: barras,
         preferencia_equipamento: equipamento,
         dores: dores.join(','),
       });
@@ -210,6 +221,7 @@ export default function Onboarding() {
         objetivo,
         local,
         preferenciaEquipamento: equipamento,
+        barraFixaReps: barras,
         dores,
         focos,
       });
@@ -591,6 +603,20 @@ export default function Onboarding() {
             <Txt v="small" cor={colors.textFaint}>
               Isto é preferência de verdade: 13 estudos com 1.016 pessoas não acharam diferença de
               hipertrofia entre os dois. Escolha o que faz você voltar na semana seguinte.
+            </Txt>
+
+            <View style={{ height: spacing.lg }} />
+            <Txt v="label">Quantas barras fixas você faz hoje?</Txt>
+            <View style={s.linha}>
+              {BARRAS.map((b) => (
+                <Chip key={b.v} label={b.l} ativo={barras === b.v} onPress={() => setBarras(b.v)} />
+              ))}
+            </View>
+            <Txt v="small" cor={colors.textFaint}>
+              Sem ajuda e sem impulso. Existe um punhado de exercícios em que a carga é o próprio
+              corpo — barra fixa, mergulho no paralelo, flexão nórdica — e neles não dá para usar
+              menos peso: ou você executa, ou não executa. Esta resposta decide se eles entram
+              inteiros, entram assistidos, ou saem por enquanto.
             </Txt>
           </Bloco>
         )}

@@ -30,6 +30,21 @@ import { buzz } from '@/shared/utils/haptics';
 
 const NOMES_DIA = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
+/**
+ * Faixas de barra fixa.
+ *
+ * O número guardado é o PIOR caso da faixa: quem marca "3 a 5" recebe 3, e o
+ * gerador decide por baixo. Errar para menos entrega um treino que a pessoa
+ * consegue fazer; errar para mais entrega o exercício que ela vai pular.
+ */
+const BARRAS = [
+  { v: 0, l: 'Nenhuma' },
+  { v: 1, l: '1 ou 2' },
+  { v: 3, l: '3 a 5' },
+  { v: 6, l: '6 a 9' },
+  { v: 10, l: '10 ou mais' },
+];
+
 const TEMPOS = [
   { v: 50, l: '50 min' },
   { v: 60, l: '1 h' },
@@ -63,6 +78,7 @@ export default function RefazerTreino() {
   const [equipamento, setEquipamento] = useState('ambos');
   const [focos, setFocos] = useState<string[]>([]);
   const [dores, setDores] = useState<string[]>([]);
+  const [barras, setBarras] = useState(-1);
 
   // Carrega o que já está gravado uma única vez, para a tela abrir com as
   // respostas atuais em vez de pedir tudo de novo do zero.
@@ -79,6 +95,7 @@ export default function RefazerTreino() {
       if (p.preferencia_equipamento) setEquipamento(p.preferencia_equipamento);
       if (p.enfase) setFocos(p.enfase.split(',').filter(Boolean));
       if (p.dores) setDores(p.dores.split(',').filter(Boolean));
+      setBarras(p.barra_fixa_reps ?? -1);
       const t = lerTempoPorDia(p.minutos_por_dia);
       setMinutos(t[1] ?? 75);
       setPronto(true);
@@ -101,6 +118,7 @@ export default function RefazerTreino() {
         preferencia_equipamento: equipamento,
         enfase: focos.join(','),
         dores: dores.join(','),
+        barra_fixa_reps: barras,
       });
       await salvarTempoPorDia(porDia);
 
@@ -112,6 +130,7 @@ export default function RefazerTreino() {
         objetivo: (await resumo())!.perfil.objetivo,
         local,
         preferenciaEquipamento: equipamento,
+        barraFixaReps: barras,
         dores,
         focos,
       });
@@ -261,6 +280,20 @@ export default function RefazerTreino() {
             ativo={equipamento === o.chave}
             onPress={() => setEquipamento(o.chave)}
           />
+        ))}
+      </View>
+
+      {/* ── Barra fixa: triagem de força relativa ── */}
+      <Txt v="label" style={{ marginTop: spacing.lg }}>
+        Quantas barras fixas você faz hoje?
+      </Txt>
+      <Txt v="small" cor={colors.textDim} style={{ marginTop: -4, marginBottom: spacing.xs }}>
+        Sem ajuda, sem impulso. Isso decide se barra fixa entra no seu treino ou se entra a
+        versão assistida — que é o caminho para conseguir fazer.
+      </Txt>
+      <View style={s.linhaChips}>
+        {BARRAS.map((b) => (
+          <Chip key={b.v} label={b.l} ativo={barras === b.v} onPress={() => setBarras(b.v)} />
         ))}
       </View>
 

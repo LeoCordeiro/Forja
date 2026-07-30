@@ -48,6 +48,14 @@ export interface Profile {
   gordura_meta_pct: number | null;
   experiencia: Experiencia;
   dias_treino_semana: number;
+  /**
+   * Repetições de barra fixa que a pessoa faz. -1 = não perguntado.
+   *
+   * Triagem de força relativa: define se barra fixa, mergulho no paralelo e
+   * companhia entram no plano ou entram na versão assistida.
+   */
+  barra_fixa_reps: number;
+
   /** Data em que voltou a treinar — âncora do plano de readaptação. */
   retomou_em: string | null;
   meses_parado: number;

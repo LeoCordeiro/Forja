@@ -39,6 +39,7 @@ type CamposV2 =
   | 'local_treino'
   | 'dias_disponiveis'
   | 'enfase'
+  | 'barra_fixa_reps'
   | 'preferencia_equipamento'
   | 'dores';
 
@@ -53,8 +54,9 @@ export async function salvarPerfil(p: PerfilEntrada) {
         tmb_medido_kcal, usa_tmb_medido, meta_agua_ml, gordura_meta_pct,
         experiencia, dias_treino_semana, retomou_em, meses_parado, papel,
         horario_treino, hora_acorda, hora_dorme, hora_treino,
-        local_treino, dias_disponiveis, enfase, preferencia_equipamento, dores)
-     VALUES (1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        local_treino, dias_disponiveis, enfase, preferencia_equipamento, dores,
+        barra_fixa_reps)
+     VALUES (1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(id) DO UPDATE SET
        nome = excluded.nome,
        data_nascimento = excluded.data_nascimento,
@@ -81,7 +83,8 @@ export async function salvarPerfil(p: PerfilEntrada) {
        dias_disponiveis = excluded.dias_disponiveis,
        enfase = excluded.enfase,
        preferencia_equipamento = excluded.preferencia_equipamento,
-       dores = excluded.dores`,
+       dores = excluded.dores,
+       barra_fixa_reps = excluded.barra_fixa_reps`,
     [
       p.nome,
       p.data_nascimento,
@@ -110,6 +113,7 @@ export async function salvarPerfil(p: PerfilEntrada) {
       p.enfase ?? null,
       p.preferencia_equipamento ?? 'ambos',
       p.dores ?? null,
+      p.barra_fixa_reps ?? -1,
     ]
   );
 }

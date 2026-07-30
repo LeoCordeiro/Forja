@@ -1,5 +1,12 @@
 import type { Profile } from '@/db/types';
-import { descansoCorreto, diversificar, ehComposto, ehPesado, padraoDe } from './classificacao';
+import {
+  ajusteDeForcaRelativa,
+  descansoCorreto,
+  diversificar,
+  ehComposto,
+  ehPesado,
+  padraoDe,
+} from './classificacao';
 import { equipamentosDe, foraDoLocal, limitacaoDoLocal } from './local';
 import { REGIOES_DOR } from '@/features/perfil/diagnostico';
 import { PADROES } from './padroes';
@@ -363,6 +370,13 @@ export interface PerfilDoTreino {
    * podem ser combinados — o orçamento de séries é repartido entre eles.
    */
   focos: string[];
+  /**
+   * Repetições de barra fixa. -1 = não perguntado.
+   *
+   * Triagem de força relativa: decide se barra fixa, mergulho no paralelo e
+   * companhia entram como estão, entram na versão assistida, ou saem.
+   */
+  barraFixaReps: number;
 }
 
 interface ExercicioCat {
@@ -701,12 +715,53 @@ export async function montarPlano(
   // Duas exclusões diferentes: `proibidos` sai por causa de dor, `semLocal` sai
   // porque o aparelho não existe naquela academia.
   const semLocal = foraDoLocal(p.local);
-  const disponiveis = catalogo.filter(
-    (e) =>
-      (!e.equipamento || equipamentos.has(e.equipamento)) &&
-      !proibidos.has(e.nome) &&
-      !semLocal.has(e.nome)
-  );
+
+  // Força relativa: exercício em que a carga é o próprio corpo sai da lista
+  // quando a pessoa ainda não sustenta o peso dela, e no lugar entra a ponte
+  // (que continua exigindo isso, com carga dosável) ou a troca equivalente.
+  // Precisa acontecer ANTES de qualquer escolha: senão barra fixa entra como
+  // primeiro exercício do dia de costas e a sessão começa numa falha.
+  const foraPorForca = new Set<string>();
+  const substituicoes: { de: string; para: string; motivo: string }[] = [];
+  const pontes = new Set<string>();
+  // Cabe no local? A substituta precisa existir onde a pessoa treina.
+  const cabeAqui = (nome: string) => {
+    const e = catalogo.find((x) => x.nome === nome);
+    return (
+      !!e && (!e.equipamento || equipamentos.has(e.equipamento)) && !semLocal.has(e.nome)
+    );
+  };
+  for (const e of catalogo) {
+    const a = ajusteDeForcaRelativa(e.nome, p.barraFixaReps);
+    if (!a) continue;
+    // Sem substituta disponível, o exercício FICA.
+    //
+    // Em casa sem equipamento, trocar flexão nórdica por mesa flexora deixava o
+    // posterior sem nenhum exercício — a mesa flexora não existe ali. Exercício
+    // difícil é pior que exercício fácil; exercício nenhum é pior que os dois.
+    // Nesse caso a pessoa faz a amplitude que conseguir, que é o certo.
+    if (!cabeAqui(a.troca)) continue;
+    foraPorForca.add(e.nome);
+    pontes.add(a.troca);
+    substituicoes.push({ de: e.nome, para: a.troca, motivo: a.motivo });
+  }
+
+  const disponiveis = catalogo
+    .filter(
+      (e) =>
+        (!e.equipamento || equipamentos.has(e.equipamento)) &&
+        !proibidos.has(e.nome) &&
+        !semLocal.has(e.nome) &&
+        !foraPorForca.has(e.nome)
+    )
+    // A ponte vai para a frente da fila do grupo dela.
+    //
+    // Sem isto o aviso mentia: dizia "entrou puxada assistida no graviton" e o
+    // plano trazia puxada frontal, porque as duas empatam em papel e em
+    // preferência de equipamento, e o empate era decidido pela ordem do
+    // catálogo. Aviso que promete uma coisa e entrega outra é pior que aviso
+    // nenhum — a pessoa deixa de acreditar nos outros também.
+    .sort((a, b) => (pontes.has(b.nome) ? 1 : 0) - (pontes.has(a.nome) ? 1 : 0));
 
   const modelo = escolherSplit(p.dias, p.focos);
   const aparicoes: Record<string, number> = {};
@@ -872,6 +927,24 @@ export async function montarPlano(
   preencherTempo(dias, p, avisos, disponiveis);
 
   for (const d of dias) d.minutos = emMinutos(estimarDuracao(paraEstimativa(d)).totalSeg);
+
+  // Avisa só das substituições que APARECERAM no plano.
+  //
+  // A versão anterior avisava sobre as sete: flexão pique e flexão com pés
+  // elevados entravam na conta mesmo num plano de academia onde jamais seriam
+  // escolhidas. Sete parágrafos, cinco sobre exercícios que a pessoa nunca
+  // veria — e o aviso que importava, o da barra fixa, perdido no meio.
+  const noPlano = new Set(dias.flatMap((d) => d.exercicios.map((e) => e.nome)));
+  const relevantes = substituicoes.filter((s) => noPlano.has(s.para));
+  if (relevantes.length) {
+    avisos.push(
+      relevantes.map((s) => s.motivo).join(' ') +
+        (p.barraFixaReps >= 1
+          ? ` Quando você chegar a 6 barras fixas limpas, refaça o treino: ela volta como primeiro ` +
+            `exercício do dia de costas.`
+          : '')
+    );
+  }
 
   const limite = limitacaoDoLocal(p.local);
   if (limite) avisos.push(limite);
@@ -1552,6 +1625,7 @@ export async function perfilDoTreino(): Promise<PerfilDoTreino | null> {
     local: p.local_treino ?? 'academia',
     preferenciaEquipamento: p.preferencia_equipamento ?? 'ambos',
     dores: (p.dores ?? '').split(',').filter(Boolean),
+    barraFixaReps: p.barra_fixa_reps ?? -1,
     focos: (p.enfase ?? '').split(',').map((x) => x.trim()).filter(Boolean),
   };
 }

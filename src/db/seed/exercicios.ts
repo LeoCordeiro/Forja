@@ -390,6 +390,19 @@ export const EXERCICIOS: L[] = [
   ['Remada invertida','costas','biceps,ombro','livre','peso_corporal','Inverted_Row',
    'Deite sob uma barra fixa baixa ou mesa firme, corpo reto.|Puxe o peito até a barra.|Desça controlando.',
    'Quanto mais horizontal o corpo, mais pesa. Andar com os pés pra frente é como aumentar carga.'],
+  // ── CAMINHO PARA A BARRA FIXA ───────────────────────────────────────────
+  //
+  // Substituir barra fixa por puxada na polia resolve o treino de costas e
+  // abandona o objetivo: puxada sentada não constrói barra fixa, porque nunca
+  // exige sustentar o próprio peso. Estes dois exigem, com carga que dá para
+  // dosar — são a ponte entre "faço 3" e "faço 8".
+  ['Puxada assistida no graviton','costas','biceps','maquina','peso_reps','Band_Assisted_Pull-Up',
+   'Ajuste o contrapeso: quanto MAIOR o peso escolhido, mais leve fica.|Joelhos no apoio, pegada pronada aberta.|Puxe até o peito na altura das mãos e desça até esticar.',
+   'Comece com contrapeso que deixe fazer 8 boas e tire 5 kg por semana. Quando o contrapeso chegar a zero, é barra fixa.'],
+  ['Barra fixa negativa','costas','biceps','livre','peso_reps','Pullups',
+   'Suba com o banquinho ou com um pulo até o queixo passar a barra.|DESÇA em 5 segundos contados, sem soltar.|Volte ao banquinho e repita.',
+   'A fase de descida aguenta mais carga que a de subida — é por isso que ela treina a barra fixa mesmo em quem ainda não sobe uma.'],
+
   // ── MÁQUINAS QUE FALTAVAM ───────────────────────────────────────────────
   //
   // "Prefiro máquinas" era uma preferência sem catálogo para atender: peito

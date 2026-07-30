@@ -36,6 +36,8 @@ const base = {
   preferenciaEquipamento: 'indiferente',
   focos: [],
   dores: [],
+  // -1 = não perguntado, que é o estado de quem nunca respondeu.
+  barraFixaReps: -1,
 };
 
 let falhas = 0;
@@ -242,6 +244,42 @@ for (const d of cheio.dias) {
   if (new Set(nomes).size !== nomes.length) repetiu++;
 }
 ok('nenhum dia repete exercício', repetiu === 0, `${repetiu} dia(s)`);
+
+// ── 8. Força relativa: não prescrever o que a pessoa não consegue fazer ─────
+//
+// Barra fixa 4×5-8 para quem faz 3 no máximo não é treino difícil: é treino que
+// não acontece. E como ela é composta, entrava no COMEÇO do dia de costas — a
+// sessão inteira passava a começar numa falha.
+console.log('\n8. Força relativa (barra fixa)');
+const nomesDe = (plano) => new Set(plano.dias.flatMap((d) => d.exercicios.map((e) => e.nome)));
+const cincoDias = { ...base, dias: 5, diasDisponiveis: [1, 2, 3, 4, 5], focos: ['superior'] };
+
+const comTres = await montarPlano({ ...cincoDias, barraFixaReps: 3 }, fonte);
+const nomes3 = nomesDe(comTres);
+ok('com 3 barras: barra fixa fica fora', !nomes3.has('Barra fixa'));
+ok(
+  'com 3 barras: entra a ponte, que ainda exige sustentar o peso',
+  nomes3.has('Puxada assistida no graviton') || nomes3.has('Barra fixa negativa'),
+  [...nomes3].filter((n) => /graviton|negativa/i.test(n)).join(', ') || 'nenhuma'
+);
+ok(
+  'com 3 barras: costas continua tendo exercício',
+  comTres.dias.some((d) => d.exercicios.some((e) => e.grupo === 'costas'))
+);
+ok('com 3 barras: a troca vem explicada', comTres.avisos.some((a) => a.includes('repetições limpas')));
+
+const comDez = await montarPlano({ ...cincoDias, barraFixaReps: 10 }, fonte);
+ok('com 10 barras: barra fixa volta ao plano', nomesDe(comDez).has('Barra fixa'));
+
+const semResposta = await montarPlano({ ...cincoDias, barraFixaReps: -1 }, fonte);
+ok('sem resposta: nada é escondido', nomesDe(semResposta).has('Barra fixa'));
+
+// Onde a substituta não existe, o exercício difícil FICA — exercício nenhum
+// para um grupo é pior que exercício difícil.
+const casaFraca = await montarPlano({ ...base, local: 'casa_simples', barraFixaReps: 0 }, fonte);
+const gruposCasa2 = new Set(casaFraca.dias.flatMap((d) => d.exercicios.map((e) => e.grupo)));
+for (const g of ['posterior', 'ombro', 'peito'])
+  ok(`casa sem equipamento: ${g} não desaparece por causa da troca`, gruposCasa2.has(g));
 
 console.log(falhas ? `\n${falhas} falha(s)\n` : '\nTudo passou\n');
 process.exit(falhas ? 1 : 0);

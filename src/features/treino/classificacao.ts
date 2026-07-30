@@ -70,6 +70,8 @@ export const COMPOSTOS = [
   'Remada alta na máquina',
   'Agachamento no smith',
   'Crossover na polia baixa',
+  'Puxada assistida no graviton',
+  'Barra fixa negativa',
 ];
 
 /** Compostos pesados: os que mais cobram sistema nervoso e mais precisam de pausa. */
@@ -350,4 +352,75 @@ export function diversificar<T extends { nome: string }>(cands: T[], grupo: stri
     }
   }
   return saida;
+}
+
+/**
+ * Exercícios em que a carga é o próprio corpo — e a troca quando ela não cabe.
+ *
+ * ── Por que esta lista existe ────────────────────────────────────────────
+ *
+ * O resto do catálogo se ajusta pela anilha: quem não consegue supino com 60 kg
+ * faz com 40. Estes não têm essa saída. Barra fixa com 88 kg de corpo é barra
+ * fixa com 88 kg, e prescrever 4 séries de 5 a 8 para quem faz 3 no máximo não
+ * é treino difícil: é treino que não acontece.
+ *
+ * Pior pela posição: como são compostos, entram no COMEÇO da sessão. O dia todo
+ * passava a começar com uma falha.
+ *
+ * `minReps` é quantas repetições a pessoa precisa fazer para o exercício render
+ * como estímulo, não para conseguir uma. Com 5 repetições dá para fazer uma
+ * série; não dá para fazer quatro séries de cinco a oito, que é o que a
+ * prescrição pede. O corte em 6 vem daí.
+ *
+ * `ponte` é diferente de `troca`: a troca resolve o treino de hoje, a ponte
+ * constrói o exercício. Quem quer barra fixa não chega lá fazendo puxada
+ * sentada — precisa sustentar o próprio peso com carga dosável.
+ */
+export const FORCA_RELATIVA: Record<
+  string,
+  { minReps: number; troca: string; ponte?: string }
+> = {
+  'Barra fixa': { minReps: 6, troca: 'Puxada frontal na polia', ponte: 'Puxada assistida no graviton' },
+  'Barra fixa supinada': { minReps: 6, troca: 'Puxada supinada', ponte: 'Barra fixa negativa' },
+  'Mergulho no paralelo': { minReps: 6, troca: 'Mergulho entre bancos' },
+  'Flexão nórdica': { minReps: 8, troca: 'Mesa flexora' },
+  'Remada invertida': { minReps: 8, troca: 'Remada baixa na polia' },
+  'Flexão com pés elevados': { minReps: 8, troca: 'Flexão de braço' },
+  'Flexão pique': { minReps: 8, troca: 'Desenvolvimento com halteres' },
+};
+
+/**
+ * O que fazer com um exercício de força relativa, dadas as barras fixas da pessoa.
+ *
+ * Devolve `null` quando o exercício pode entrar como está. Usa a barra fixa como
+ * triagem única de propósito: é a que mais gente esbarra, é a que todo treinador
+ * pergunta, e pedir uma pergunta por movimento transformaria o questionário num
+ * formulário que ninguém termina.
+ *
+ * -1 (não perguntado) deixa passar: melhor prescrever e a pessoa trocar na mão
+ * do que esconder exercício de quem nunca foi perguntado.
+ */
+export function ajusteDeForcaRelativa(
+  nome: string,
+  barraFixaReps: number
+): { troca: string; motivo: string } | null {
+  const r = FORCA_RELATIVA[nome];
+  // `!Number.isFinite` cobre undefined vindo de perfil antigo: sem resposta, o
+  // exercício passa. A alternativa era o valor ausente parecer "zero barras" e
+  // substituir tudo em quem nunca foi perguntado.
+  if (!r || !Number.isFinite(barraFixaReps) || barraFixaReps < 0) return null;
+  if (barraFixaReps >= r.minReps) return null;
+
+  // Com alguma força já dá para usar a ponte, que continua exigindo sustentar o
+  // corpo. Sem nenhuma, a ponte também falha e a troca é o caminho.
+  const usarPonte = r.ponte && barraFixaReps >= 1;
+  return {
+    troca: usarPonte ? r.ponte! : r.troca,
+    motivo: usarPonte
+      ? `${nome} pede ao menos ${r.minReps} repetições limpas para render como série. ` +
+        `Com ${barraFixaReps}, entrou ${r.ponte} no lugar — que continua exigindo sustentar seu ` +
+        `peso, só com carga que dá para dosar. É o caminho para a barra fixa, não o desvio dela.`
+      : `${nome} exige sustentar o próprio peso e ainda não cabe. Entrou ${r.troca} no lugar, ` +
+        `que treina o mesmo músculo com carga que você escolhe.`,
+  };
 }

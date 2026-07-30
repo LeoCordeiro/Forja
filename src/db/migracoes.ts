@@ -425,6 +425,34 @@ const V13 = `
 ALTER TABLE workout_sessions ADD COLUMN manual INTEGER NOT NULL DEFAULT 0;
 `;
 
+
+/**
+ * v13 → v14: quantas barras fixas a pessoa faz.
+ *
+ * ── Por que uma coluna só para isto ──────────────────────────────────────
+ *
+ * O app prescrevia barra fixa 4×5-8 para quem faz 3 repetições no máximo. Não é
+ * treino difícil: é treino que não acontece. E como a barra fixa costuma ser o
+ * primeiro exercício do dia de costas, a sessão inteira começava com uma falha —
+ * a pessoa some do plano dela e conclui que o app não a conhece.
+ *
+ * Existe uma classe inteira de exercício com esse problema: barra fixa, mergulho
+ * no paralelo, flexão nórdica, remada invertida. Neles a carga é o próprio
+ * corpo, então não há como "usar menos peso" — ou você executa, ou não executa.
+ * Todo o resto do catálogo se ajusta pela anilha; estes não.
+ *
+ * A barra fixa é a pergunta de triagem certa para o grupo de PUXAR porque é a
+ * que mais gente esbarra e a que todo treinador pergunta. Guardar o número em
+ * vez de um sim/não permite tratar "faço 3" diferente de "não faço nenhuma", que
+ * são situações de treino diferentes: uma pede assistência, a outra pede
+ * negativa.
+ *
+ * -1 significa "não perguntado" — diferente de 0, que é uma resposta.
+ */
+const V14 = `
+ALTER TABLE profile ADD COLUMN barra_fixa_reps INTEGER NOT NULL DEFAULT -1;
+`;
+
 export const MIGRACOES: { versao: number; sql: string }[] = [
   { versao: 2, sql: V2 },
   { versao: 3, sql: V3 },
@@ -438,4 +466,5 @@ export const MIGRACOES: { versao: number; sql: string }[] = [
   { versao: 11, sql: V11 },
   { versao: 12, sql: V12 },
   { versao: 13, sql: V13 },
+  { versao: 14, sql: V14 },
 ];
