@@ -44,3 +44,6 @@ yarn-error.*
 /dist
 
 .vercel
+
+# Claude Code (config pessoal, nao versionar no repo publico)
+.claude/settings.local.json

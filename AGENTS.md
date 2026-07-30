@@ -88,6 +88,22 @@ A distribuição real é o PWA: `npm run build:pwa` e deploy do `dist/`.
 - Alimentos: tabela TACO (Unicamp).
 - Não usar ExRx, MuscleWiki ou bases comerciais — conteúdo proprietário.
 
+## Fluxo multi-agente (auditorias e features grandes)
+
+Agentes próprios em `.claude/agents/`: `fitness-scientist`, `nutricionista`,
+`mobile-expo`. Os genéricos (product, ux-ui, ai, architect, qa…) vêm de
+`~/.claude/agents/`.
+
+- **Relatório antes de código.** Auditoria e proposta primeiro (plan mode);
+  implementar só depois de aprovado. Fitness e nutrição NUNCA editam código.
+- **Cross-review:** ninguém aprova o próprio trabalho — relatório de um agente
+  é revisado por outro (fitness ↔ ai, mobile-expo ↔ qa).
+- **Máximo 3 subagentes em paralelo** (limite de tokens).
+- **Uma fase por sessão:** auditoria OU implementação OU review — nunca as três
+  misturadas na mesma conversa.
+- Fonte científica só entra com URL aberta e verificada via WebFetch — citação
+  de memória de modelo já veio 10/11 inventada.
+
 ## Migração futura para multiusuário
 
 O schema já é Postgres-compatível (snake_case, mesmas tabelas). Para virar
