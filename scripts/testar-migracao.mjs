@@ -56,6 +56,10 @@ conferir('foods.custo_100g existe', colunas(novo, 'foods').includes('custo_100g'
 conferir('workout_sessions.manual existe', colunas(novo, 'workout_sessions').includes('manual'));
 conferir('fotos_progresso existe', colunas(novo, 'fotos_progresso').length > 0);
 conferir('profile.local_treino existe', colunas(novo, 'profile').includes('local_treino'));
+conferir(
+  'substituicoes.routine_exercise_id existe',
+  colunas(novo, 'substituicoes').includes('routine_exercise_id')
+);
 
 // ── 2. Abrir de novo não deve refazer nada ─────────────────────────────────
 console.log('\n2. Reabertura de banco saudável');
@@ -106,6 +110,10 @@ conferir(
   colunas(quebrado, 'workout_sessions').includes('manual')
 );
 conferir('curou: fotos_progresso voltou', colunas(quebrado, 'fotos_progresso').length > 0);
+conferir(
+  'curou: substituicoes.routine_exercise_id voltou',
+  colunas(quebrado, 'substituicoes').includes('routine_exercise_id')
+);
 conferir('voltou à última versão', versao(quebrado) === ULTIMA, `user_version=${versao(quebrado)}`);
 
 let erroDepois = null;

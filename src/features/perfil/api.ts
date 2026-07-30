@@ -310,14 +310,26 @@ export function calcularMeta(
   return macros(metaCalorica(gasto, objetivo), pesoKg, objetivo);
 }
 
-/** Recalcula a meta a partir do peso atual — chamado ao registrar novo peso. */
-export async function recalcularMeta() {
+/**
+ * A meta que o app calcularia sozinho agora — sem gravar nada.
+ *
+ * É o único ponto de cálculo: o recálculo automático grava isto e a tela de
+ * ajuste preenche os campos com isto. Refazer a conta na tela com `macros()`
+ * direto já ressuscitou a proteína sobre o peso total na recomposição — o
+ * caminho certo passa pela massa magra, e só `calcularMeta` sabe disso.
+ */
+export async function metaAutomatica(): Promise<Macros | null> {
   const r = await resumo();
-  if (!r) return;
-  const nova = calcularMeta(
+  if (!r) return null;
+  return calcularMeta(
     r.tdeeValor, r.pesoKg, r.perfil.objetivo, r.gorduraPct, dadosParaEstimar(r.perfil)
   );
-  await salvarMeta(nova, 'auto');
+}
+
+/** Recalcula a meta a partir do peso atual — chamado ao registrar novo peso. */
+export async function recalcularMeta() {
+  const m = await metaAutomatica();
+  if (m) await salvarMeta(m, 'auto');
 }
 
 /** Meta de calorias definida à mão — mantém os macros proporcionais. */

@@ -1,5 +1,5 @@
 import { emMinutos, estimarDuracao } from './duracao';
-import { all, first, run } from '@/db/client';
+import { all, first, run, tx } from '@/db/client';
 import type {
   Exercise,
   PersonalRecord,
@@ -278,44 +278,97 @@ export async function excluirDia(id: number) {
  * Troca um exercício por outro no meio do treino.
  *
  * Aparelho ocupado é o motivo nº 1 de treino furado. A troca vale só para a
- * sessão de hoje — a rotina continua como está, porque amanhã o aparelho pode
- * estar livre.
+ * sessão de hoje — por isso aqui só se grava o log: quem aplica a troca é
+ * `exerciciosDaSessao`, em memória. Um UPDATE no template valeria para
+ * sempre e reescreveria o plano de todas as próximas sessões.
  */
 export async function substituirExercicio(
   routineExerciseId: number,
   novoExercicioId: number,
   sessionId: number | null,
-  motivo: string
+  motivo: string,
+  // O exercício que estava na tela (pós-overlay): numa cadeia A→B→C o log da
+  // segunda troca deve dizer B→C, não A→C. Sem ele, cai no do template.
+  deExerciseId?: number
 ): Promise<void> {
-  const atual = await first<{ exercise_id: number; reps_max: number | null }>(
-    'SELECT exercise_id, reps_max FROM routine_exercises WHERE id = ?',
+  const atual = await first<{ exercise_id: number }>(
+    'SELECT exercise_id FROM routine_exercises WHERE id = ?',
     [routineExerciseId]
   );
   if (!atual) return;
 
-  const novo = await first<{ nome: string; grupo_primario: string }>(
-    'SELECT nome, grupo_primario FROM exercises WHERE id = ?',
-    [novoExercicioId]
-  );
-
   await run(
-    `INSERT INTO substituicoes (session_id, de_exercise, para_exercise, motivo, criado_em)
-     VALUES (?,?,?,?,?)`,
-    [sessionId, atual.exercise_id, novoExercicioId, motivo, Date.now()]
+    `INSERT INTO substituicoes
+       (session_id, routine_exercise_id, de_exercise, para_exercise, motivo, criado_em)
+     VALUES (?,?,?,?,?,?)`,
+    [
+      sessionId,
+      routineExerciseId,
+      deExerciseId ?? atual.exercise_id,
+      novoExercicioId,
+      motivo,
+      Date.now(),
+    ]
+  );
+}
+
+/**
+ * Exercícios que a sessão executa de fato: o template do dia com as trocas
+ * desta sessão aplicadas por cima, em memória.
+ *
+ * O executor lê daqui, nunca de `exerciciosDoDia` — é o que permite a troca
+ * valer só para hoje sem tocar o template. As trocas entram em ordem
+ * cronológica, então uma cadeia A→B→C termina em C.
+ */
+export async function exerciciosDaSessao(sessionId: number): Promise<RoutineExerciseFull[]> {
+  const sessao = await getSessao(sessionId);
+  if (!sessao?.routine_day_id) return [];
+  const lista = await exerciciosDoDia(sessao.routine_day_id);
+
+  const trocas = await all<{
+    routine_exercise_id: number | null;
+    de_exercise: number | null;
+    para_exercise: number | null;
+  }>(
+    `SELECT routine_exercise_id, de_exercise, para_exercise
+       FROM substituicoes
+      WHERE session_id = ?
+      ORDER BY criado_em, id`,
+    [sessionId]
   );
 
-  // Descanso acompanha o exercício novo: trocar composto por isolador (ou o
-  // contrário) muda o intervalo correto.
-  const descanso = novo
-    ? descansoCorreto(novo.nome, atual.reps_max ?? 10, novo.grupo_primario)
-    : null;
+  for (const t of trocas) {
+    if (t.para_exercise == null) continue;
+    // Alvo pela linha da rotina. Troca de antes dessa coluna existir cai no
+    // exercício de origem — e se ele não estiver mais no template (que na
+    // época era mutado), não casa com nada, que é o correto.
+    const i = lista.findIndex((e) =>
+      t.routine_exercise_id != null
+        ? e.id === t.routine_exercise_id
+        : e.exercise_id === t.de_exercise
+    );
+    if (i < 0) continue;
 
-  await run(
-    `UPDATE routine_exercises
-        SET exercise_id = ?, eh_composto = ?, descanso_seg = COALESCE(?, descanso_seg)
-      WHERE id = ?`,
-    [novoExercicioId, novo && ehComposto(novo.nome) ? 1 : 0, descanso, routineExerciseId]
-  );
+    const novo = await getExercicio(t.para_exercise);
+    if (!novo) continue;
+
+    lista[i] = {
+      ...lista[i],
+      exercise_id: novo.id,
+      nome: novo.nome,
+      grupo_primario: novo.grupo_primario,
+      equipamento: novo.equipamento,
+      tipo_carga: novo.tipo_carga,
+      media_url: novo.media_url,
+      instrucoes: novo.instrucoes,
+      dica: novo.dica,
+      // Classificação e descanso acompanham o exercício efetivo: trocar
+      // composto por isolador (ou o contrário) muda o intervalo correto.
+      eh_composto: ehComposto(novo.nome) ? 1 : 0,
+      descanso_seg: descansoCorreto(novo.nome, lista[i].reps_max ?? 10, novo.grupo_primario),
+    };
+  }
+  return lista;
 }
 
 /**
@@ -410,11 +463,14 @@ export async function seriesDaSessao(sessionId: number): Promise<SetLog[]> {
 }
 
 /**
- * Registra uma série e devolve os recordes que ela quebrou.
+ * Registra uma série e devolve o id gravado e os recordes que ela quebrou.
  *
  * A detecção roda aqui, no momento do insert, e não numa varredura posterior:
  * o feedback precisa aparecer enquanto a pessoa ainda está com o halter na
  * mão — meia hora depois já não motiva ninguém.
+ *
+ * Tudo numa transação: se a detecção de PR falhar no meio, a série não pode
+ * ficar gravada pela metade — sem isso, um retry duplicaria o insert.
  */
 export async function registrarSerie(s: {
   sessionId: number;
@@ -425,29 +481,37 @@ export async function registrarSerie(s: {
   reps: number | null;
   duracaoSeg?: number | null;
   tipo?: string;
-}): Promise<PersonalRecord[]> {
-  const setId = await run(
-    `INSERT INTO set_logs
-       (session_id, exercise_id, ordem_exercicio, serie_index, peso_kg, reps,
-        duracao_seg, tipo, concluida, registrado_em)
-     VALUES (?,?,?,?,?,?,?,?,1,?)`,
-    [
-      s.sessionId,
-      s.exerciseId,
-      s.ordemExercicio,
-      s.serieIndex,
-      s.pesoKg,
-      s.reps,
-      s.duracaoSeg ?? null,
-      s.tipo ?? 'normal',
-      Date.now(),
-    ]
-  );
+}): Promise<{ setId: number; prs: PersonalRecord[] }> {
+  let setId = 0;
+  let prs: PersonalRecord[] = [];
 
-  await recalcularVolume(s.sessionId);
+  await tx(async () => {
+    setId = await run(
+      `INSERT INTO set_logs
+         (session_id, exercise_id, ordem_exercicio, serie_index, peso_kg, reps,
+          duracao_seg, tipo, concluida, registrado_em)
+       VALUES (?,?,?,?,?,?,?,?,1,?)`,
+      [
+        s.sessionId,
+        s.exerciseId,
+        s.ordemExercicio,
+        s.serieIndex,
+        s.pesoKg,
+        s.reps,
+        s.duracaoSeg ?? null,
+        s.tipo ?? 'normal',
+        Date.now(),
+      ]
+    );
 
-  if (s.tipo === 'aquecimento' || !s.pesoKg || !s.reps) return [];
-  return detectarPRs(setId, s);
+    await recalcularVolume(s.sessionId);
+
+    if (s.tipo !== 'aquecimento' && s.pesoKg && s.reps) {
+      prs = await detectarPRs(setId, s);
+    }
+  });
+
+  return { setId, prs };
 }
 
 /**
@@ -466,24 +530,35 @@ export async function atualizarSerie(s: {
   pesoKg: number | null;
   reps: number | null;
 }): Promise<PersonalRecord[]> {
-  await run('UPDATE set_logs SET peso_kg = ?, reps = ? WHERE id = ?', [
-    s.pesoKg,
-    s.reps,
-    s.setLogId,
-  ]);
+  let prs: PersonalRecord[] = [];
 
-  // Os recordes que nasceram desta série não valem mais.
-  await run('DELETE FROM personal_records WHERE set_log_id = ?', [s.setLogId]);
-  await recalcularVolume(s.sessionId);
+  await tx(async () => {
+    await run('UPDATE set_logs SET peso_kg = ?, reps = ? WHERE id = ?', [
+      s.pesoKg,
+      s.reps,
+      s.setLogId,
+    ]);
 
-  if (!s.pesoKg || !s.reps) return [];
-  return detectarPRs(s.setLogId, s);
+    // Os recordes que nasceram desta série não valem mais.
+    await run('DELETE FROM personal_records WHERE set_log_id = ?', [s.setLogId]);
+    await recalcularVolume(s.sessionId);
+
+    if (s.pesoKg && s.reps) {
+      prs = await detectarPRs(s.setLogId, s);
+    }
+  });
+
+  return prs;
 }
 
 export async function desfazerSerie(setLogId: number, sessionId: number) {
-  await run('DELETE FROM personal_records WHERE set_log_id = ?', [setLogId]);
-  await run('DELETE FROM set_logs WHERE id = ?', [setLogId]);
-  await recalcularVolume(sessionId);
+  // Junto ou nada: recorde sem série (ou série sem volume recalculado) é o
+  // tipo de meio-estado que trava a progressão em silêncio.
+  await tx(async () => {
+    await run('DELETE FROM personal_records WHERE set_log_id = ?', [setLogId]);
+    await run('DELETE FROM set_logs WHERE id = ?', [setLogId]);
+    await recalcularVolume(sessionId);
+  });
 }
 
 async function recalcularVolume(sessionId: number) {
@@ -553,31 +628,47 @@ async function detectarPRs(
 }
 
 export async function finalizarSessao(sessionId: number, sensacao?: number, notas?: string) {
-  const series = await first<{ n: number }>(
-    'SELECT COUNT(*) AS n FROM set_logs WHERE session_id = ? AND concluida = 1',
-    [sessionId]
-  );
+  // Idempotente de propósito: o retry da tela re-chama isto quando a falha
+  // pode ter acontecido DEPOIS do commit (no check-in, por exemplo). Sessão
+  // já fechada não pontua de novo — XP é ledger append-only (regra 4), e a
+  // segunda passada dobraria o XP do mesmo treino.
+  const ja = await getSessao(sessionId);
+  if (ja?.finalizado_em) return { valida: true, xp: 0, streak: 0 };
 
-  // Sessão sem nenhuma série não conta como treino — nem grava, nem pontua.
-  if ((series?.n ?? 0) === 0) {
-    await run('DELETE FROM workout_sessions WHERE id = ?', [sessionId]);
-    return { valida: false, xp: 0, streak: 0 };
-  }
+  let resultado = { valida: false, xp: 0, streak: 0 };
 
-  await run(
-    'UPDATE workout_sessions SET finalizado_em = ?, sensacao = ?, notas = ? WHERE id = ?',
-    [Date.now(), sensacao ?? null, notas ?? null, sessionId]
-  );
+  // Fechar a sessão, dar o XP e avançar a sequência andam juntos: sem
+  // transação, uma falha no meio deixava treino finalizado sem pontuar — e
+  // repetir a chamada pontuaria em dobro.
+  await tx(async () => {
+    const series = await first<{ n: number }>(
+      'SELECT COUNT(*) AS n FROM set_logs WHERE session_id = ? AND concluida = 1',
+      [sessionId]
+    );
 
-  const s = await getSessao(sessionId);
-  const dur = s ? (s.finalizado_em! - s.iniciado_em) / 60000 : 0;
-  // Base + bônus por volume, com teto para uma sessão maratona não distorcer.
-  const xp = Math.round(60 + Math.min(90, (s?.volume_total_kg ?? 0) / 120) + Math.min(30, dur / 3));
+    // Sessão sem nenhuma série não conta como treino — nem grava, nem pontua.
+    if ((series?.n ?? 0) === 0) {
+      await run('DELETE FROM workout_sessions WHERE id = ?', [sessionId]);
+      return;
+    }
 
-  await darPontos(xp, 'treino', sessionId, s?.nome);
-  const { streak } = await registrarAtividade();
+    await run(
+      'UPDATE workout_sessions SET finalizado_em = ?, sensacao = ?, notas = ? WHERE id = ?',
+      [Date.now(), sensacao ?? null, notas ?? null, sessionId]
+    );
 
-  return { valida: true, xp, streak };
+    const s = await getSessao(sessionId);
+    const dur = s ? (s.finalizado_em! - s.iniciado_em) / 60000 : 0;
+    // Base + bônus por volume, com teto para uma sessão maratona não distorcer.
+    const xp = Math.round(60 + Math.min(90, (s?.volume_total_kg ?? 0) / 120) + Math.min(30, dur / 3));
+
+    await darPontos(xp, 'treino', sessionId, s?.nome);
+    const { streak } = await registrarAtividade();
+
+    resultado = { valida: true, xp, streak };
+  });
+
+  return resultado;
 }
 
 export async function cancelarSessao(sessionId: number) {

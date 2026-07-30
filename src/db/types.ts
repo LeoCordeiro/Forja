@@ -178,6 +178,7 @@ export interface RoutineExercise {
   reps_min: number | null;
   reps_max: number | null;
   descanso_seg: number;
+  eh_composto: number;
   superset_grupo: number | null;
   observacao: string | null;
 }

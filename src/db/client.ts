@@ -62,9 +62,21 @@ export async function run(
   return res.lastInsertRowId;
 }
 
+/**
+ * Uma transação por vez: `withTransactionAsync` não se protege de chamadas
+ * concorrentes — duas ao mesmo tempo viram BEGIN dentro de BEGIN (e a
+ * variante exclusiva não existe no web). A fila serializa; o `then(exec,
+ * exec)` roda a próxima mesmo quando a anterior rejeitou, senão a primeira
+ * falha travaria toda gravação seguinte.
+ */
+let fila: Promise<unknown> = Promise.resolve();
+
 export async function tx(fn: (db: SQLite.SQLiteDatabase) => Promise<void>) {
   const db = await getDb();
-  await db.withTransactionAsync(async () => fn(db));
+  const exec = () => db.withTransactionAsync(async () => fn(db));
+  const p = fila.then(exec, exec);
+  fila = p.catch(() => {});
+  return p;
 }
 
 /**

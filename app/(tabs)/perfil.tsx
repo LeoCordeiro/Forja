@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import Animated, { FadeInDown } from 'react-native-reanimated';
@@ -6,7 +6,13 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { colors, radius, spacing } from '@/theme';
 import { Barra, Button, Card, Chip, Input, Press, Screen, Sheet, Txt } from '@/shared/ui';
 import { useDados } from '@/shared/hooks/useDados';
-import { resumo, salvarMeta, salvarPerfil } from '@/features/perfil/api';
+import {
+  metaAutomatica,
+  recalcularMeta,
+  resumo,
+  salvarMeta,
+  salvarPerfil,
+} from '@/features/perfil/api';
 import { estatisticas } from '@/features/treino/api';
 import { getStats, progressoNivel } from '@/features/gamificacao/api';
 import {
@@ -14,8 +20,6 @@ import {
   LABEL_ATIVIDADE,
   LABEL_OBJETIVO,
   classificacaoImc,
-  macros,
-  metaCalorica,
 } from '@/features/perfil/calculos';
 import type { NivelAtividade, Objetivo } from '@/db/types';
 import { resetDb } from '@/db/client';
@@ -357,9 +361,6 @@ export default function Perfil() {
       <SheetMeta
         aberto={editandoMeta}
         atual={r.meta}
-        pesoKg={r.pesoKg}
-        tdeeValor={r.tdeeValor}
-        objetivo={r.perfil.objetivo}
         onFechar={() => setEditandoMeta(false)}
         onSalvo={() => {
           setEditandoMeta(false);
@@ -444,15 +445,25 @@ function SheetEditar({
   const [objetivo, setObjetivo] = useState<Objetivo>(perfilAtual.objetivo);
 
   async function salvar() {
+    // Objetivo, nível de atividade e altura mudam TDEE e macros. Sem
+    // recalcular, a meta salva continua a do plano antigo e a aba Dieta
+    // cobra as calorias erradas até a próxima pesagem.
+    const alturaNova = parseFloat(altura.replace(',', '.')) || perfilAtual.altura_cm;
+    const mudou =
+      objetivo !== perfilAtual.objetivo ||
+      nivel !== perfilAtual.nivel_atividade ||
+      alturaNova !== perfilAtual.altura_cm;
+
     await salvarPerfil({
       ...perfilAtual,
       nome: nome.trim() || perfilAtual.nome,
-      altura_cm: parseFloat(altura.replace(',', '.')) || perfilAtual.altura_cm,
+      altura_cm: alturaNova,
       peso_meta_kg: parseFloat(pesoMeta.replace(',', '.')) || null,
       nivel_atividade: nivel,
       objetivo,
       onboarding_completo: 1,
     });
+    if (mudou) await recalcularMeta();
     buzz.ok();
     onSalvo();
   }
@@ -515,17 +526,11 @@ function SheetEditar({
 function SheetMeta({
   aberto,
   atual,
-  pesoKg,
-  tdeeValor,
-  objetivo,
   onFechar,
   onSalvo,
 }: {
   aberto: boolean;
   atual: { kcal: number; proteina_g: number; carbo_g: number; gordura_g: number };
-  pesoKg: number;
-  tdeeValor: number;
-  objetivo: Objetivo;
   onFechar: () => void;
   onSalvo: () => void;
 }) {
@@ -534,8 +539,23 @@ function SheetMeta({
   const [carb, setCarb] = useState(String(atual.carbo_g));
   const [gord, setGord] = useState(String(atual.gordura_g));
 
-  function recalcular() {
-    const m = macros(metaCalorica(tdeeValor, objetivo), pesoKg, objetivo);
+  // O sheet monta uma vez e fica montado: sem re-sincronizar na abertura, ele
+  // mostra a meta de quando a tela nasceu — que uma troca de objetivo pode
+  // ter acabado de recalcular.
+  useEffect(() => {
+    if (!aberto) return;
+    setKcal(String(atual.kcal));
+    setProt(String(atual.proteina_g));
+    setCarb(String(atual.carbo_g));
+    setGord(String(atual.gordura_g));
+  }, [aberto, atual]);
+
+  // A conta mora em `metaAutomatica`, não aqui: refazer com macros() na tela
+  // ignorava a massa magra e devolvia proteína sobre o peso total na
+  // recomposição — o bug que o commit 774fd4c já tinha matado.
+  async function recalcular() {
+    const m = await metaAutomatica();
+    if (!m) return;
     setKcal(String(m.kcal));
     setProt(String(m.proteina_g));
     setCarb(String(m.carbo_g));
@@ -591,7 +611,12 @@ function SheetMeta({
           </Txt>
         </View>
 
-        <Button titulo="Recalcular automaticamente" variante="fantasma" full onPress={recalcular} />
+        <Button
+          titulo="Recalcular automaticamente"
+          variante="fantasma"
+          full
+          onPress={() => void recalcular()}
+        />
         <Button titulo="Salvar meta" full tam="lg" onPress={salvar} />
       </View>
     </Sheet>

@@ -39,7 +39,7 @@ import {
   atualizarSerie,
   cancelarSessao,
   desfazerSerie,
-  exerciciosDoDia,
+  exerciciosDaSessao,
   finalizarSessao,
   getSessao,
   registrarSerie,
@@ -68,7 +68,7 @@ import {
 } from '@/features/notificacoes/api';
 import { avaliarConquistas } from '@/features/gamificacao/api';
 import { checkin } from '@/features/liga/api';
-import type { Exercise, RoutineExerciseFull } from '@/db/types';
+import type { Exercise, PersonalRecord, RoutineExerciseFull } from '@/db/types';
 import {
   cronometro,
   descansoLegivel,
@@ -135,8 +135,26 @@ export default function Execucao() {
   const [notas, setNotas] = useState<Record<number, string>>({});
   const [editandoNota, setEditandoNota] = useState<RoutineExerciseFull | null>(null);
   const [textoNota, setTextoNota] = useState('');
+  /**
+   * Gravação que falhou, com o gesto para repetir. Sem isto a série ficava
+   * verde na tela e fora do banco — a perda só aparecia no dia seguinte.
+   */
+  const [falha, setFalha] = useState<{ mensagem: string; retry: () => void } | null>(null);
+  /** Cancelar com série registrada pede dois toques; o timer desarma o 1º. */
+  const [confirmandoCancelar, setConfirmandoCancelar] = useState(false);
+  const timerCancelar = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Já alarmou este descanso? Sem isso o alarme repete a cada segundo. */
   const alarmado = useRef<number | null>(null);
+
+  /**
+   * Espelhos do estado para os handlers assíncronos e para o retry do banner:
+   * a closure de um retry pode ser de vários renders atrás, e decidir por um
+   * snapshot velho é o que duplicava série. Quem grava lê SEMPRE daqui.
+   */
+  const seriesRef = useRef(series);
+  seriesRef.current = series;
+  const exerciciosRef = useRef(exercicios);
+  exerciciosRef.current = exercicios;
 
   const pager = useRef<ScrollView>(null);
   const trilha = useRef<ScrollView>(null);
@@ -167,7 +185,9 @@ export default function Execucao() {
       setNome(sessao.nome);
       setInicio(sessao.iniciado_em);
 
-      const lista = sessao.routine_day_id ? await exerciciosDoDia(sessao.routine_day_id) : [];
+      // Pela sessão, não pelo dia: as trocas de exercício desta sessão vêm
+      // aplicadas por cima do template — inclusive ao retomar treino pausado.
+      const lista = sessao.routine_day_id ? await exerciciosDaSessao(sessionId) : [];
       setExercicios(lista);
 
       // Recupera o que já foi registrado — o app pode ter sido fechado no meio.
@@ -379,23 +399,33 @@ export default function Execucao() {
 
   /** Série já gravada: a correção precisa descer para o banco, não só para a tela. */
   async function persistirCorrecao(exId: number, idx: number, campo: 'peso' | 'reps', novo: string) {
-    const s = series[exId]?.[idx];
+    const s = seriesRef.current[exId]?.[idx];
     if (!s?.salvaId) return;
-    const ex = exercicios.find((e) => e.id === exId);
+    const ex = exerciciosRef.current.find((e) => e.id === exId);
     if (!ex) return;
 
     const pesoStr = campo === 'peso' ? novo : s.peso;
     const repsStr = campo === 'reps' ? novo : s.reps;
 
-    const prs = await atualizarSerie({
-      setLogId: s.salvaId,
-      sessionId,
-      exerciseId: ex.exercise_id,
-      pesoKg: parseFloat(pesoStr.replace(',', '.')) || null,
-      reps: parseInt(repsStr, 10) || null,
-    });
-
-    if (prs.length > 0) mostrarPR(ex.nome, prs[0]);
+    try {
+      const prs = await atualizarSerie({
+        setLogId: s.salvaId,
+        sessionId,
+        exerciseId: ex.exercise_id,
+        pesoKg: parseFloat(pesoStr.replace(',', '.')) || null,
+        reps: parseInt(repsStr, 10) || null,
+      });
+      setFalha(null);
+      if (prs.length > 0) mostrarPR(ex.nome, prs[0]);
+    } catch {
+      // A tela já mostra o valor novo; o banco ficou com o antigo. Sem aviso,
+      // a divergência só apareceria no histórico.
+      buzz.erro();
+      setFalha({
+        mensagem: 'A correção não foi salva',
+        retry: () => void persistirCorrecao(exId, idx, campo, novo),
+      });
+    }
   }
 
   function confirmarCampo() {
@@ -426,23 +456,45 @@ export default function Execucao() {
   }
 
   // ── concluir série ──────────────────────────────────────────────────────
-  async function concluirSerie(ex: RoutineExerciseFull, idx: number) {
-    const s = series[ex.id]?.[idx];
-    if (!s) return;
+  async function concluirSerie(exId: number, idx: number) {
+    // Resolvidos na hora, pelos espelhos: `ex` e `s` de uma closure velha é
+    // exatamente o que o retry do banner não pode usar para decidir.
+    const ex = exerciciosRef.current.find((e) => e.id === exId);
+    const s = seriesRef.current[exId]?.[idx];
+    if (!ex || !s) return;
 
     if (s.concluida) {
+      // Verde otimista com o registro ainda em voo: não há o que desmarcar
+      // no banco — o toque é ignorado até o id chegar.
+      if (!s.salvaId) return;
       // Desmarcar precisa apagar o registro, não só mudar a tela: senão
       // marcar → desmarcar → marcar grava a mesma série duas vezes e o volume
       // (e os recordes derivados dele) passam a contar em dobro.
-      if (s.salvaId) await desfazerSerie(s.salvaId, sessionId);
+      try {
+        await desfazerSerie(s.salvaId, sessionId);
+      } catch {
+        // Nada mudou ainda — nem no banco, nem na tela. Só avisa e oferece
+        // repetir.
+        buzz.erro();
+        setFalha({
+          mensagem: 'Não consegui desmarcar a série',
+          retry: () => void concluirSerie(exId, idx),
+        });
+        return;
+      }
+      setFalha(null);
       setSeries((p) => {
-        const arr = [...p[ex.id]];
+        const arr = [...(p[exId] ?? [])];
         arr[idx] = { ...arr[idx], concluida: false, salvaId: undefined };
-        return { ...p, [ex.id]: arr };
+        return { ...p, [exId]: arr };
       });
       buzz.leve();
       return;
     }
+
+    // Já existe linha no banco para esta série: registrar de novo duplicaria
+    // (retry atrasado ou toque repetido).
+    if (s.salvaId) return;
 
     const pesoN = parseFloat(s.peso.replace(',', '.')) || null;
     const repsN = parseInt(s.reps, 10) || null;
@@ -450,30 +502,61 @@ export default function Execucao() {
 
     if (!porTempo && (!pesoN || !repsN)) {
       // Falta dado: em vez de erro, abre o campo que está faltando.
-      abrirCampo(ex.id, idx, !pesoN ? 'peso' : 'reps');
+      abrirCampo(exId, idx, !pesoN ? 'peso' : 'reps');
       buzz.aviso();
       return;
     }
 
-    const arrNova = [...(series[ex.id] ?? [])];
-    arrNova[idx] = { ...arrNova[idx], concluida: true };
-    setSeries((p) => ({ ...p, [ex.id]: arrNova }));
+    setSeries((p) => {
+      const arr = [...(p[exId] ?? [])];
+      arr[idx] = { ...arr[idx], concluida: true };
+      return { ...p, [exId]: arr };
+    });
     buzz.ok();
     setFoco(null);
 
-    const prs = await registrarSerie({
-      sessionId,
-      exerciseId: ex.exercise_id,
-      ordemExercicio: ex.ordem,
-      serieIndex: idx,
-      pesoKg: pesoN,
-      reps: repsN,
-      duracaoSeg: porTempo ? repsN : null,
+    let gravada: { setId: number; prs: PersonalRecord[] };
+    try {
+      gravada = await registrarSerie({
+        sessionId,
+        exerciseId: ex.exercise_id,
+        ordemExercicio: ex.ordem,
+        serieIndex: idx,
+        pesoKg: pesoN,
+        reps: repsN,
+        duracaoSeg: porTempo ? repsN : null,
+      });
+    } catch {
+      // Desfaz o verde otimista: série marcada sem linha no banco é perda
+      // silenciosa — e sem desmarcar, o retry duplicaria o registro.
+      setSeries((p) => {
+        const arr = [...(p[exId] ?? [])];
+        arr[idx] = { ...arr[idx], concluida: false };
+        return { ...p, [exId]: arr };
+      });
+      buzz.erro();
+      setFalha({
+        mensagem: 'A série não gravou',
+        retry: () => void concluirSerie(exId, idx),
+      });
+      return;
+    }
+
+    setFalha(null);
+    // O id gravado é o que permite corrigir ou desmarcar esta série depois.
+    setSeries((p) => {
+      const arr = [...(p[exId] ?? [])];
+      arr[idx] = { ...arr[idx], salvaId: gravada.setId };
+      return { ...p, [exId]: arr };
     });
 
+    // Projeção local só para o descanso e o auto-avanço — o estado de
+    // verdade já foi atualizado pontualmente acima.
+    const arrNova = [...(seriesRef.current[exId] ?? [])];
+    arrNova[idx] = { ...arrNova[idx], concluida: true };
     const feitasAgora = arrNova.filter((x) => x.concluida).length;
-    const projetado = { ...series, [ex.id]: arrNova };
-    const iAtual = exercicios.findIndex((e) => e.id === ex.id);
+    const projetado = { ...seriesRef.current, [exId]: arrNova };
+    const iAtual = exerciciosRef.current.findIndex((e) => e.id === exId);
     const iProximo = proximoPendente(iAtual, projetado);
 
     if (ex.descanso_seg > 0) {
@@ -484,7 +567,10 @@ export default function Execucao() {
         serieTotal: arrNova.length,
         // Saber o que vem depois vale mais durante três minutos de descanso do
         // que depois deles, quando já dá para ver na tela.
-        proximo: iProximo >= 0 && iProximo !== iAtual ? exercicios[iProximo].nome : undefined,
+        proximo:
+          iProximo >= 0 && iProximo !== iAtual
+            ? exerciciosRef.current[iProximo].nome
+            : undefined,
       };
       setDescansoAtivo(novo);
       salvarDescanso(novo);
@@ -494,18 +580,7 @@ export default function Execucao() {
       void agendarFimDoDescanso(ex.descanso_seg, novo.proximo);
     }
 
-    if (prs.length > 0) mostrarPR(ex.nome, prs[0]);
-
-    // Guarda o id gravado para permitir corrigir esta série depois.
-    const salvas = await seriesDaSessao(sessionId);
-    const gravada = salvas.find((x) => x.exercise_id === ex.exercise_id && x.serie_index === idx);
-    if (gravada) {
-      setSeries((p) => {
-        const arr = [...p[ex.id]];
-        arr[idx] = { ...arr[idx], salvaId: gravada.id };
-        return { ...p, [ex.id]: arr };
-      });
-    }
+    if (gravada.prs.length > 0) mostrarPR(ex.nome, gravada.prs[0]);
 
     // Exercício fechado: leva para o próximo que ainda falta. A pausa é para
     // dar tempo de ver a bolinha ficar verde — sem ela a tela "pula" sozinha
@@ -516,11 +591,14 @@ export default function Execucao() {
   }
 
   function proximoPendente(depoisDe: number, mapa: Record<number, Serie[]>) {
-    for (let k = depoisDe + 1; k < exercicios.length; k++) {
-      if (!completoDe(mapa[exercicios[k].id])) return k;
+    // Pelo espelho, pelo mesmo motivo de `concluirSerie`: um retry chega aqui
+    // com a closure de outro render.
+    const lista = exerciciosRef.current;
+    for (let k = depoisDe + 1; k < lista.length; k++) {
+      if (!completoDe(mapa[lista[k].id])) return k;
     }
     for (let k = 0; k < depoisDe; k++) {
-      if (!completoDe(mapa[exercicios[k].id])) return k;
+      if (!completoDe(mapa[lista[k].id])) return k;
     }
     return -1;
   }
@@ -538,11 +616,20 @@ export default function Execucao() {
       // Check-in da liga sai do treino concluído, não de um botão separado:
       // pedir para a pessoa marcar presença depois de já ter treinado é o tipo
       // de passo que ninguém faz duas semanas seguidas.
-      await checkin('treino', {
-        duracaoMin: Math.round(decorrido / 60),
-        volumeKg: volumeAtual,
-      });
-      const novas = await avaliarConquistas();
+      //
+      // Não-fatal de propósito: a partir daqui o treino JÁ está no banco.
+      // Falha em check-in ou medalha não pode virar "treino não salvo" — e o
+      // retry disso re-finalizaria a sessão.
+      let novas: Awaited<ReturnType<typeof avaliarConquistas>> = [];
+      try {
+        await checkin('treino', {
+          duracaoMin: Math.round(decorrido / 60),
+          volumeKg: volumeAtual,
+        });
+        novas = await avaliarConquistas();
+      } catch {
+        /* o treino está salvo; a home segue normalmente */
+      }
       setConfirmandoFim(false);
       if (novas.length > 0) {
         const m = novas[0];
@@ -558,6 +645,16 @@ export default function Execucao() {
       } else {
         router.replace('/');
       }
+    } catch {
+      // Sem o catch a falha era muda: o sheet ficava aberto com cara de
+      // travado e o treino inteiro parecia perdido. Fechar o sheet antes do
+      // banner — ele é um Modal, e o banner ficaria escondido atrás.
+      setConfirmandoFim(false);
+      buzz.erro();
+      setFalha({
+        mensagem: 'Não consegui salvar o treino',
+        retry: () => void encerrar(sensacao),
+      });
     } finally {
       setSalvando(false);
     }
@@ -572,29 +669,64 @@ export default function Execucao() {
 
   async function confirmarTroca(novoId: number) {
     if (!trocando) return;
-    await substituirExercicio(trocando.id, novoId, sessionId, motivoTroca);
+    try {
+      // `trocando.exercise_id` é o efetivo na tela (pós-overlay): numa cadeia
+      // de trocas, o log registra de onde a pessoa saiu de verdade.
+      await substituirExercicio(trocando.id, novoId, sessionId, motivoTroca, trocando.exercise_id);
+    } catch {
+      buzz.erro();
+      setFalha({
+        mensagem: 'A troca não gravou',
+        retry: () => void confirmarTroca(novoId),
+      });
+      return;
+    }
     setTrocando(null);
     buzz.ok();
 
     // Recarrega a lista e o histórico do exercício novo — o placeholder cinza
     // precisa mostrar a última vez que ELE foi feito, não o que foi trocado.
-    const sessao = await getSessao(sessionId);
-    if (sessao?.routine_day_id) {
-      const lista = await exerciciosDoDia(sessao.routine_day_id);
-      setExercicios(lista);
-      const alvo = lista.find((e) => e.id === trocando.id);
-      if (alvo) {
-        const hist = await ultimaExecucao(alvo.exercise_id, sessionId);
-        setAnteriores((p) => ({ ...p, [alvo.id]: hist }));
-      }
+    const lista = await exerciciosDaSessao(sessionId);
+    setExercicios(lista);
+    const alvo = lista.find((e) => e.id === trocando.id);
+    if (alvo) {
+      const hist = await ultimaExecucao(alvo.exercise_id, sessionId);
+      setAnteriores((p) => ({ ...p, [alvo.id]: hist }));
     }
   }
 
   async function abandonar() {
     encerrarDescanso();
-    await cancelarSessao(sessionId);
+    try {
+      await cancelarSessao(sessionId);
+    } catch {
+      // Sheet fechado antes do banner — ele é um Modal e cobriria o aviso.
+      setSaindo(false);
+      buzz.erro();
+      setFalha({
+        mensagem: 'Não consegui cancelar o treino',
+        retry: () => void abandonar(),
+      });
+      return;
+    }
     router.replace('/');
   }
+
+  /** Desarma o cancelar em dois toques — chamado sempre que o sheet fecha. */
+  const desarmarCancelar = useCallback(() => {
+    if (timerCancelar.current) {
+      clearTimeout(timerCancelar.current);
+      timerCancelar.current = null;
+    }
+    setConfirmandoCancelar(false);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (timerCancelar.current) clearTimeout(timerCancelar.current);
+    },
+    []
+  );
 
   const decorrido = duracaoDe(inicio, null);
   const concluidos = exercicios.filter((e) => completoDe(series[e.id])).length;
@@ -672,7 +804,7 @@ export default function Execucao() {
               foco ? 360 : Math.max(insets.bottom, spacing.md) + (descanso !== null ? 76 : 8)
             }
             onEditar={abrirCampo}
-            onConcluir={(idx) => concluirSerie(ex, idx)}
+            onConcluir={(idx) => concluirSerie(ex.id, idx)}
             onAddSerie={() =>
               setSeries((p) => ({
                 ...p,
@@ -734,6 +866,46 @@ export default function Execucao() {
         </View>
       ) : null}
 
+      {/* ── Falha de gravação: flutua como a barra de descanso, mas em tom de
+          perigo. Oferece repetir na hora — série sumindo em silêncio custa o
+          histórico, que é o produto. ── */}
+      {falha ? (
+        <Animated.View
+          entering={SlideInDown.duration(240)}
+          style={[
+            s.falha,
+            {
+              // Acima do teclado quando ele está aberto (mesma folga que a
+              // página reserva); senão, acima da barra de descanso se houver.
+              bottom: foco
+                ? 360
+                : Math.max(insets.bottom, spacing.md) + (descanso !== null ? 76 : 0),
+            },
+          ]}
+        >
+          <Ionicons name="alert-circle" size={20} color={colors.danger} />
+          <Txt v="small" cor={colors.danger} bold style={{ flex: 1 }}>
+            {falha.mensagem}
+          </Txt>
+          <Press
+            onPress={() => {
+              const tentar = falha.retry;
+              setFalha(null);
+              tentar();
+            }}
+            style={s.tentarDeNovo}
+            haptic="leve"
+          >
+            <Txt v="small" cor={colors.danger} bold>
+              Tentar de novo
+            </Txt>
+          </Press>
+          <Press onPress={() => setFalha(null)} style={s.fecharFalha} scale={0.9}>
+            <Ionicons name="close" size={17} color={colors.textDim} />
+          </Press>
+        </Animated.View>
+      ) : null}
+
       {/* ── Detalhes do exercício ── */}
       <Sheet
         aberto={!!detalhe}
@@ -790,7 +962,15 @@ export default function Execucao() {
       </Sheet>
 
       {/* ── Sair: pausar ou cancelar ── */}
-      <Sheet aberto={saindo} onFechar={() => setSaindo(false)} titulo="Sair do treino" altura={0.62}>
+      <Sheet
+        aberto={saindo}
+        onFechar={() => {
+          setSaindo(false);
+          desarmarCancelar();
+        }}
+        titulo="Sair do treino"
+        altura={0.62}
+      >
         <View style={{ gap: spacing.lg }}>
           <View style={s.resumoFim}>
             <ItemResumo label="Duração" valor={duracao(decorrido)} />
@@ -808,6 +988,7 @@ export default function Execucao() {
               // O treino continua aberto: a home mostra "treino em andamento"
               // e o cronômetro segue contando do horário de início.
               setSaindo(false);
+              desarmarCancelar();
               encerrarDescanso();
               router.replace('/');
             }}
@@ -820,6 +1001,7 @@ export default function Execucao() {
             full
             onPress={() => {
               setSaindo(false);
+              desarmarCancelar();
               setConfirmandoFim(true);
             }}
           />
@@ -832,12 +1014,27 @@ export default function Execucao() {
                 : 'Nenhuma série registrada — cancelar não perde nada.'}
             </Txt>
             <Button
-              titulo="Cancelar treino"
+              titulo={
+                confirmandoCancelar
+                  ? `Toque de novo para apagar ${totalSeries} série${totalSeries > 1 ? 's' : ''}`
+                  : 'Cancelar treino'
+              }
               icone="trash-outline"
               variante="perigo"
               full
               carregando={salvando}
-              onPress={abandonar}
+              onPress={() => {
+                // Com série registrada, um toque só não apaga: o primeiro arma
+                // e mostra o tamanho da perda; sem o segundo em 3 s, desarma.
+                if (totalSeries > 0 && !confirmandoCancelar) {
+                  setConfirmandoCancelar(true);
+                  buzz.aviso();
+                  timerCancelar.current = setTimeout(() => setConfirmandoCancelar(false), 3000);
+                  return;
+                }
+                desarmarCancelar();
+                void abandonar();
+              }}
             />
           </View>
         </View>
@@ -1681,6 +1878,35 @@ const s = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: radius.full,
     backgroundColor: colors.surfaceHigh,
+  },
+
+  // Falha de gravação — mesmo formato da barra de descanso, em tom de perigo.
+  falha: {
+    position: 'absolute',
+    left: spacing.lg,
+    right: spacing.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: colors.bgElevated,
+    borderWidth: 1,
+    borderColor: colors.danger,
+  },
+  tentarDeNovo: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+    borderRadius: radius.full,
+    backgroundColor: colors.dangerSoft,
+  },
+  fecharFalha: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 
   pad: { position: 'absolute', left: 0, right: 0, bottom: 0 },

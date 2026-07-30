@@ -453,6 +453,22 @@ const V14 = `
 ALTER TABLE profile ADD COLUMN barra_fixa_reps INTEGER NOT NULL DEFAULT -1;
 `;
 
+/**
+ * v14 → v15: a substituição passa a apontar a linha exata da rotina.
+ *
+ * A troca "só para hoje" era aplicada com UPDATE em `routine_exercises` — ou
+ * seja, no template, valendo para sempre e reescrevendo o plano (a regra nº 1
+ * é justamente plano ≠ execução). Com esta coluna, o executor aplica a troca
+ * em memória por cima do template (`exerciciosDaSessao`) e o plano fica
+ * intocado.
+ *
+ * Nullable de propósito: linhas antigas ficam NULL e são resolvidas pelo
+ * `de_exercise`, que era o único endereço que existia.
+ */
+const V15 = `
+ALTER TABLE substituicoes ADD COLUMN routine_exercise_id INTEGER REFERENCES routine_exercises(id);
+`;
+
 export const MIGRACOES: { versao: number; sql: string }[] = [
   { versao: 2, sql: V2 },
   { versao: 3, sql: V3 },
@@ -467,4 +483,5 @@ export const MIGRACOES: { versao: number; sql: string }[] = [
   { versao: 12, sql: V12 },
   { versao: 13, sql: V13 },
   { versao: 14, sql: V14 },
+  { versao: 15, sql: V15 },
 ];
