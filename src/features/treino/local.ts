@@ -11,7 +11,12 @@
  * é oferecido.
  */
 
-export type LocalTreino = 'academia' | 'academia_basica' | 'casa_equipada' | 'casa_simples';
+export type LocalTreino =
+  | 'academia'
+  | 'smart_fit'
+  | 'academia_basica'
+  | 'casa_equipada'
+  | 'casa_simples';
 
 export interface OpcaoLocal {
   chave: LocalTreino;
@@ -22,6 +27,16 @@ export interface OpcaoLocal {
   equipamentos: string[];
   /** O que muda na prática, dito antes de escolher. */
   efeito: string;
+  /**
+   * Exercícios que a etiqueta de equipamento libera mas o local não tem.
+   *
+   * Academia de rede tem barra, halter, cabo e máquina — então filtrar por
+   * equipamento não exclui nada. Só que aparelho de nicho não está lá: nenhuma
+   * unidade tem banco de glute-ham raise ou hiperextensão inversa. Prescrever
+   * isso manda a pessoa procurar por vinte minutos uma máquina que não existe,
+   * e o efeito não é "faltou aparelho": é o treino perder credibilidade.
+   */
+  semEstes?: string[];
 }
 
 export const LOCAIS: OpcaoLocal[] = [
@@ -32,6 +47,27 @@ export const LOCAIS: OpcaoLocal[] = [
     descricao: 'Máquinas, cabos, barras e halteres',
     equipamentos: ['barra', 'halter', 'cabo', 'maquina', 'livre'],
     efeito: 'Catálogo inteiro liberado — a escolha passa a ser sua preferência, não o que existe.',
+  },
+  {
+    chave: 'smart_fit',
+    label: 'Smart Fit ou rede parecida',
+    emoji: '🟣',
+    descricao: 'Máquinas, cabos, smith, halteres até 40 kg',
+    equipamentos: ['barra', 'halter', 'cabo', 'maquina', 'livre'],
+    efeito:
+      'Praticamente o catálogo inteiro. Ficam de fora só os aparelhos de nicho que rede grande ' +
+      'não costuma ter, e no lugar deles entra a versão equivalente em máquina ou cabo.',
+    // Aparelho de nicho: existe em academia de musculação especializada, não em
+    // rede. Barra fixa livre fica: quando não tem, toda unidade tem graviton.
+    semEstes: [
+      'Glute ham raise na máquina',
+      'Hiperextensão inversa',
+      'Burrinho',
+      'Agachamento ajoelhado com barra',
+      'Flexão nórdica',
+      'Remada cavalinho',
+      'Panturrilha no smith',
+    ],
   },
   {
     chave: 'academia_basica',
@@ -65,6 +101,11 @@ export function equipamentosDe(local: string): string[] {
   return (LOCAIS.find((l) => l.chave === local) ?? LOCAIS[0]).equipamentos;
 }
 
+/** Exercícios que este local não tem, apesar de a etiqueta de equipamento liberar. */
+export function foraDoLocal(local: string): Set<string> {
+  return new Set((LOCAIS.find((l) => l.chave === local)?.semEstes ?? []));
+}
+
 export function labelLocal(local: string): string {
   return (LOCAIS.find((l) => l.chave === local) ?? LOCAIS[0]).label;
 }
@@ -80,6 +121,12 @@ export function limitacaoDoLocal(local: string): string | null {
     return (
       'Sem carga externa, costas é o grupo que mais sofre — puxar exige alguma barra. Se der para ' +
       'arrumar uma barra de porta ou um elástico, é o acessório que mais muda este treino.'
+    );
+  if (local === 'smart_fit')
+    return (
+      'Alguns aparelhos de nicho ficaram fora porque rede grande raramente tem — flexão nórdica, ' +
+      'hiperextensão inversa e afins. No lugar entrou a versão em máquina ou cabo, que existe em ' +
+      'toda unidade. Se a sua tiver algum deles, dá para acrescentar na mão.'
     );
   if (local === 'casa_equipada')
     return (

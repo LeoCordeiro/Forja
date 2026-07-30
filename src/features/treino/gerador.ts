@@ -1,6 +1,6 @@
 import type { Profile } from '@/db/types';
 import { descansoCorreto, diversificar, ehComposto, ehPesado, padraoDe } from './classificacao';
-import { equipamentosDe, limitacaoDoLocal } from './local';
+import { equipamentosDe, foraDoLocal, limitacaoDoLocal } from './local';
 import { REGIOES_DOR } from '@/features/perfil/diagnostico';
 import { PADROES } from './padroes';
 import { estimarDuracao, emMinutos } from './duracao';
@@ -596,18 +596,50 @@ function evitarPorDor(dores: string[]): Set<string> {
  * entre os dois (SMD −0,055; p = 0,75), então isso é gosto, e gosto é o que faz
  * alguém continuar aparecendo.
  */
+/**
+ * Ordena candidatos para a ESCOLHA — não para a ordem da sessão.
+ *
+ * ── O bug que isto conserta ──────────────────────────────────────────────
+ *
+ * A versão anterior ordenava por papel primeiro (pesado, composto, isolado) e
+ * só usava a preferência de equipamento como critério de desempate. Como os
+ * exercícios pesados são quase todos de barra, quem marcava "prefiro máquinas"
+ * recebia levantamento terra e barra fixa nas primeiras vagas de todo dia — e a
+ * preferência não mudava praticamente nada. Num plano inteiro deu 23 exercícios
+ * de peso livre contra 22 de máquina, com a preferência marcada.
+ *
+ * Aqui a preferência decide QUEM entra. A ordem dentro da sessão é outra
+ * pergunta, respondida depois por `porPapel`: composto pesado abre a sessão
+ * independente de ser barra ou máquina, porque isso é sobre fadiga, não sobre
+ * gosto.
+ */
 function ordenar(cands: ExercicioCat[], preferencia: string): ExercicioCat[] {
   const peso = (e: ExercicioCat) => {
     if (preferencia === 'maquina') return e.equipamento === 'maquina' || e.equipamento === 'cabo' ? 0 : 1;
     if (preferencia === 'livre') return e.equipamento === 'barra' || e.equipamento === 'halter' || e.equipamento === 'livre' ? 0 : 1;
     return 0;
   };
+  const papel = (e: ExercicioCat) => (ehPesado(e.nome) ? 0 : ehComposto(e.nome) ? 1 : 2);
+  // Papel primeiro, preferência como desempate — e agora isso FUNCIONA, porque
+  // existe composto de máquina para desempatar. Antes o tier de composto pesado
+  // era 100% barra, então "prefiro máquinas" nunca mudava as primeiras vagas.
+  //
+  // Inverter a ordem (preferência primeiro) foi a tentativa anterior e produziu
+  // um dia de peito que ABRIA com crossover: a preferência varria o composto
+  // pesado da sessão inteira. Preferência é sobre gosto; ordem é sobre fadiga, e
+  // fadiga não negocia.
   return [...cands].sort((a, b) => {
-    const ca = ehPesado(a.nome) ? 0 : ehComposto(a.nome) ? 1 : 2;
-    const cb = ehPesado(b.nome) ? 0 : ehComposto(b.nome) ? 1 : 2;
-    if (ca !== cb) return ca - cb;
+    const pa = papel(a);
+    const pb = papel(b);
+    if (pa !== pb) return pa - pb;
     return peso(a) - peso(b);
   });
+}
+
+/** Ordem dentro da sessão: composto pesado primeiro, isolado no fim. */
+function porPapel<T extends { nome: string }>(exs: T[]): T[] {
+  const papel = (n: string) => (ehPesado(n) ? 0 : ehComposto(n) ? 1 : 2);
+  return [...exs].sort((a, b) => papel(a.nome) - papel(b.nome));
 }
 
 /** Quantos exercícios distintos para um número de séries. */
@@ -666,8 +698,14 @@ export async function montarPlano(
   const proibidos = evitarPorDor(p.dores);
   const avisos: string[] = [];
 
+  // Duas exclusões diferentes: `proibidos` sai por causa de dor, `semLocal` sai
+  // porque o aparelho não existe naquela academia.
+  const semLocal = foraDoLocal(p.local);
   const disponiveis = catalogo.filter(
-    (e) => (!e.equipamento || equipamentos.has(e.equipamento)) && !proibidos.has(e.nome)
+    (e) =>
+      (!e.equipamento || equipamentos.has(e.equipamento)) &&
+      !proibidos.has(e.nome) &&
+      !semLocal.has(e.nome)
   );
 
   const modelo = escolherSplit(p.dias, p.focos);
@@ -760,8 +798,13 @@ export async function montarPlano(
       const base = Math.floor(naSessao / quantos);
       const resto = naSessao % quantos;
 
+      // Escolhe por preferência, ordena por papel. As duas coisas são
+      // perguntas diferentes: "qual exercício entra" respeita o gosto da
+      // pessoa; "em que ordem" respeita a fadiga, e composto pesado abre a
+      // sessão mesmo quando a preferência é máquina.
+      const escolhidos = porPapel(cands.slice(0, quantos));
       for (let i = 0; i < quantos; i++) {
-        const e = cands[i];
+        const e = escolhidos[i];
         const porExercicio = base + (i < resto ? 1 : 0);
         usadosNoDia.add(e.nome);
         const [rmin, rmax] = repsDe(e.nome, grupo, p.experiencia);
@@ -1095,7 +1138,12 @@ function consolidar(dias: DiaGerado[]) {
     for (const g of grupos) {
       const doGrupo = d.exercicios.filter((e) => e.grupo === g);
       const total = doGrupo.reduce((s, e) => s + e.series, 0);
-      const cabem = Math.max(1, Math.min(doGrupo.length, Math.floor(total / MIN_SERIES)));
+      // `round`, não `floor`. Com floor, 5 séries de bíceps davam UM exercício
+      // de 5 séries — cinco roscas iguais seguidas, quando duas roscas de
+      // ângulo diferente com 3 e 2 séries cobrem o músculo melhor. Colapsar em
+      // um só era pior que o problema das 2 séries que a consolidação existe
+      // para resolver.
+      const cabem = Math.max(1, Math.min(doGrupo.length, Math.round(total / MIN_SERIES)));
       if (cabem >= doGrupo.length) continue;
 
       // Os que ficam são os primeiros: a ordem já reflete prioridade.

@@ -61,6 +61,15 @@ export const COMPOSTOS = [
   'Flexão com pés elevados',
   'Remada invertida',
   'Flexão pique',
+  'Supino máquina',
+  'Supino inclinado máquina',
+  'Supino máquina no smith',
+  'Desenvolvimento máquina',
+  'Desenvolvimento na polia',
+  'Remada máquina',
+  'Remada alta na máquina',
+  'Agachamento no smith',
+  'Crossover na polia baixa',
 ];
 
 /** Compostos pesados: os que mais cobram sistema nervoso e mais precisam de pausa. */
@@ -81,6 +90,9 @@ export const COMPOSTOS_PESADOS = [
   'Agachamento goblet',
   'Agachamento com halteres',
   'Stiff com halteres',
+  'Supino máquina no smith',
+  'Agachamento no smith',
+  'Supino máquina',
 ];
 
 export function ehComposto(nome: string): boolean {
@@ -294,6 +306,20 @@ export function padraoDe(nome: string, grupo: string): string {
   if (grupo === 'gluteo') {
     if (/abdu|coice|monster/.test(n)) return 'abducao';
     return 'extensao';
+  }
+  // Braço também tem padrão, e ignorar isso deixava cinco séries da MESMA rosca
+  // seguidas. O que muda entre eles é onde o músculo fica mais alongado: banco
+  // inclinado e scott trabalham posições diferentes do bíceps, e martelo e
+  // inversa mudam a pegada.
+  if (grupo === 'biceps') {
+    if (/martelo|invers/.test(n)) return 'pegada';
+    if (/scott|concentrada|alta/.test(n)) return 'apoiada';
+    return 'livre';
+  }
+  if (grupo === 'triceps') {
+    if (/testa|franc/.test(n)) return 'acima';
+    if (/mergulho|supino fechado/.test(n)) return 'composto';
+    return 'polia';
   }
   return 'outro';
 }
