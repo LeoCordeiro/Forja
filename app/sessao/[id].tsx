@@ -40,6 +40,7 @@ import {
   cancelarSessao,
   desfazerSerie,
   exerciciosDaSessao,
+  faseDaSessao,
   finalizarSessao,
   getSessao,
   registrarSerie,
@@ -51,6 +52,12 @@ import {
   ultimaExecucao,
   type SerieAnterior,
 } from '@/features/treino/api';
+import { modularSeries, type FaseEfetiva } from '@/features/treino/fase';
+import {
+  avaliarProgressao,
+  pesoDeVolta,
+  type Progressao,
+} from '@/features/treino/progressao';
 import { descansoCorreto, MOTIVOS_TROCA, porqueDescanso } from '@/features/treino/classificacao';
 import {
   avisarFimDoDescanso,
@@ -112,6 +119,8 @@ export default function Execucao() {
   const [inicio, setInicio] = useState(Date.now());
   const [exercicios, setExercicios] = useState<RoutineExerciseFull[]>([]);
   const [anteriores, setAnteriores] = useState<Record<number, SerieAnterior[]>>({});
+  /** Fase do plano desta sessão (deload, readaptação…) — modula alvo e herança. */
+  const [fase, setFase] = useState<FaseEfetiva | null>(null);
   const [series, setSeries] = useState<Record<number, Serie[]>>({});
   const [atual, setAtual] = useState(0);
   const [foco, setFoco] = useState<Foco>(null);
@@ -190,6 +199,14 @@ export default function Execucao() {
       const lista = sessao.routine_day_id ? await exerciciosDaSessao(sessionId) : [];
       setExercicios(lista);
 
+      // A fase (deload, readaptação…) entra ANTES de montar o estado: é ela
+      // que decide quantas séries a semana pede. Nada é gravado — sessão
+      // antiga ou sem plano ativo resolve para null e abre como sempre abriu.
+      // Falha aqui não pode derrubar o load: sem fase, o treino abre como
+      // sempre abriu — perder a modulação é barato, perder a sessão não.
+      const faseSessao = await faseDaSessao(sessionId).catch(() => null);
+      setFase(faseSessao);
+
       // Recupera o que já foi registrado — o app pode ter sido fechado no meio.
       const jaFeitas = await seriesDaSessao(sessionId);
       const estado: Record<number, Serie[]> = {};
@@ -197,7 +214,14 @@ export default function Execucao() {
 
       for (const ex of lista) {
         const doEx = jaFeitas.filter((s) => s.exercise_id === ex.exercise_id);
-        const total = Math.max(ex.series_alvo, doEx.length);
+        // Alvo modulado pela fase; série já gravada nunca some do estado. A
+        // cobertura é pelo MAIOR serie_index, não pela contagem: com índices
+        // esparsos (série 3 gravada, 1 desmarcada) e a fase mudando entre
+        // aberturas, contar esconderia série que continua no banco.
+        const total = Math.max(
+          modularSeries(ex.series_alvo, faseSessao),
+          doEx.length ? Math.max(...doEx.map((x) => x.serie_index)) + 1 : 0
+        );
         estado[ex.id] = Array.from({ length: total }, (_, i) => {
           const salva = doEx.find((s) => s.serie_index === i);
           return salva
@@ -328,6 +352,27 @@ export default function Execucao() {
     [series]
   );
 
+  /**
+   * Progressão dupla por exercício, só com o que a tela já carregou: bateu o
+   * topo da faixa em todas as séries da última sessão → sugerir subida.
+   * É sugestão de apresentação — nada grava, nada bloqueia, e digitar outro
+   * valor por cima é sempre possível.
+   */
+  const sugestoes = useMemo(() => {
+    const out: Record<number, Progressao | null> = {};
+    for (const ex of exercicios) {
+      out[ex.id] = avaliarProgressao(
+        anteriores[ex.id] ?? [],
+        ex.reps_min ?? 8,
+        ex.reps_max ?? 12,
+        ex.grupo_primario,
+        ex.tipo_carga,
+        fase
+      );
+    }
+    return out;
+  }, [exercicios, anteriores, fase]);
+
   // ── navegação lateral ───────────────────────────────────────────────────
   const irPara = useCallback(
     (i: number, animado = true) => {
@@ -371,21 +416,44 @@ export default function Execucao() {
       if (!valor) {
         const ant = anteriores[exId]?.[serie] ?? anteriores[exId]?.[anteriores[exId].length - 1];
         if (ant) {
-          valor =
-            campo === 'peso'
-              ? ant.peso_kg
-                ? String(ant.peso_kg).replace('.', ',')
-                : ''
-              : ant.reps
-                ? String(ant.reps)
-                : '';
+          if (campo === 'peso') {
+            // Só exercício de peso×reps entra na modulação: em exercício por
+            // tempo o campo "peso" guarda segundos — 67% da prancha não é
+            // proteção de tendão, é bug.
+            const ex = exerciciosRef.current.find((e) => e.id === exId);
+            const pesoReps = ex?.tipo_carga === 'peso_reps';
+            const sug = pesoReps ? sugestoes[exId] : null;
+            if (
+              pesoReps &&
+              fase?.fase === 'readaptacao' &&
+              fase.cargaPct != null &&
+              fase.retomadaEmMs != null &&
+              ant.peso_kg &&
+              // O percentual da rampa é sobre a carga PRÉ-PAUSA. Série já
+              // registrada depois da retomada carrega a redução embutida —
+              // reaplicar o percentual sobre ela viraria queda geométrica
+              // (100 → 67 → 45…); a subida semanal fica manual, como a nota
+              // da semana pede.
+              ant.registrado_em < fase.retomadaEmMs
+            ) {
+              valor = String(pesoDeVolta(ant.peso_kg, fase.cargaPct)).replace('.', ',');
+            } else if (sug?.acao === 'subir') {
+              // Fechou a faixa na última sessão: o caminho de menor atrito
+              // passa a ser a carga nova, não a repetição da antiga.
+              valor = String(sug.pesoSugerido).replace('.', ',');
+            } else {
+              valor = ant.peso_kg ? String(ant.peso_kg).replace('.', ',') : '';
+            }
+          } else {
+            valor = ant.reps ? String(ant.reps) : '';
+          }
         }
       }
       setBuffer(valor);
       setFoco({ exId, serie, campo });
       buzz.selecao();
     },
-    [series, anteriores]
+    [series, anteriores, sugestoes, fase]
   );
 
   function aplicarBuffer() {
@@ -747,6 +815,13 @@ export default function Execucao() {
           <Txt v="small" cor={colors.textFaint}>
             {duracao(decorrido)} · {totalSeries} séries · {volume(volumeAtual)}
           </Txt>
+          {/* A fase que a Home prometeu, agora onde ela vale: na sessão. */}
+          {fase ? (
+            <Txt v="small" size={11} cor={colors.info} numberOfLines={1}>
+              {fase.titulo}
+              {fase.rirTexto ? ` · ${fase.rirTexto}` : ''}
+            </Txt>
+          ) : null}
         </View>
         <Press onPress={() => setConfirmandoFim(true)} style={s.btnFim} scale={0.94}>
           <Txt v="h3" cor="#1A0800" size={14}>
@@ -795,6 +870,8 @@ export default function Execucao() {
             total={exercicios.length}
             series={series[ex.id] ?? []}
             anteriores={anteriores[ex.id] ?? []}
+            fase={fase}
+            sugestao={sugestoes[ex.id] ?? null}
             foco={foco}
             compacto={!!foco}
             // Teclado aberto: folga suficiente para a linha em edição subir
@@ -1268,6 +1345,8 @@ function PaginaExercicio({
   total,
   series,
   anteriores,
+  fase,
+  sugestao,
   foco,
   compacto,
   paddingBottom,
@@ -1290,6 +1369,8 @@ function PaginaExercicio({
   total: number;
   series: Serie[];
   anteriores: SerieAnterior[];
+  fase: FaseEfetiva | null;
+  sugestao: Progressao | null;
   foco: Foco;
   compacto: boolean;
   paddingBottom: number;
@@ -1304,6 +1385,51 @@ function PaginaExercicio({
   const feitas = series.filter((x) => x.concluida).length;
   const completo = feitas === series.length && series.length > 0;
   const porTempo = ex.tipo_carga === 'tempo';
+
+  // O alvo que a semana pede — não o do template. Semana leve com "3 × 8-12"
+  // no card convida a fazer 3; o número mostrado precisa ser o modulado.
+  const alvoModulado = modularSeries(ex.series_alvo, fase);
+
+  // Selo de progressão: um empurrão visual, nunca uma trava. Na readaptação
+  // ele vira a volta leve — sugerir subida em semana de proteção é lesão.
+  const selo = (() => {
+    if (ex.tipo_carga !== 'peso_reps') return null;
+    if (fase?.fase === 'readaptacao' && fase.cargaPct != null && fase.retomadaEmMs != null) {
+      // Referência PRÉ-pausa apenas: execução pós-retomada já é a carga
+      // reduzida, e o percentual sobre ela comporia queda geométrica. Sem
+      // série de antes da pausa, o selo simplesmente não aparece.
+      const maior = Math.max(
+        0,
+        ...anteriores
+          .filter((a) => a.registrado_em < fase.retomadaEmMs!)
+          .map((a) => a.peso_kg ?? 0)
+      );
+      if (maior <= 0) return null;
+      return {
+        icone: 'leaf-outline' as const,
+        cor: colors.info,
+        fundo: colors.infoSoft,
+        texto: `Volta leve: ${fmtPeso(pesoDeVolta(maior, fase.cargaPct))} kg`,
+      };
+    }
+    if (sugestao?.acao === 'subir') {
+      return {
+        icone: 'trending-up' as const,
+        cor: colors.success,
+        fundo: colors.successSoft,
+        texto: `Hora de subir: ${fmtPeso(sugestao.pesoSugerido)} kg`,
+      };
+    }
+    if (sugestao?.acao === 'segurar') {
+      return {
+        icone: 'hand-left-outline' as const,
+        cor: colors.info,
+        fundo: colors.infoSoft,
+        texto: 'Segure a carga · feche a faixa',
+      };
+    }
+    return null;
+  })();
 
   const rolagem = useRef<ScrollView>(null);
   const yTabela = useRef(0);
@@ -1374,7 +1500,10 @@ function PaginaExercicio({
                 <View style={s.tag}>
                   <Ionicons name="repeat" size={10} color={colors.textDim} />
                   <Txt v="small" size={10} cor={colors.textDim} bold>
-                    {ex.series_alvo} × {ex.reps_min}-{ex.reps_max}
+                    {alvoModulado} × {ex.reps_min}-{ex.reps_max}
+                    {alvoModulado < ex.series_alvo && fase
+                      ? ` · ${fase.titulo.toLowerCase()}`
+                      : ''}
                   </Txt>
                 </View>
                 {ex.descanso_seg > 0 ? (
@@ -1382,6 +1511,14 @@ function PaginaExercicio({
                     <Ionicons name="timer-outline" size={10} color={colors.info} />
                     <Txt v="small" size={10} cor={colors.info} bold>
                       {descansoLegivel(ex.descanso_seg)}
+                    </Txt>
+                  </View>
+                ) : null}
+                {selo ? (
+                  <View style={[s.tag, { backgroundColor: selo.fundo }]}>
+                    <Ionicons name={selo.icone} size={10} color={selo.cor} />
+                    <Txt v="small" size={10} cor={selo.cor} bold>
+                      {selo.texto}
                     </Txt>
                   </View>
                 ) : null}

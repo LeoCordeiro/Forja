@@ -34,13 +34,58 @@ export interface Travado {
   acao: string;
 }
 
-interface Ponto {
+interface MelhorSerie {
   exercise_id: number;
   nome: string;
   grupo_primario: string;
   iniciado_em: number;
-  melhorCarga: number;
-  melhorReps: number;
+  peso_kg: number;
+  reps: number;
+  /** peso × reps DA MESMA série — o critério de progresso entre sessões. */
+  score: number;
+}
+
+/**
+ * A melhor série real de cada exercício em cada sessão da janela, da sessão
+ * mais recente para a mais antiga.
+ *
+ * `MAX(sl.peso_kg * sl.reps)` como única agregação: o SQLite documenta que,
+ * nesse caso, as colunas nuas (`sl.peso_kg`, `sl.reps`) vêm da linha
+ * vencedora do MAX — peso e repetição da MESMA série. A versão anterior
+ * agregava `MAX(peso)` e `MAX(reps)` separados, e uma pirâmide 100×5 + 80×12
+ * virava o score fictício 100×12, que nenhuma série fez.
+ *
+ * Só série concluída e que não é aquecimento: série desmarcada ou de aquecer
+ * não é desempenho — contá-la mascarava tanto o travamento quanto o avanço.
+ */
+async function melhoresSeriesPorSessao(dias: number): Promise<MelhorSerie[]> {
+  return all<MelhorSerie>(
+    `SELECT sl.exercise_id, e.nome, e.grupo_primario, ws.iniciado_em,
+            sl.peso_kg, sl.reps,
+            MAX(sl.peso_kg * sl.reps) AS score
+       FROM set_logs sl
+       JOIN workout_sessions ws ON ws.id = sl.session_id
+       JOIN exercises e ON e.id = sl.exercise_id
+      WHERE ws.finalizado_em IS NOT NULL
+        AND ws.iniciado_em >= ?
+        AND sl.concluida = 1
+        AND sl.tipo <> 'aquecimento'
+        AND sl.peso_kg IS NOT NULL
+        AND sl.reps IS NOT NULL
+      GROUP BY sl.exercise_id, ws.id
+      ORDER BY sl.exercise_id, ws.iniciado_em DESC`,
+    [Date.now() - dias * 86400000]
+  );
+}
+
+/** Agrupa por exercício preservando a ordem (recente → antiga) da consulta. */
+function porExercicio(linhas: MelhorSerie[]): Map<number, MelhorSerie[]> {
+  const mapa = new Map<number, MelhorSerie[]>();
+  for (const l of linhas) {
+    if (!mapa.has(l.exercise_id)) mapa.set(l.exercise_id, []);
+    mapa.get(l.exercise_id)!.push(l);
+  }
+  return mapa;
 }
 
 /**
@@ -58,41 +103,19 @@ export interface ContextoEstagnacao {
 }
 
 export async function detectarTravados(ctx: ContextoEstagnacao): Promise<Travado[]> {
-  // Melhor série de cada exercício em cada sessão dos últimos 90 dias.
-  const linhas = await all<Ponto>(
-    `SELECT sl.exercise_id, e.nome, e.grupo_primario, ws.iniciado_em,
-            MAX(COALESCE(sl.peso_kg,0)) AS melhorCarga,
-            MAX(COALESCE(sl.reps,0))    AS melhorReps
-       FROM set_logs sl
-       JOIN workout_sessions ws ON ws.id = sl.session_id
-       JOIN exercises e ON e.id = sl.exercise_id
-      WHERE ws.finalizado_em IS NOT NULL
-        AND ws.iniciado_em >= ?
-        AND sl.peso_kg IS NOT NULL
-      GROUP BY sl.exercise_id, ws.id
-      ORDER BY sl.exercise_id, ws.iniciado_em DESC`,
-    [Date.now() - 90 * 86400000]
-  );
-
-  const porExercicio = new Map<number, Ponto[]>();
-  for (const l of linhas) {
-    if (!porExercicio.has(l.exercise_id)) porExercicio.set(l.exercise_id, []);
-    porExercicio.get(l.exercise_id)!.push(l);
-  }
-
+  const grupos = porExercicio(await melhoresSeriesPorSessao(90));
   const travados: Travado[] = [];
 
-  for (const [id, pts] of porExercicio) {
+  for (const [id, pts] of grupos) {
     if (pts.length < 3) continue; // sem histórico suficiente para afirmar nada
 
     // Volume da melhor série é o critério: subir carga OU repetição conta como
     // progresso. Olhar só o peso marcaria como travado quem foi de 8 para 11
     // repetições — que é exatamente o caminho da progressão dupla.
-    const score = (p: Ponto) => p.melhorCarga * Math.max(1, p.melhorReps);
     const recente = pts[0];
     let sessoes = 1;
     for (let i = 1; i < pts.length; i++) {
-      if (score(pts[i]) >= score(recente) - 0.01) sessoes++;
+      if (pts[i].score >= recente.score - 0.01) sessoes++;
       else break;
     }
     if (sessoes < 3) continue;
@@ -105,8 +128,10 @@ export async function detectarTravados(ctx: ContextoEstagnacao): Promise<Travado
       nome: recente.nome,
       grupo: recente.grupo_primario,
       sessoes,
-      cargaAtual: recente.melhorCarga,
-      repsAtual: recente.melhorReps,
+      // Da série vencedora, não de máximos soltos: é a carga e a repetição
+      // que a pessoa reconhece como "onde eu estou" neste exercício.
+      cargaAtual: recente.peso_kg,
+      repsAtual: recente.reps,
       diasNoMesmoPeso: dias,
       causaProvavel,
       acao,
@@ -167,29 +192,30 @@ function diagnosticar(
   };
 }
 
-/** Também vale saber o que está subindo — só cobrança desanima. */
+/**
+ * Também vale saber o que está subindo — só cobrança desanima.
+ *
+ * Compara o peso da melhor série da PRIMEIRA sessão do período com o da
+ * ÚLTIMA, por exercício. A versão em SQL puro tinha uma subquery com MAX sem
+ * GROUP BY que colapsava no máximo all-time — `ultimo > primeiro` nunca era
+ * verdade e a lista nasceu vazia. Comparar em JS sobre as melhores séries é
+ * verificável a olho.
+ */
 export async function evoluindo(dias = 60): Promise<{ nome: string; ganhoPct: number }[]> {
-  const linhas = await all<{ nome: string; primeiro: number; ultimo: number }>(
-    `SELECT e.nome,
-            (SELECT MAX(s2.peso_kg) FROM set_logs s2
-               JOIN workout_sessions w2 ON w2.id = s2.session_id
-              WHERE s2.exercise_id = sl.exercise_id
-              ORDER BY w2.iniciado_em ASC LIMIT 1) AS primeiro,
-            MAX(sl.peso_kg) AS ultimo
-       FROM set_logs sl
-       JOIN workout_sessions ws ON ws.id = sl.session_id
-       JOIN exercises e ON e.id = sl.exercise_id
-      WHERE ws.iniciado_em >= ? AND sl.peso_kg IS NOT NULL
-      GROUP BY sl.exercise_id`,
-    [Date.now() - dias * 86400000]
-  );
+  const grupos = porExercicio(await melhoresSeriesPorSessao(dias));
+  const out: { nome: string; ganhoPct: number }[] = [];
 
-  return linhas
-    .filter((l) => l.primeiro > 0 && l.ultimo > l.primeiro)
-    .map((l) => ({
-      nome: l.nome,
-      ganhoPct: Math.round(((l.ultimo - l.primeiro) / l.primeiro) * 100),
-    }))
-    .sort((a, b) => b.ganhoPct - a.ganhoPct)
-    .slice(0, 5);
+  for (const pts of grupos.values()) {
+    if (pts.length < 2) continue; // uma sessão só não é tendência
+    const ultimo = pts[0]; // a lista vem da mais recente para a mais antiga
+    const primeiro = pts[pts.length - 1];
+    if (primeiro.peso_kg > 0 && ultimo.peso_kg > primeiro.peso_kg) {
+      out.push({
+        nome: ultimo.nome,
+        ganhoPct: Math.round(((ultimo.peso_kg - primeiro.peso_kg) / primeiro.peso_kg) * 100),
+      });
+    }
+  }
+
+  return out.sort((a, b) => b.ganhoPct - a.ganhoPct).slice(0, 5);
 }

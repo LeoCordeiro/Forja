@@ -11,8 +11,11 @@ import type {
   WorkoutSession,
 } from '@/db/types';
 import { e1rm } from '../perfil/calculos';
+import { getPerfil } from '../perfil/api';
 import { darPontos, registrarAtividade } from '../gamificacao/api';
 import { descansoCorreto, ehComposto, prioridadeDe, substitutosDe } from './classificacao';
+import { resolverFase, type FaseEfetiva } from './fase';
+import { isoDe } from '@/shared/utils/date';
 
 // ─────────────────────────── CATÁLOGO ───────────────────────────
 
@@ -206,6 +209,16 @@ export async function exerciciosDoDia(diaId: number): Promise<RoutineExerciseFul
 /** A rotina em uso. `criado_em` é a data de início do bloco de treino. */
 export async function rotinaAtiva(): Promise<Routine | null> {
   return first<Routine>('SELECT * FROM routines WHERE ativa = 1 ORDER BY criado_em DESC LIMIT 1');
+}
+
+/** A rotina dona do dia — o `criado_em` dela é a âncora da semana do bloco. */
+export async function rotinaDoDia(diaId: number): Promise<Routine | null> {
+  return first<Routine>(
+    `SELECT r.* FROM routines r
+      JOIN routine_days rd ON rd.routine_id = r.id
+     WHERE rd.id = ?`,
+    [diaId]
+  );
 }
 
 export async function criarRotina(nome: string, descricao?: string): Promise<number> {
@@ -455,6 +468,43 @@ export async function getSessao(id: number): Promise<WorkoutSession | null> {
   return first<WorkoutSession>('SELECT * FROM workout_sessions WHERE id = ?', [id]);
 }
 
+/**
+ * A fase do plano que vale para ESTA sessão — o que o executor aplica.
+ *
+ * O "hoje" da resolução é a data em que a sessão começou, não o relógio:
+ * treino pausado ontem e retomado hoje não pode mudar de alvo no meio. Pelo
+ * mesmo motivo a `semana_plano` gravada no check-in tem prioridade sobre o
+ * cálculo pela data. Nada disso escreve no banco — fase é apresentação.
+ */
+export async function faseDaSessao(sessionId: number): Promise<FaseEfetiva | null> {
+  const sessao = await first<{
+    iniciado_em: number;
+    routine_day_id: number | null;
+    semana_plano: number | null;
+  }>(
+    'SELECT iniciado_em, routine_day_id, semana_plano FROM workout_sessions WHERE id = ?',
+    [sessionId]
+  );
+  if (!sessao) return null;
+
+  const perfil = await getPerfil();
+
+  // Sessão avulsa (sem dia de rotina) não tem bloco — só o ramo do retorno.
+  let rotinaCriadaEmIso: string | null = null;
+  if (sessao.routine_day_id != null) {
+    const rotina = await rotinaDoDia(sessao.routine_day_id);
+    if (rotina?.criado_em) rotinaCriadaEmIso = isoDe(new Date(rotina.criado_em));
+  }
+
+  return resolverFase({
+    retomouEm: perfil?.retomou_em ?? null,
+    mesesParado: perfil?.meses_parado ?? 0,
+    rotinaCriadaEmIso,
+    hojeIso: isoDe(new Date(sessao.iniciado_em)),
+    semanaPlanoGravada: sessao.semana_plano,
+  });
+}
+
 export async function seriesDaSessao(sessionId: number): Promise<SetLog[]> {
   return all<SetLog>(
     'SELECT * FROM set_logs WHERE session_id = ? ORDER BY ordem_exercicio, serie_index',
@@ -575,8 +625,13 @@ async function recalcularVolume(sessionId: number) {
 }
 
 async function melhorPR(exerciseId: number, tipo: TipoPR): Promise<number | null> {
+  // e1rm só compete contra registros de até 10 reps: PRs inflados por série
+  // longa que JÁ estão no banco viram linhas inertes — nada é apagado (o XP
+  // dado fica dado, ledger é ledger), mas eles param de travar recordes
+  // legítimos futuros.
+  const filtro = tipo === 'e1rm' ? 'AND reps <= 10' : '';
   const r = await first<{ v: number }>(
-    'SELECT MAX(valor) AS v FROM personal_records WHERE exercise_id = ? AND tipo = ?',
+    `SELECT MAX(valor) AS v FROM personal_records WHERE exercise_id = ? AND tipo = ? ${filtro}`,
     [exerciseId, tipo]
   );
   return r?.v ?? null;
@@ -591,10 +646,13 @@ async function detectarPRs(
   const novos: PersonalRecord[] = [];
 
   const candidatos: { tipo: TipoPR; valor: number }[] = [
-    { tipo: 'e1rm', valor: e1rm(peso, reps) },
     { tipo: 'carga_max', valor: peso },
     { tipo: 'volume_serie', valor: peso * reps },
   ];
+  // Equações de 1RM degradam acima de ~10 reps: 40 kg × 20 daria "e1RM 66 kg"
+  // que a pessoa nunca levantou — e travaria o recorde de quem depois fizer
+  // 60 kg × 5 de verdade. Série longa pontua em carga e volume, não aqui.
+  if (reps <= 10) candidatos.unshift({ tipo: 'e1rm', valor: e1rm(peso, reps) });
 
   for (const c of candidatos) {
     const anterior = await melhorPR(s.exerciseId, c.tipo);
@@ -712,21 +770,32 @@ export async function ultimaExecucao(
 }
 
 export async function prsDoExercicio(exerciseId: number) {
+  // Mesmo teto de 10 reps do `melhorPR`: o recorde de e1RM exibido tem que
+  // ser o mesmo contra o qual a detecção compara — senão a tela mostra um
+  // número inflado que nenhuma série nova consegue "bater".
   return all<PersonalRecord & { tipo: TipoPR }>(
     `SELECT * FROM personal_records p
       WHERE p.exercise_id = ?
+        AND (p.tipo <> 'e1rm' OR p.reps <= 10)
         AND p.valor = (SELECT MAX(valor) FROM personal_records
-                        WHERE exercise_id = p.exercise_id AND tipo = p.tipo)
+                        WHERE exercise_id = p.exercise_id AND tipo = p.tipo
+                          AND (tipo <> 'e1rm' OR reps <= 10))
       GROUP BY p.tipo`,
     [exerciseId]
   );
 }
 
 export async function evolucaoExercicio(exerciseId: number, limite = 20) {
-  const rows = await all<{ dia: string; e1rm: number; volume: number }>(
+  // Espelho SQL exato do `e1rm()` de perfil/calculos: reps 1 vale o próprio
+  // peso, e acima de 10 reps não vale nada — as equações de 1RM degradam em
+  // série longa, e a fórmula solta daqui divergia da detecção de PR.
+  // Dia só de séries acima de 10 reps fica com e1rm NULL (o volume continua);
+  // é a tela que decide esconder o ponto do gráfico.
+  const rows = await all<{ dia: string; e1rm: number | null; volume: number }>(
     `SELECT date(registrado_em/1000, 'unixepoch', 'localtime') AS dia,
-            MAX(peso_kg * (1 + reps / 30.0))                   AS e1rm,
-            SUM(peso_kg * reps)                                AS volume
+            MAX(CASE WHEN reps <= 1 THEN peso_kg
+                     WHEN reps <= 10 THEN peso_kg * (1 + reps / 30.0) END) AS e1rm,
+            SUM(peso_kg * reps)                                           AS volume
        FROM set_logs
       WHERE exercise_id = ? AND concluida = 1 AND tipo <> 'aquecimento'
         AND peso_kg IS NOT NULL AND reps IS NOT NULL

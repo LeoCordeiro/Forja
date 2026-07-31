@@ -45,7 +45,11 @@ export default function DetalheExercicio() {
   if (!dados?.ex) return <Tela titulo="Carregando…">{null}</Tela>;
   const { ex, prs, evo } = dados;
 
-  const serie = evo.map((e) => ({ x: dataCurta(e.dia), y: Math.round(e.e1rm * 10) / 10 }));
+  // Dia só de séries acima de 10 reps vem com e1rm nulo (a estimativa não
+  // vale em série longa) — sem ponto no gráfico, em vez de um zero mentiroso.
+  const serie = evo
+    .filter((e) => e.e1rm !== null)
+    .map((e) => ({ x: dataCurta(e.dia), y: Math.round((e.e1rm as number) * 10) / 10 }));
 
   return (
     <Tela
@@ -197,7 +201,7 @@ export default function DetalheExercicio() {
                 <View style={{ alignItems: 'flex-end' }}>
                   <Txt v="h3">{num(e.volume)} kg</Txt>
                   <Txt v="small" cor={colors.textFaint} size={11}>
-                    volume · 1RM {peso(e.e1rm)} kg
+                    volume{e.e1rm !== null ? ` · 1RM ${peso(e.e1rm)} kg` : ''}
                   </Txt>
                 </View>
               </View>

@@ -17,18 +17,15 @@ import {
   iniciarSessao,
   removerExercicioDoDia,
   reordenarPorPrioridade,
+  rotinaDoDia,
   sessaoAberta,
 } from '@/features/treino/api';
+import { modularSeries, resolverFase } from '@/features/treino/fase';
 import type { RoutineExerciseFull } from '@/db/types';
 import { nomeGrupo } from '@/shared/utils/format';
+import { hoje, isoDe } from '@/shared/utils/date';
 import { getPerfil } from '@/features/perfil/api';
-import {
-  faseDaSemana,
-  LABEL_FASE,
-  planoRetorno,
-  RIR_POR_FASE,
-  semanaAtual as semanaDoPlano,
-} from '@/features/treino/periodizacao';
+import { RIR_POR_FASE, semanaAtual as semanaDoPlano } from '@/features/treino/periodizacao';
 import { prioridadeDe } from '@/features/treino/classificacao';
 import { analisarOrdem } from '@/features/treino/ordem';
 import { buzz } from '@/shared/utils/haptics';
@@ -47,20 +44,33 @@ export default function DiaDeTreino() {
   const [fazendoCheckin, setFazendoCheckin] = useState(false);
 
   const { dados, recarregar } = useDados(async () => {
-    const [dia, exs, perfil] = await Promise.all([
+    const [dia, exs, perfil, rotina] = await Promise.all([
       getDia(diaId),
       exerciciosDoDia(diaId),
       getPerfil(),
+      rotinaDoDia(diaId),
     ]);
-    return { dia, exs, perfil };
+    return { dia, exs, perfil, rotina };
   }, [diaId]);
 
-  // Fase do plano: define RIR e descanso sugeridos desta semana.
+  // Semana do plano de retorno — gravada no check-in para a sessão retomada
+  // dias depois não mudar de alvo no meio do caminho.
   const semanaPlano = dados?.perfil?.retomou_em
     ? semanaDoPlano(dados.perfil.retomou_em)
     : null;
-  const plano = dados?.perfil ? planoRetorno(dados.perfil.meses_parado ?? 0) : null;
-  const fase = plano && semanaPlano ? faseDaSemana(plano, semanaPlano) : null;
+
+  // A MESMA resolução do executor (retorno > bloco > nada): o que se vê aqui
+  // antes de iniciar tem que bater com o que a sessão abre.
+  const fase = dados?.perfil
+    ? resolverFase({
+        retomouEm: dados.perfil.retomou_em,
+        mesesParado: dados.perfil.meses_parado ?? 0,
+        rotinaCriadaEmIso: dados.rotina?.criado_em
+          ? isoDe(new Date(dados.rotina.criado_em))
+          : null,
+        hojeIso: hoje(),
+      })
+    : null;
 
   async function comecar(energia?: number, local?: string) {
     if (!dados?.dia) return;
@@ -142,8 +152,9 @@ export default function DiaDeTreino() {
                   >
                     <Txt v="h3">{ex.nome}</Txt>
                     <Txt v="small" cor={colors.textFaint}>
-                      {nomeGrupo(ex.grupo_primario)} · {ex.series_alvo} × {ex.reps_min}-
-                      {ex.reps_max} · {ex.descanso_seg}s
+                      {/* Alvo modulado pela fase — o mesmo número que a sessão vai abrir. */}
+                      {nomeGrupo(ex.grupo_primario)} · {modularSeries(ex.series_alvo, fase)} ×{' '}
+                      {ex.reps_min}-{ex.reps_max} · {ex.descanso_seg}s
                     </Txt>
                   </Press>
                   <Press onPress={() => setEditando(ex)} style={s.acao} scale={0.9}>
@@ -259,9 +270,9 @@ export default function DiaDeTreino() {
           {fase ? (
             <Card faixa={colors.info}>
               <Txt v="label" cor={colors.info}>
-                Semana {semanaPlano} · {LABEL_FASE[fase.fase]}
+                Semana {fase.semana} · {fase.titulo}
               </Txt>
-              <Txt v="small">{fase.nota}</Txt>
+              <Txt v="small">{fase.descricao}</Txt>
               <Txt v="small" cor={colors.textFaint} style={{ marginTop: 4 }}>
                 {RIR_POR_FASE[fase.fase].texto}
               </Txt>
