@@ -14,9 +14,59 @@ import { EXERCICIOS, MEDIA_BASE } from './seed/exercicios';
  * indica. Corrigir por regra conserta o que já está no aparelho de quem usa.
  */
 export async function normalizar(db: SQLite.SQLiteDatabase) {
+  await renomearExercicios(db);
   await completarCatalogo(db);
   await classificarExercicios(db);
   await corrigirDescansos(db);
+}
+
+/**
+ * Exercício que trocou de nome no catálogo, renomeado NO LUGAR.
+ *
+ * ── E quem já está com o banco montado? ──────────────────────────────────
+ *
+ * `completarCatalogo` casa por nome: sem isto, corrigir um nome no seed não
+ * corrige o banco de ninguém — insere uma linha nova e deixa a antiga, errada,
+ * do lado. O usuário fica com os dois na busca e com o histórico preso no que
+ * está errado.
+ *
+ * Renomear pelo id preserva TUDO que aponta para ele: `set_logs`,
+ * `personal_records`, `routine_exercises`. Nada de DELETE, nada de INSERT —
+ * é a mesma linha com o nome, a imagem e o texto certos.
+ *
+ * Idempotente por construção (o WHERE só acha o nome velho) e conservador: se
+ * as duas linhas já existirem, não faz nada, porque juntar duas linhas com
+ * histórico é decisão que não cabe a uma normalização silenciosa.
+ */
+const RENOMEADOS: [de: string, para: string][] = [
+  ['Crossover na polia baixa', 'Supino na polia'],
+];
+
+async function renomearExercicios(db: SQLite.SQLiteDatabase) {
+  for (const [de, para] of RENOMEADOS) {
+    const velho = await db.getFirstAsync<{ id: number }>(
+      'SELECT id FROM exercises WHERE nome = ?',
+      [de]
+    );
+    if (!velho) continue;
+    const novo = await db.getFirstAsync<{ id: number }>(
+      'SELECT id FROM exercises WHERE nome = ?',
+      [para]
+    );
+    if (novo) continue;
+
+    const linha = EXERCICIOS.find(([nome]) => nome === para);
+    if (!linha) continue;
+    const [, grupo, sec, equip, carga, slug, instr, dica] = linha;
+    await db.runAsync(
+      `UPDATE exercises
+          SET nome = ?, grupo_primario = ?, grupos_secundarios = ?, equipamento = ?,
+              tipo_carga = ?, media_url = ?, instrucoes = ?, dica = ?
+        WHERE id = ?`,
+      [para, grupo, sec, equip, carga, slug ? `${MEDIA_BASE}/${slug}` : null, instr, dica, velho.id]
+    );
+    console.log(`[forja] "${de}" virou "${para}" — histórico preservado (id ${velho.id})`);
+  }
 }
 
 /**

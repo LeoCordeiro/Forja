@@ -10,6 +10,7 @@
  */
 import { EXERCICIOS } from '../src/db/seed/exercicios.ts';
 import { montarPlano, REGIOES } from '../src/features/treino/gerador.ts';
+import { padraoDe, ehComposto, ehPesado } from '../src/features/treino/classificacao.ts';
 import { LOCAIS } from '../src/features/treino/local.ts';
 
 // O seed vira o mesmo formato que o gerador recebe do banco.
@@ -280,6 +281,261 @@ const casaFraca = await montarPlano({ ...base, local: 'casa_simples', barraFixaR
 const gruposCasa2 = new Set(casaFraca.dias.flatMap((d) => d.exercicios.map((e) => e.grupo)));
 for (const g of ['posterior', 'ombro', 'peito'])
   ok(`casa sem equipamento: ${g} não desaparece por causa da troca`, gruposCasa2.has(g));
+
+// ══════════════════════════════════════════════════════════════════════════
+// G1 — a granularidade que faltava
+//
+// Os testes 1-8 mediam volume por SEMANA e repetição de exercício ENTRE DIAS.
+// O treino defeituoso que chegou ao celular do Leonardo passou por todos eles:
+// as 22 séries de peito couberam no teto SEMANAL (28 com ênfase) e os quatro
+// supinos do mesmo padrão são quatro NOMES distintos no mesmo dia.
+//
+// O que se mede daqui para baixo é a sessão: séries por grupo POR SESSÃO,
+// exercícios por PADRÃO DE MOVIMENTO dentro do dia, frequência semanal como
+// restrição dura e ordem por papel na lista FINAL (não na montagem).
+// ══════════════════════════════════════════════════════════════════════════
+
+const PEQUENOS_T = ['biceps', 'triceps', 'panturrilha', 'abdomen', 'trapezio', 'antebraco'];
+const GRANDES_T = ['peito', 'costas', 'ombro', 'quadriceps', 'posterior', 'gluteo'];
+/** Teto por sessão sobre o total FRACIONADO (B2 do prescricao-alvo). */
+const tetoSessao = (g) => (PEQUENOS_T.includes(g) ? 10 : 12);
+/** Teto de séries do mesmo padrão de movimento numa sessão (B4). */
+const tetoPadrao = (g) => (PEQUENOS_T.includes(g) ? 6 : 8);
+
+/** Diretas + 0,5 × as séries de todo exercício que lista o grupo como secundário. */
+const fracionadoDoDia = (d) => {
+  const c = {};
+  for (const e of d.exercicios) {
+    if (e.grupo === 'cardio') continue;
+    c[e.grupo] = (c[e.grupo] ?? 0) + e.series;
+    for (const s of e.secundarios) {
+      if (!s || s === 'cardio') continue;
+      c[s] = (c[s] ?? 0) + e.series * 0.5;
+    }
+  }
+  return c;
+};
+
+const diretasDoDia = (d) => {
+  const c = {};
+  for (const e of d.exercicios) {
+    if (e.grupo === 'cardio') continue;
+    c[e.grupo] = (c[e.grupo] ?? 0) + e.series;
+  }
+  return c;
+};
+
+const chave = (e) => `${e.grupo}:${padraoDe(e.nome, e.grupo)}`;
+
+/** Cenários que cobrem experiência, dias, local, foco e preferência. */
+const CENARIOS = [
+  { nome: 'iniciante 3 dias', p: { ...base, dias: 3, diasDisponiveis: [1, 3, 5], experiencia: 'iniciante' } },
+  { nome: 'intermediário 4 dias', p: base },
+  { nome: 'avançado 6 dias', p: { ...base, dias: 6, diasDisponiveis: [1, 2, 3, 4, 5, 6], experiencia: 'avancado' } },
+  { nome: 'casa sem equipamento', p: { ...base, local: 'casa_simples' } },
+  {
+    nome: 'foco peito, 4 dias, 90 min, máquina',
+    p: {
+      ...base, dias: 4, diasDisponiveis: [1, 2, 4, 5], experiencia: 'iniciante',
+      objetivo: 'recomposicao', preferenciaEquipamento: 'maquina', focos: ['peito'],
+      minutosPorDia: [90, 90, 90, 90, 90, 90, 90], barraFixaReps: 5,
+    },
+  },
+  { nome: 'foco superior 5 dias', p: { ...base, dias: 5, diasDisponiveis: [1, 2, 3, 4, 5], focos: ['superior'] } },
+  { nome: 'foco inferior 4 dias', p: { ...base, dias: 4, focos: ['inferior'] } },
+  { nome: 'foco glúteo 6 dias 90 min', p: { ...base, dias: 6, diasDisponiveis: [1, 2, 3, 4, 5, 6], focos: ['gluteo'], minutosPorDia: [90, 90, 90, 90, 90, 90, 90] } },
+  { nome: 'avançado 4 dias 120 min', p: { ...base, experiencia: 'avancado', minutosPorDia: [120, 120, 120, 120, 120, 120, 120] } },
+];
+
+const planos = [];
+for (const c of CENARIOS) planos.push({ ...c, plano: await montarPlano(c.p, fonte) });
+
+// ── 9. Teto de séries POR SESSÃO, sobre o total fracionado (A1) ────────────
+//
+// `TETO_SERIES_SESSAO = 10` só valia na montagem. `preencherTempo` acrescentava
+// depois validando contra o teto SEMANAL — e com o grupo aparecendo 1× na
+// semana, semanal e por sessão viraram a mesma coisa: 22 séries num teto de 10.
+console.log('\n9. Teto de séries por SESSÃO (fracionado: 12 grande / 10 pequeno)');
+for (const { nome, plano } of planos) {
+  const estouros = [];
+  for (const d of plano.dias) {
+    const frac = fracionadoDoDia(d);
+    const diretas = diretasDoDia(d);
+    for (const [g, v] of Object.entries(frac)) {
+      // Grupo sem NENHUM trabalho direto na sessão só recebe respingo de
+      // composto alheio: não há série própria para cortar sem destruir o dono
+      // do composto, e isso o aviso de excesso indireto já cobre.
+      if (!diretas[g]) continue;
+      if (v > tetoSessao(g)) estouros.push(`${d.nome}/${g}=${v}`);
+    }
+  }
+  ok(`${nome}: nenhuma sessão acima do teto`, !estouros.length, estouros.join(', '));
+}
+
+// ── 10. Teto por PADRÃO DE MOVIMENTO dentro da sessão (A3) ─────────────────
+//
+// O teste antigo comparava NOMES entre dias. Supino máquina, supino no smith,
+// supino com barra e flexão são quatro nomes distintos e um só padrão — quatro
+// vezes o mesmo movimento na mesma sessão, e o teste dizia "ok".
+console.log('\n10. Teto por padrão de movimento na sessão (2 exercícios / 8 séries)');
+for (const { nome, plano } of planos) {
+  const demais = [];
+  const seriesDemais = [];
+  for (const d of plano.dias) {
+    const conta = {};
+    const series = {};
+    for (const e of d.exercicios) {
+      if (e.grupo === 'cardio') continue;
+      const k = chave(e);
+      conta[k] = (conta[k] ?? 0) + 1;
+      series[k] = (series[k] ?? 0) + e.series;
+    }
+    for (const [k, n] of Object.entries(conta)) if (n > 2) demais.push(`${d.nome}/${k}=${n}`);
+    for (const [k, s] of Object.entries(series))
+      if (s > tetoPadrao(k.split(':')[0])) seriesDemais.push(`${d.nome}/${k}=${s}`);
+  }
+  ok(`${nome}: no máximo 2 exercícios por padrão`, !demais.length, demais.join(', '));
+  ok(`${nome}: no máximo 8/6 séries por padrão`, !seriesDemais.length, seriesDemais.join(', '));
+}
+
+// ── 11. Frequência mínima como RESTRIÇÃO DURA (A2) ─────────────────────────
+//
+// A causa-raiz. `SPLITS_FOCO.superior[4]` dava peito 1× e costas 1× na semana —
+// para quem pediu ênfase em PEITO. E o aviso de frequência só olhava a região
+// preterida, então nunca percebia que o grupo enfatizado tinha caído.
+console.log('\n11. Todo grupo grande 2× por semana (restrição dura)');
+const aparicoesReais = (plano) => {
+  const c = {};
+  for (const d of plano.dias) {
+    for (const g of new Set(d.exercicios.map((e) => e.grupo))) c[g] = (c[g] ?? 0) + 1;
+  }
+  return c;
+};
+
+for (const dias of [3, 4, 5, 6]) {
+  const disp = [1, 2, 3, 4, 5, 6].slice(0, dias);
+  for (const focos of [[], ['superior'], ['inferior'], ['peito'], ['costas'], ['gluteo'], ['ombro']]) {
+    const plano = await montarPlano({ ...base, dias, diasDisponiveis: disp, focos }, fonte);
+    const ap = aparicoesReais(plano);
+    // A região PRETERIDA em 1× é o custo declarado da ênfase — o aviso cobre.
+    const regiao = focos.includes('superior') || focos.includes('peito') || focos.includes('costas') || focos.includes('ombro')
+      ? 'inferior'
+      : focos.includes('inferior') || focos.includes('gluteo')
+        ? 'superior'
+        : null;
+    const tolerado = new Set(regiao ? REGIOES[regiao] : []);
+    const caidos = GRANDES_T.filter((g) => (ap[g] ?? 0) === 1 && !tolerado.has(g));
+    ok(
+      `${dias} dias, foco ${focos.join('+') || 'nenhum'}: nenhum grupo grande em 1×`,
+      !caidos.length,
+      caidos.map((g) => `${g}=${ap[g]}`).join(', ')
+    );
+    // Ênfase é mais série e/ou mais aparição — NUNCA menos aparição.
+    if (focos.length) {
+      const neutroPlano = await montarPlano({ ...base, dias, diasDisponiveis: disp, focos: [] }, fonte);
+      const apNeutro = aparicoesReais(neutroPlano);
+      // Só grupo GRANDE: A2 fala de `aparicoes(grupo_grande)`. Bíceps e
+      // panturrilha somem de um dia por corte de tempo sem que isso seja
+      // problema de frequência — toda remada e todo agachamento os treinam
+      // junto. (Panturrilha sumindo do plano INTEIRO é outro assunto, anotado
+      // como candidato no roadmap.)
+      const alvos = focos.flatMap((f) => REGIOES[f] ?? [f]).filter((g) => GRANDES_T.includes(g));
+      const perderam = alvos.filter((g) => (ap[g] ?? 0) < (apNeutro[g] ?? 0));
+      ok(
+        `${dias} dias, foco ${focos.join('+')}: o alvo não perde aparição`,
+        !perderam.length,
+        perderam.map((g) => `${g}: ${apNeutro[g]} → ${ap[g]}`).join(', ')
+      );
+    }
+  }
+}
+
+// ── 12. Ordem por papel na lista FINAL (A4) ────────────────────────────────
+//
+// `porPapel` rodava só na montagem; `posicaoPara` insere sem reordenar. Por
+// isso o supino no smith e o supino com barra (compostos pesados) caíram nas
+// posições 4 e 5, depois de um crossover na 3.
+console.log('\n12. Ordem por papel na lista final');
+const papelDe = (n) => (ehPesado(n) ? 0 : ehComposto(n) ? 1 : 2);
+for (const { nome, plano } of planos) {
+  const foraDeOrdem = [];
+  const espalhados = [];
+  for (const d of plano.dias) {
+    const blocos = {};
+    d.exercicios.forEach((e, i) => {
+      if (e.grupo === 'cardio') return;
+      (blocos[e.grupo] ??= []).push({ i, e });
+    });
+    for (const [g, itens] of Object.entries(blocos)) {
+      // O grupo é um bloco só: não pode aparecer, sumir e voltar na sessão.
+      const contiguo = itens.every((x, k) => k === 0 || x.i === itens[k - 1].i + 1);
+      if (!contiguo) espalhados.push(`${d.nome}/${g}`);
+      for (let k = 1; k < itens.length; k++) {
+        if (papelDe(itens[k].e.nome) < papelDe(itens[k - 1].e.nome))
+          foraDeOrdem.push(`${d.nome}: ${itens[k].e.nome} depois de ${itens[k - 1].e.nome}`);
+      }
+    }
+  }
+  ok(`${nome}: nenhum composto pesado depois de isolador`, !foraDeOrdem.length, foraDeOrdem.join(' | '));
+  ok(`${nome}: cada grupo é um bloco contíguo`, !espalhados.length, espalhados.join(', '));
+}
+
+// ── 13. O cenário exato do bug (B10) ───────────────────────────────────────
+//
+// dias=4, focos=['peito'], iniciante, academia, preferência máquina, 90 min,
+// recomposição. Foi este perfil que produziu 7 exercícios de peito, 22 séries
+// numa sessão e 4 supinos do mesmo padrão.
+console.log('\n13. Cenário do bug — dia de peito');
+const bug = planos.find((x) => x.nome.startsWith('foco peito')).plano;
+const diaPeito = bug.dias
+  .map((d) => ({ d, peito: fracionadoDoDia(d).peito ?? 0 }))
+  .sort((a, b) => b.peito - a.peito)[0].d;
+
+const fracPeito = fracionadoDoDia(diaPeito).peito ?? 0;
+ok('peito: no máximo 12 séries fracionadas na sessão', fracPeito <= 12, `${fracPeito}`);
+
+const forcaNoDia = diaPeito.exercicios.filter((e) => e.grupo !== 'cardio');
+const padroesNoDia = new Set(forcaNoDia.map(chave));
+
+// A régua de G1 é REDUNDÂNCIA ZERO, não a contagem bruta de padrões: nenhum
+// exercício da sessão repete o padrão de outro. Contra o código antigo isto
+// falhava feio — 10 exercícios para 5 padrões, quatro deles no mesmo supino.
+ok('nenhum exercício da sessão repete padrão de outro', padroesNoDia.size === forcaNoDia.length,
+   `${padroesNoDia.size} padrões em ${forcaNoDia.length} exercícios`);
+
+// B10 quer 7 padrões. G1 entrega 5, e o que falta NÃO está em G1:
+//   · tríceps: 15,5 fracionadas na semana contra teto 14 → sem folga para o 2º
+//     exercício (extensão de cotovelo isolada). É A7, fase G2.
+//   · ombro: 21 fracionadas contra teto 20 → sem folga para abdução lateral ou
+//     face pull, e o desenvolvimento pesado continua comendo as 4 diretas.
+//     É A9, fase G2.
+// Os dois travam no teto SEMANAL fracionado, não no da sessão — ou seja, o
+// gerador está recusando corretamente pela regra de A11 (folga de agenda não
+// vira série). Subir esta trava para 6 é o critério de aceite de G2.
+ok('a sessão cobre ao menos 5 padrões distintos', padroesNoDia.size >= 5,
+   `${padroesNoDia.size}: ${[...padroesNoDia].join(', ')}`);
+
+const contaPadrao = {};
+for (const e of diaPeito.exercicios) {
+  if (e.grupo === 'cardio') continue;
+  contaPadrao[chave(e)] = (contaPadrao[chave(e)] ?? 0) + 1;
+}
+const pior = Object.entries(contaPadrao).sort((a, b) => b[1] - a[1])[0];
+ok('no máximo 2 exercícios no padrão mais concorrido', pior[1] <= 2, `${pior[0]} = ${pior[1]}`);
+
+const exPeito = diaPeito.exercicios.filter((e) => e.grupo === 'peito').length;
+ok('no máximo 4 exercícios de peito na sessão', exPeito <= 4, `${exPeito}`);
+
+const apBug = aparicoesReais(bug);
+ok('peito aparece 2× na semana', (apBug.peito ?? 0) >= 2, `${apBug.peito ?? 0}×`);
+ok('costas aparece 2× na semana', (apBug.costas ?? 0) >= 2, `${apBug.costas ?? 0}×`);
+
+console.log(
+  `   ${diaPeito.nome} (${diaPeito.minutos} min):\n` +
+    diaPeito.exercicios
+      .map((e) => `     ${e.nome} — ${e.series}×${e.repsMin}-${e.repsMax}, ${e.descanso}s [${chave(e)}]`)
+      .join('\n')
+);
 
 console.log(falhas ? `\n${falhas} falha(s)\n` : '\nTudo passou\n');
 process.exit(falhas ? 1 : 0);

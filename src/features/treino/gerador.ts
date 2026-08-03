@@ -6,6 +6,7 @@ import {
   ehComposto,
   ehPesado,
   padraoDe,
+  perfilDeResistencia,
 } from './classificacao';
 import { equipamentosDe, foraDoLocal, limitacaoDoLocal } from './local';
 import { REGIOES_DOR } from '@/features/perfil/diagnostico';
@@ -148,6 +149,59 @@ export const TETO_SEMANAL_FOCO = 28;
  */
 const TETO_SERIES_SESSAO = 10;
 
+/**
+ * Teto por SESSÃO sobre o total FRACIONADO — e por que ele é outro número.
+ *
+ * ── O buraco que ele fecha ───────────────────────────────────────────────
+ *
+ * `TETO_SERIES_SESSAO` está certo como número e era aplicado no lugar errado:
+ * só na montagem inicial. Depois dela, `preencherTempo` acrescenta exercício e
+ * série validando contra o teto SEMANAL, e `consolidar` redistribui — nenhum
+ * dos dois reavalia a sessão. Com o grupo aparecendo 1× na semana, semanal e
+ * por sessão viraram a mesma coisa e saíram 22 séries diretas de peito num dia.
+ *
+ * Então este teto é reaplicado como ÚLTIMA etapa do pipeline, depois de tudo,
+ * e conta FRACIONADO: diretas + 0,5 × as séries de todo exercício que lista o
+ * grupo como secundário. É a mesma contagem que a tela de auditoria usa, e é a
+ * única que enxerga que um dia de peito também é um dia de tríceps.
+ *
+ * ── De onde vêm 12 e 10 ──────────────────────────────────────────────────
+ *
+ * Remmert et al. 2025 (preprint, sportrxiv 537) põem o ponto em que a vantagem
+ * deixa de ser detectável em ≈11 séries fracionadas por sessão. 12 é esse ponto
+ * mais margem de medição, e vale para grupo grande. Grupo pequeno para em 10:
+ * ele já recebe metade do trabalho de graça de todo composto do dia.
+ *
+ * Ressalva honesta, porque ela muda o que a regra afirma: é preprint, sem
+ * revisão por pares, e os próprios autores dizem que faltam dados em volumes
+ * muito altos. O teto marca onde o benefício deixa de ser detectável — não onde
+ * começa o dano.
+ */
+const TETO_SESSAO_GRANDE = 12;
+const TETO_SESSAO_PEQUENO = 10;
+const tetoDaSessao = (grupo: string) =>
+  PEQUENOS.includes(grupo as Grupo) ? TETO_SESSAO_PEQUENO : TETO_SESSAO_GRANDE;
+
+/**
+ * Teto por PADRÃO DE MOVIMENTO dentro da sessão.
+ *
+ * Quatro supinos numa sessão são quatro nomes e um movimento. O orçamento por
+ * sessão é finito (mesma fonte do teto acima), então série redundante não é
+ * neutra: ela ocupa a vaga de um padrão que não foi treinado. No dia auditado,
+ * 29 das 32 séries eram empurrão com extensão de cotovelo.
+ *
+ * Dois exercícios por padrão é o teto, e o segundo só entra se trouxer um
+ * PERFIL DE RESISTÊNCIA diferente (`perfilDeResistencia`) — barra, halter, cabo
+ * e máquina põem o pico de carga em pontos diferentes da amplitude, e é só isso
+ * que justifica repetir o padrão.
+ *
+ * Não há fonte que prescreva "N padrões por sessão" e isto está dito de
+ * propósito: o que a evidência sustenta é o teto (orçamento finito → redundância
+ * custa oportunidade), não a lista.
+ */
+const MAX_EXERCICIOS_POR_PADRAO = 2;
+const tetoDoPadrao = (grupo: string) => (PEQUENOS.includes(grupo as Grupo) ? 6 : 8);
+
 const VOLUME_POR_EXPERIENCIA: Record<string, number> = {
   iniciante: 10,
   intermediario: 14,
@@ -231,14 +285,30 @@ const SPLITS: Record<number, ModeloDia[]> = {
  *
  * Perna 1× por semana fica ABAIXO das 2× que o ACSM pede. É escolha legítima de
  * quem prioriza superior, e o plano avisa uma vez em vez de decidir sozinho.
+ *
+ * ── O que NÃO é escolha legítima ─────────────────────────────────────────
+ *
+ * O grupo ENFATIZADO cair para 1× é. A versão anterior desta tabela dava peito
+ * 1× e costas 1× no split de 4 dias com foco superior — para quem tinha acabado
+ * de marcar peito. Como `naSessao = ceil(alvo / aparicoes)`, uma aparição
+ * derrama o orçamento da semana inteira numa sessão só: foi assim que saíram 22
+ * séries de peito num teto de sessão que diz 10.
+ *
+ * `aparicoes(grupo_grande) >= 2` é restrição DURA agora (`escolherSplit`), e
+ * vale para todo grupo grande fora da região preterida. Ênfase é mais série por
+ * semana e/ou mais aparições — nunca menos aparições.
  */
 const SPLITS_FOCO: Record<'superior' | 'inferior', Record<number, ModeloDia[]>> = {
   superior: {
+    // A ordem é a de B1 do `docs/auditoria-2026-07-30-gerador/prescricao-alvo.md`:
+    // empurrar, inferior, puxar, misto. O dia D existe para dar a SEGUNDA dose
+    // de peito e costas na semana — sem ele os dois maiores grupos do tronco
+    // ficavam em 1× num programa cuja proposta é priorizar o tronco.
     4: [
       { nome: 'A — Peito e tríceps', cor: COR.empurrar, grupos: ['peito', 'triceps', 'ombro'] },
-      { nome: 'B — Costas e bíceps', cor: COR.puxar, grupos: ['costas', 'biceps', 'trapezio'] },
-      { nome: 'C — Inferior completo', cor: COR.perna, grupos: ['quadriceps', 'posterior', 'gluteo', 'panturrilha'] },
-      { nome: 'D — Ombro e braços', cor: COR.ombro, grupos: ['ombro', 'triceps', 'biceps', 'abdomen'] },
+      { nome: 'B — Inferior completo', cor: COR.perna, grupos: ['quadriceps', 'posterior', 'gluteo', 'panturrilha'] },
+      { nome: 'C — Costas e bíceps', cor: COR.puxar, grupos: ['costas', 'biceps', 'trapezio'] },
+      { nome: 'D — Superior misto', cor: COR.ombro, grupos: ['peito', 'costas', 'ombro', 'triceps', 'biceps'] },
     ],
     5: [
       { nome: 'A — Peito e tríceps', cor: COR.empurrar, grupos: ['peito', 'triceps', 'ombro'] },
@@ -257,10 +327,15 @@ const SPLITS_FOCO: Record<'superior' | 'inferior', Record<number, ModeloDia[]>> 
     ],
   },
   inferior: {
+    // Mesmo defeito do lado superior, e igualmente no grupo ENFATIZADO:
+    // quadríceps e posterior apareciam 1× cada num programa com foco em perna.
+    // Os dois dias de inferior continuam especializados (um puxa para o
+    // quadríceps, o outro para posterior e glúteo) — o que muda é que cada
+    // grupo grande da perna agora aparece nos dois, com peso diferente.
     4: [
-      { nome: 'A — Inferior, foco quadríceps', cor: COR.perna, grupos: ['quadriceps', 'gluteo', 'panturrilha'] },
+      { nome: 'A — Inferior, foco quadríceps', cor: COR.perna, grupos: ['quadriceps', 'posterior', 'gluteo', 'panturrilha'] },
       { nome: 'B — Superior', cor: COR.empurrar, grupos: ['peito', 'costas', 'ombro', 'triceps', 'biceps'] },
-      { nome: 'C — Inferior, foco posterior e glúteo', cor: COR.perna, grupos: ['gluteo', 'posterior', 'panturrilha', 'abdomen'] },
+      { nome: 'C — Inferior, foco posterior e glúteo', cor: COR.perna, grupos: ['posterior', 'gluteo', 'quadriceps', 'abdomen'] },
       { nome: 'D — Superior', cor: COR.puxar, grupos: ['costas', 'peito', 'ombro', 'biceps', 'triceps'] },
     ],
     5: [
@@ -304,17 +379,50 @@ export function regiaoDoFoco(focos: string[]): 'superior' | 'inferior' | null {
   return sup > inf ? 'superior' : 'inferior';
 }
 
+/** A região que perde frequência quando existe foco — o custo declarado. */
+const regiaoPreterida = (regiao: 'superior' | 'inferior') =>
+  regiao === 'superior' ? 'inferior' : 'superior';
+
+/**
+ * Grupos GRANDES que a divisão deixa abaixo de 2 aparições na semana.
+ *
+ * `ignorar` é a região preterida: perna 1× num programa de foco superior é o
+ * preço que quem escolheu o foco está pagando de propósito, e existe um aviso
+ * para isso. O resto não tem desculpa — é a restrição dura de B1.
+ */
+function abaixoDaFrequencia(modelo: ModeloDia[], ignorar: Set<string>): Grupo[] {
+  const conta: Record<string, number> = {};
+  for (const d of modelo) for (const g of d.grupos) conta[g] = (conta[g] ?? 0) + 1;
+  return (Object.keys(conta) as Grupo[]).filter(
+    (g) => !PEQUENOS.includes(g) && !ignorar.has(g) && conta[g] < 2
+  );
+}
+
 /**
  * A divisão da semana, já considerando o foco.
  *
  * Até 3 dias não existe versão com foco: a exigência de 2× por grupo por semana
  * come toda a folga, e qualquer priorização deixaria algum grupo grande em 1×.
  * Aí corpo todo continua sendo a resposta certa, tenha foco ou não.
+ *
+ * ── A frequência é restrição, não preferência ────────────────────────────
+ *
+ * A divisão com foco só é devolvida se passar em `abaixoDaFrequencia`. Divisão
+ * que deixa um grupo grande em 1× fora da região preterida é INVÁLIDA e não
+ * chega ao usuário — a resposta certa nesse caso é a divisão equilibrada, que
+ * entrega menos foco e nenhum grupo abandonado.
+ *
+ * As tabelas acima já satisfazem a regra; isto é a trava que impede a próxima
+ * edição delas de reabrir o buraco em silêncio.
  */
 function escolherSplit(dias: number, focos: string[]): ModeloDia[] {
   const d = Math.max(1, Math.min(6, dias));
   const regiao = regiaoDoFoco(focos);
-  return (regiao && SPLITS_FOCO[regiao][d]) || SPLITS[d];
+  const comFoco = regiao ? SPLITS_FOCO[regiao][d] : undefined;
+  if (!comFoco || !regiao) return SPLITS[d];
+
+  const tolerado = new Set<string>(REGIOES[regiaoPreterida(regiao)]);
+  return abaixoDaFrequencia(comFoco, tolerado).length ? SPLITS[d] : comFoco;
 }
 
 export function divisaoDe(dias: number): { nome: string; porque: string } {
@@ -680,6 +788,30 @@ function quantosExercicios(series: number): number {
   return 5;
 }
 
+/** Equipamento por nome de exercício. É o que dá o perfil de resistência. */
+type Equipamentos = Map<string, string | null>;
+
+/**
+ * O candidato acrescenta alguma coisa ao que o grupo já tem na sessão?
+ *
+ * Padrão inédito entra sempre. Padrão que já está no dia só entra numa segunda
+ * cópia, e apenas se o perfil de resistência for outro — supino de máquina
+ * seguido de supino de smith é o mesmo movimento com a mesma curva de carga, e
+ * era exatamente essa a fila de quatro supinos que chegou ao usuário.
+ */
+function cabeNoPadrao(
+  jaNoDia: { nome: string }[],
+  cand: { nome: string },
+  grupo: string,
+  equip: Equipamentos
+): boolean {
+  const perfil = (n: string) => perfilDeResistencia(n, equip.get(n));
+  const alvo = padraoDe(cand.nome, grupo);
+  const mesmos = jaNoDia.filter((e) => padraoDe(e.nome, grupo) === alvo);
+  if (mesmos.length >= MAX_EXERCICIOS_POR_PADRAO) return false;
+  return !mesmos.some((e) => perfil(e.nome) === perfil(cand.nome));
+}
+
 // ── Montagem ──────────────────────────────────────────────────────────────
 
 /**
@@ -763,6 +895,11 @@ export async function montarPlano(
     // nenhum — a pessoa deixa de acreditar nos outros também.
     .sort((a, b) => (pontes.has(b.nome) ? 1 : 0) - (pontes.has(a.nome) ? 1 : 0));
 
+  // O dia gerado carrega só o nome do exercício, e o perfil de resistência
+  // depende do equipamento. Este mapa é a ponte entre os dois, para que o teto
+  // por padrão não precise adivinhar "smith" e "polia" a partir do nome.
+  const equipDe: Equipamentos = new Map(catalogo.map((e) => [e.nome, e.equipamento]));
+
   const modelo = escolherSplit(p.dias, p.focos);
   const aparicoes: Record<string, number> = {};
   for (const d of modelo) for (const g of d.grupos) aparicoes[g] = (aparicoes[g] ?? 0) + 1;
@@ -771,8 +908,9 @@ export async function montarPlano(
   // escrito. O ACSM pede 2× por semana em cada grupo; quem escolhe foco pesado
   // aceita ficar em 1× do outro lado. É escolha legítima — só não pode ser
   // surpresa em cima de quem esperava o padrão.
-  const preterida = regiaoDoFoco(p.focos) === 'superior' ? 'inferior' : 'superior';
-  if (regiaoDoFoco(p.focos)) {
+  const regiaoFoco = regiaoDoFoco(p.focos);
+  const preterida = regiaoFoco === 'superior' ? 'inferior' : 'superior';
+  if (regiaoFoco) {
     // Só grupo GRANDE conta aqui. Bíceps e tríceps em 1× direto não são um
     // problema de frequência: toda remada e todo supino da semana os treinam
     // junto, e avisar sobre eles transformava um alerta real ("sua perna caiu
@@ -788,6 +926,30 @@ export async function montarPlano(
           `concentrar a semana no que você escolheu. Para voltar a 2×, tire o foco ou some um dia.`
       );
     }
+  }
+
+  // Rede de segurança do que `escolherSplit` já garante.
+  //
+  // O aviso acima olha só a região PRETERIDA — foi por isso que ele viu perna e
+  // não viu que peito e costas, os grupos do lado enfatizado, tinham caído para
+  // 1× por semana. Aqui a conta é sobre o que sobrou de fora do preço declarado:
+  // se algum grupo grande fora da região preterida ficou em 1×, a divisão está
+  // errada e o usuário fica sabendo, em vez de receber em silêncio a pior
+  // frequência disponível justo no músculo que ele marcou.
+  //
+  // De 3 dias para baixo a regra não se aplica: com 1 ou 2 sessões por semana
+  // TODO grupo grande fica em 1× e não existe divisão que resolva. Ali o 1× é o
+  // teto do que a agenda permite, `divisaoDe` já diz isso com todas as letras, e
+  // repetir aqui em tom de erro contradiria a explicação certa que está na tela.
+  const forcados = new Set<string>(regiaoFoco ? REGIOES[preterida] : []);
+  const semFrequencia = p.dias >= 3 ? abaixoDaFrequencia(modelo, forcados) : [];
+  if (semFrequencia.length) {
+    avisos.push(
+      `${semFrequencia.map((g) => COMO_SE_FALA[g] ?? g).join(', ')} ficou 1× por semana nesta ` +
+        `divisão, e não deveria: o padrão da literatura é 2× por grupo grande. Some um dia ou ` +
+        `refaça o treino — o volume da semana inteira caindo numa sessão só rende menos que o ` +
+        `mesmo volume dividido em duas.`
+    );
   }
 
   const { alvos: emFoco } = pesosDaEnfase(p.focos);
@@ -843,10 +1005,25 @@ export async function montarPlano(
 
       // Nunca mais exercícios do que dá para dar 2 séries em cada: exercício de
       // série única é presença, não estímulo.
-      const quantos = Math.max(
+      const limite = Math.max(
         1,
         Math.min(quantosExercicios(naSessao), cands.length, Math.floor(naSessao / 2))
       );
+
+      // Escolha gulosa com o teto por padrão na porta.
+      //
+      // Antes era `cands.slice(0, limite)`: quem tem cinco vagas e três padrões
+      // no grupo enche as duas últimas com repetição por construção. Agora o
+      // candidato que não acrescenta padrão nem perfil de resistência é pulado,
+      // e a vaga vai para o próximo que acrescenta. Se ninguém acrescenta, o
+      // grupo fica com menos exercícios e mais séries em cada — que é o formato
+      // melhor para o mesmo volume.
+      const selecionados: ExercicioCat[] = [];
+      for (const c of cands) {
+        if (selecionados.length >= limite) break;
+        if (!selecionados.length || cabeNoPadrao(selecionados, c, grupo, equipDe)) selecionados.push(c);
+      }
+      const quantos = selecionados.length;
       // O RESTO é distribuído, não descartado. Antes: floor(7/2) = 3, vezes 2 =
       // 6 — uma série a menos por sessão, toda semana, três linhas abaixo do
       // comentário que promete arredondar para cima para não ficar abaixo do alvo.
@@ -857,7 +1034,7 @@ export async function montarPlano(
       // perguntas diferentes: "qual exercício entra" respeita o gosto da
       // pessoa; "em que ordem" respeita a fadiga, e composto pesado abre a
       // sessão mesmo quando a preferência é máquina.
-      const escolhidos = porPapel(cands.slice(0, quantos));
+      const escolhidos = porPapel(selecionados);
       for (let i = 0; i < quantos; i++) {
         const e = escolhidos[i];
         const porExercicio = base + (i < resto ? 1 : 0);
@@ -926,7 +1103,25 @@ export async function montarPlano(
   consolidar(dias);
   preencherTempo(dias, p, avisos, disponiveis);
 
+  // ── A ÚLTIMA palavra é da sessão, não da agenda ─────────────────────────
+  //
+  // Tudo acima pode acrescentar série: `preencherTempo` porque sobrou tempo,
+  // `consolidar` porque juntou exercício. Nenhum dos dois reavalia quanto o dia
+  // acumulou num músculo só. Este passo roda depois de todos e é o que garante
+  // o teto por sessão — foi a ausência dele que deixou 22 séries de peito
+  // passarem por um teto que diz 10.
+  aplicarTetosDaSessao(dias, equipDe);
+
+  // E a ordem também só pode ser decidida no fim: `porPapel` rodava na montagem
+  // e `posicaoPara` insere sem reordenar, então composto pesado acrescentado
+  // depois caía atrás de um isolador escolhido antes.
+  for (const d of dias) ordenarPorPapelNoDia(d);
+
   for (const d of dias) d.minutos = emMinutos(estimarDuracao(paraEstimativa(d)).totalSeg);
+
+  // Depois do aparo, não antes: o aviso precisa declarar a sobra que de fato
+  // existe no plano entregue, e não a que existia antes de o teto cortar.
+  avisarSobraDeTempo(dias, p, avisos);
 
   // Avisa só das substituições que APARECERAM no plano.
   //
@@ -1234,6 +1429,173 @@ function consolidar(dias: DiaGerado[]) {
 }
 
 /**
+ * Volume de um DIA com contagem fracionada — a mesma conta de `contarVolume`,
+ * na granularidade que faltava. O estouro auditado era por sessão; a semana
+ * inteira fechava dentro do teto e por isso ninguém viu.
+ */
+function fracionadoNaSessao(d: DiaGerado): Record<string, number> {
+  const out: Record<string, number> = {};
+  const somar = (g: string, v: number) => {
+    if (!g || g === 'cardio') return;
+    out[g] = (out[g] ?? 0) + v;
+  };
+  for (const e of d.exercicios) {
+    if (e.grupo === 'cardio') continue;
+    somar(e.grupo, e.series);
+    for (const s of e.secundarios) somar(s, e.series * 0.5);
+  }
+  return out;
+}
+
+/** Séries diretas por grupo no dia. */
+function diretasNaSessao(d: DiaGerado): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const e of d.exercicios) {
+    if (e.grupo === 'cardio') continue;
+    out[e.grupo] = (out[e.grupo] ?? 0) + e.series;
+  }
+  return out;
+}
+
+/** Tira uma série do exercício mais carregado da lista. Piso de 2. */
+function cortarUmaSerie(itens: DiaGerado['exercicios']): boolean {
+  let alvo: DiaGerado['exercicios'][number] | null = null;
+  // Piso de 2: abaixo disso o exercício deixa de ser estímulo e vira presença —
+  // a mesma regra que `aparExcesso` usa no aparo semanal.
+  for (const e of itens) if (e.series > 2 && (!alvo || e.series > alvo.series)) alvo = e;
+  if (!alvo) return false;
+  alvo.series -= 1;
+  return true;
+}
+
+/**
+ * O teto por SESSÃO, aplicado depois de todo mundo.
+ *
+ * Três regras, na ordem em que importam:
+ *
+ * 1. **Exercício a mais no mesmo padrão.** Rede de segurança do que a seleção
+ *    já garante — se um segundo supino do mesmo padrão e do mesmo perfil de
+ *    resistência chegou até aqui por algum caminho, ele sai.
+ * 2. **Grupo acima do teto fracionado** (12 grande / 10 pequeno). Corta série
+ *    DIRETA, do exercício mais carregado para o menos, até o piso de 2.
+ * 3. **Padrão acima do teto de séries** (8 grande / 6 pequeno).
+ *
+ * O que ele NÃO faz: cortar o composto de outro grupo para consertar o volume
+ * indireto. Se o tríceps estoura por causa dos supinos, tirar supino destruiria
+ * o peito — esse excesso é consequência de uma escolha feita por outro motivo, e
+ * quem fala dele é `avisarExcessoIndireto`. Por isso o laço pode terminar com um
+ * grupo ainda acima do teto: quando isso acontece, é indireto puro e não há
+ * série própria para tirar.
+ */
+function aplicarTetosDaSessao(dias: DiaGerado[], equip: Equipamentos) {
+  for (const d of dias) {
+    // Rede contra laço infinito: a saída de verdade é `!mexeu`, quando não há
+    // mais nada que possa ser cortado sem quebrar outra regra.
+    for (let volta = 0; volta < 300; volta++) {
+      if (!aparaUmaVezNaSessao(d, equip)) break;
+    }
+  }
+}
+
+function aparaUmaVezNaSessao(d: DiaGerado, equip: Equipamentos): boolean {
+  const forca = d.exercicios.filter((e) => e.grupo !== 'cardio');
+  const grupos = [...new Set(forca.map((e) => e.grupo))];
+  const remover = (alvo: { nome: string; grupo: string }) => {
+    d.exercicios = d.exercicios.filter((e) => !(e.grupo === alvo.grupo && e.nome === alvo.nome));
+  };
+
+  // 1. Padrão repetido além do teto.
+  for (const g of grupos) {
+    const doGrupo = forca.filter((e) => e.grupo === g);
+    for (let i = doGrupo.length - 1; i > 0; i--) {
+      if (!cabeNoPadrao(doGrupo.slice(0, i), doGrupo[i], g, equip)) {
+        remover(doGrupo[i]);
+        return true;
+      }
+    }
+  }
+
+  // 2. Grupo acima do teto fracionado da sessão.
+  const frac = fracionadoNaSessao(d);
+  const diretas = diretasNaSessao(d);
+  for (const g of grupos) {
+    const excesso = (frac[g] ?? 0) - tetoDaSessao(g);
+    if (excesso <= 0) continue;
+    const doGrupo = forca.filter((e) => e.grupo === g);
+    if (cortarUmaSerie(doGrupo)) return true;
+    // Todas no piso e o grupo ainda estoura: só vale tirar um exercício se isso
+    // resolver. Tirar sem resolver seria perder trabalho direto para não
+    // consertar nada — e o que sobra é excesso indireto, que não se conserta
+    // aqui.
+    const ultimo = doGrupo[doGrupo.length - 1];
+    if (doGrupo.length > 1 && (diretas[g] ?? 0) > 2 && excesso <= ultimo.series) {
+      remover(ultimo);
+      return true;
+    }
+  }
+
+  // 3. Séries demais no mesmo padrão.
+  for (const g of grupos) {
+    const porPadrao = new Map<string, DiaGerado['exercicios']>();
+    for (const e of forca.filter((x) => x.grupo === g)) {
+      const k = padraoDe(e.nome, g);
+      if (!porPadrao.has(k)) porPadrao.set(k, []);
+      porPadrao.get(k)!.push(e);
+    }
+    for (const itens of porPadrao.values()) {
+      const total = itens.reduce((s, e) => s + e.series, 0);
+      if (total <= tetoDoPadrao(g)) continue;
+      if (cortarUmaSerie(itens)) return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Ordem por papel na lista FINAL de cada dia.
+ *
+ * ── Por que rodar de novo aqui ───────────────────────────────────────────
+ *
+ * `porPapel` roda na montagem e `posicaoPara` insere depois sem reordenar. O
+ * resultado auditado: crossover na 3ª posição, supino no smith na 4ª e supino
+ * com barra na 5ª — dois compostos pesados atrás de um isolador. O supino com
+ * barra é justamente o exercício mais comparável entre semanas, e ele estava
+ * sendo feito depois de 10 séries de empurrão.
+ *
+ * O agrupamento por grupo muscular é preservado: a ordem dos grupos é a que a
+ * sessão já tinha (o modelo do dia e a ênfase decidiram isso), e cada grupo
+ * continua sendo um bloco contíguo. Espalhar o mesmo grupo em dois pontos da
+ * sessão custaria troca de aparelho e o aquecimento específico do movimento.
+ *
+ * A ordenação é ESTÁVEL, e é isso que preserva a comparabilidade: entre
+ * exercícios do mesmo papel a ordem de entrada é mantida, então o composto
+ * principal escolhido na montagem continua na posição 1 do bloco. Ele só perde
+ * a vaga para algo de papel mais pesado — caso em que a posição 1 estava errada.
+ *
+ * Nunes et al. 2021 (11 estudos): ganho de FORÇA maior no que se faz primeiro
+ * (multiarticular primeiro ES = 0,32; monoarticular primeiro ES = −0,58). Para
+ * hipertrofia a mesma meta não achou efeito de ordem — então isto é sobre
+ * progressão mensurável e segurança, não sobre crescer mais.
+ */
+function ordenarPorPapelNoDia(d: DiaGerado) {
+  const papel = (n: string) => (ehPesado(n) ? 0 : ehComposto(n) ? 1 : 2);
+  const ordem: string[] = [];
+  for (const e of d.exercicios) {
+    if (e.grupo !== 'cardio' && !ordem.includes(e.grupo)) ordem.push(e.grupo);
+  }
+  const saida: DiaGerado['exercicios'] = [];
+  for (const g of ordem) {
+    const bloco = d.exercicios.filter((e) => e.grupo === g);
+    bloco.sort((a, b) => papel(a.nome) - papel(b.nome));
+    saida.push(...bloco);
+  }
+  // Cardio é sempre o último: antes da musculação derrubaria a força da sessão.
+  saida.push(...d.exercicios.filter((e) => e.grupo === 'cardio'));
+  d.exercicios = saida;
+}
+
+/**
  * Usa o tempo que sobrou — sem estourar o que a recuperação aguenta.
  *
  * O tempo informado no questionário era só um TETO: o gerador cortava quando
@@ -1245,6 +1607,24 @@ function consolidar(dias: DiaGerado[]) {
  * não paga em hipertrofia, e seria trocar um erro por outro. Quando todo grupo
  * do dia já está no alvo, o tempo sobra mesmo, e aí o plano diz isso: o limite
  * passou a ser a recuperação, não a agenda.
+ *
+ * ── A premissa que estava errada ─────────────────────────────────────────
+ *
+ * Esta função tratava folga de agenda como sinal de que faltava volume. O
+ * problema que a motivou é real (quem dizia ter 1h30 recebia 44 minutos), mas a
+ * correção escolhida produziu 22 séries de peito numa sessão: **elas não foram
+ * prescritas por critério fisiológico nenhum — foram prescritas porque havia 90
+ * minutos na agenda.**
+ *
+ * Tempo disponível é TETO, não meta. Então agora cada acréscimo passa por três
+ * portas, não só pelo teto semanal: o teto fracionado da SESSÃO, o teto de
+ * séries do PADRÃO e o teto semanal de sempre. Quando qualquer uma fecha, o
+ * tempo sobra — e a sobra é declarada em vez de virar série.
+ *
+ * A escada de uso do tempo livre (B2) é: aproximação no principal → descanso
+ * completo onde a regra pede 180 s → cardio na dose da constante → mobilidade →
+ * sobra declarada. Desta fase saem a última (aqui) e o "parar de empilhar"; as
+ * outras são G2 e não estão implementadas — o aviso não promete o que não faz.
  */
 function preencherTempo(
   dias: DiaGerado[],
@@ -1253,7 +1633,6 @@ function preencherTempo(
   disponiveis: ExercicioCat[]
 ) {
   const FOLGA_ACEITAVEL = 8 * 60; // menos que isso não vale mexer
-  let algumDiaSobrando = false;
 
   for (const d of dias) {
     const disponivel = (d.diaSemana !== null ? p.minutosPorDia[d.diaSemana] ?? 60 : 60) * 60;
@@ -1276,26 +1655,51 @@ function preencherTempo(
         d.exercicios.splice(posicaoPara(d, novo.grupo), 0, novo);
         continue;
       }
+
       // Candidato: exercício de grupo abaixo do alvo, o de menos séries
       // primeiro — subir de 2 para 3 vale mais que de 4 para 5.
       // Teto de 4 por exercício mesmo tendo tempo: a partir da quinta série o
       // mesmo movimento rende cada vez menos, e o resultado fica feio de um
       // jeito que denuncia o que aconteceu — seis séries de panturrilha em pé
       // não é programa, é sobra de tempo empilhada.
+      const naSessao = fracionadoNaSessao(d);
+      const seriesDoPadrao = (e: DiaGerado['exercicios'][number]) => {
+        const k = padraoDe(e.nome, e.grupo);
+        return d.exercicios
+          .filter((x) => x.grupo === e.grupo && padraoDe(x.nome, x.grupo) === k)
+          .reduce((s, x) => s + x.series, 0);
+      };
       const cand = d.exercicios
         .filter((e) => e.grupo !== 'cardio' && e.series < 4)
         .filter((e) => (volume[e.grupo] ?? 0) + 1 <= tetoDe(e.grupo as Grupo, p))
+        // As duas portas novas: a sessão e o padrão. Sem elas, o teto semanal
+        // sozinho autorizava despejar a semana inteira num dia só.
+        .filter((e) => (naSessao[e.grupo] ?? 0) + 1 <= tetoDaSessao(e.grupo))
+        .filter((e) => seriesDoPadrao(e) + 1 <= tetoDoPadrao(e.grupo))
         .sort((a, b) => a.series - b.series)[0];
 
-      if (!cand) {
-        algumDiaSobrando = true;
-        break;
-      }
+      if (!cand) break;
       cand.series += 1;
     }
   }
+}
 
-  if (!algumDiaSobrando) return;
+/**
+ * Declara a sobra de tempo em vez de escondê-la — ou de transformá-la em série.
+ *
+ * Roda no FIM, depois do teto por sessão: o aviso precisa falar da sobra que
+ * existe no plano entregue. Antes ele era emitido de dentro de `preencherTempo`
+ * e podia mentir para menos, porque o aparo ainda ia devolver minutos.
+ */
+function avisarSobraDeTempo(dias: DiaGerado[], p: PerfilDoTreino, avisos: string[]) {
+  const FOLGA_ACEITAVEL = 8 * 60;
+  let sobraSeg = 0;
+  for (const d of dias) {
+    const disponivel = (d.diaSemana !== null ? p.minutosPorDia[d.diaSemana] ?? 60 : 60) * 60;
+    const folga = disponivel - estimarDuracao(paraEstimativa(d)).totalSeg;
+    if (folga >= FOLGA_ACEITAVEL) sobraSeg += folga;
+  }
+  if (!sobraSeg) return;
 
   // Quantos dias o treino da semana realmente ocupa, no tempo que a pessoa tem.
   // É divisão simples e sai exata: o volume semanal não muda com o número de
@@ -1318,9 +1722,11 @@ function preencherTempo(
     );
   } else {
     avisos.push(
-      'Sobra tempo em alguns dias, e isso é de propósito: todo grupo já está no volume semanal ' +
-        'que a recuperação acompanha. Daqui em diante o que faz diferença é carga, não minuto — ' +
-        'use a sobra para aquecer melhor, descansar o quanto o app pede e subir o peso.'
+      `Sobram cerca de ${Math.round(sobraSeg / 60)} min na semana, e isso é de propósito: todo ` +
+        'grupo já está no volume que a recuperação acompanha, e nesta sessão nenhum músculo ' +
+        'aguenta mais série sem o ganho virar custo. Série a mais não é o melhor uso desse tempo — ' +
+        'aquecer com séries de aproximação no primeiro exercício, respeitar o descanso inteiro ' +
+        'nos compostos pesados e fechar com cardio leve ou mobilidade rendem mais.'
     );
   }
 }
@@ -1329,8 +1735,21 @@ function preencherTempo(
  * Escolhe um exercício novo para um grupo que ainda cabe no alvo semanal.
  *
  * Prefere o grupo mais distante do alvo — é onde a série extra rende mais — e
- * dentro dele o primeiro candidato que ainda não está na sessão. Devolve null
- * quando todo grupo do dia já está no alvo, e é isso que faz o laço parar.
+ * dentro dele o primeiro candidato que traz um PADRÃO que ainda falta no dia.
+ * Devolve null quando não há padrão novo para cobrir, e é isso que faz o laço
+ * parar.
+ *
+ * ── O `?? livres[0]` que estava aqui ─────────────────────────────────────
+ *
+ * A busca por padrão ausente estava certa. O que anulava tudo era o fallback:
+ * quando todos os padrões do grupo já estavam no dia, `find` devolvia undefined
+ * e o `?? livres[0]` pegava QUALQUER exercício do grupo. Cada volta do laço
+ * acrescentava mais um do mesmo padrão, e foi assim que um dia de peito ganhou
+ * supino de máquina, de smith, de barra e flexão — o mesmo movimento, quatro
+ * vezes, porque havia tempo na agenda.
+ *
+ * Sem padrão novo disponível, a resposta certa é não acrescentar exercício. O
+ * tempo volta para a escada de B2 e a sobra é declarada no aviso.
  */
 function exercicioParaAcrescentar(
   d: DiaGerado,
@@ -1341,8 +1760,19 @@ function exercicioParaAcrescentar(
   const naSessao = new Set(d.exercicios.map((e) => e.nome));
   const grupos = [...new Set(d.exercicios.filter((e) => e.grupo !== 'cardio').map((e) => e.grupo))];
 
+  // O exercício novo nasce com 3 séries, então o grupo precisa de folga para as
+  // três — no teto SEMANAL e no teto da SESSÃO. O segundo é o que faltava: sem
+  // ele, um grupo que aparece 1× na semana tinha a folga da semana inteira
+  // disponível dentro de um dia só.
+  const volumeDoDia = fracionadoNaSessao(d);
   const comFolga = grupos
-    .map((g) => ({ g, folga: tetoDe(g as Grupo, p) - (volume[g] ?? 0) }))
+    .map((g) => ({
+      g,
+      folga: Math.min(
+        tetoDe(g as Grupo, p) - (volume[g] ?? 0),
+        tetoDaSessao(g) - (volumeDoDia[g] ?? 0)
+      ),
+    }))
     // 3 séries é o tamanho mínimo de um exercício que vale a pena entrar.
     .filter((x) => x.folga >= 3)
     .sort((a, b) => b.folga - a.folga);
@@ -1358,7 +1788,7 @@ function exercicioParaAcrescentar(
       disponiveis.filter((e) => e.grupo_primario === g && !naSessao.has(e.nome)),
       p.preferenciaEquipamento
     );
-    const cand = livres.find((e) => !padroesNoDia.has(padraoDe(e.nome, g))) ?? livres[0];
+    const cand = livres.find((e) => !padroesNoDia.has(padraoDe(e.nome, g)));
     if (!cand) continue;
     const [rmin, rmax] = repsDe(cand.nome, g, p.experiencia);
     return {

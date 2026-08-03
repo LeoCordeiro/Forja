@@ -69,7 +69,13 @@ export const COMPOSTOS = [
   'Remada máquina',
   'Remada alta na máquina',
   'Agachamento no smith',
-  'Crossover na polia baixa',
+  // Era 'Crossover na polia baixa'. Nome de crucifixo, demonstração de supino
+  // (`Cable_Chest_Press`) e classificação de composto — três identidades para o
+  // mesmo item, com um `Crossover na polia` de verdade no catálogo ao lado. O
+  // que a imagem mostra é um supino na polia, então foi o nome que cedeu: ele
+  // continua composto (empurra com ombro e cotovelo), e o crossover volta a ser
+  // só o crucifixo, isolador, com a prescrição de isolador.
+  'Supino na polia',
   'Puxada assistida no graviton',
   'Barra fixa negativa',
 ];
@@ -283,22 +289,39 @@ export function padraoDe(nome: string, grupo: string): string {
   const n = nome.toLowerCase();
   if (grupo === 'costas') {
     if (/remada/.test(n)) return 'horizontal';
+    // Pulldown de braço estendido é EXTENSÃO DE OMBRO: o cotovelo não dobra, o
+    // bíceps não entra. Caía em 'vertical' pelo regex do pulldown e ocupava a
+    // vaga da puxada de verdade — dois movimentos diferentes contados como um.
+    if (/braço estendido|braco estendido|pullover/.test(n)) return 'extensao_ombro';
     if (/puxada|barra fixa|pulldown/.test(n)) return 'vertical';
-    return 'extensao';
+    if (/terra|hiperexten|bom dia/.test(n)) return 'lombar';
+    return 'outro';
   }
   if (grupo === 'peito') {
     if (/crucifixo|voador|crossover/.test(n)) return 'abertura';
+    if (/mergulho/.test(n)) return 'mergulho';
+    // Toda flexão é a mesma flexão com o corpo em outra inclinação. Três delas
+    // na sessão são o mesmo movimento três vezes, não três estímulos — e era
+    // assim que 'reto' virava o balde onde caíam supino de máquina, de smith,
+    // de barra e flexão, quatro exercícios que o algoritmo via como distintos.
+    if (/flex[ãa]o/.test(n)) return 'horizontal';
     if (/inclinad/.test(n)) return 'inclinado';
-    return 'reto';
+    return 'horizontal';
   }
   if (grupo === 'ombro') {
     if (/lateral/.test(n)) return 'lateral';
     if (/invers|face pull|posterior/.test(n)) return 'posterior';
+    if (/frontal/.test(n)) return 'frontal';
+    if (/remada alta/.test(n)) return 'alta';
     return 'desenvolvimento';
   }
   if (grupo === 'quadriceps') {
+    // Extensora é monoarticular: separá-la da prensa é o que impede leg press,
+    // hack e extensora entrarem como se fossem três variações da mesma coisa.
+    if (/extensora/.test(n)) return 'extensao_joelho';
     if (/afundo|búlgaro|bulgaro|subida|passada|caminhand/.test(n)) return 'unilateral';
-    if (/leg press|extensora|hack|cadeira/.test(n)) return 'maquina';
+    if (/leg press|hack/.test(n)) return 'prensa';
+    if (/adutora/.test(n)) return 'aducao';
     return 'agachamento';
   }
   if (grupo === 'posterior') {
@@ -315,15 +338,64 @@ export function padraoDe(nome: string, grupo: string): string {
   // inversa mudam a pegada.
   if (grupo === 'biceps') {
     if (/martelo|invers/.test(n)) return 'pegada';
-    if (/scott|concentrada|alta/.test(n)) return 'apoiada';
+    if (/scott|concentrada/.test(n)) return 'apoiada';
+    if (/polia alta|inclinad/.test(n)) return 'alongada';
     return 'livre';
   }
   if (grupo === 'triceps') {
-    if (/testa|franc/.test(n)) return 'acima';
     if (/mergulho|supino fechado/.test(n)) return 'composto';
+    if (/testa|franc/.test(n)) return 'acima';
+    if (/coice|kickback/.test(n)) return 'coice';
     return 'polia';
   }
+  // Panturrilha: joelho estendido carrega o gastrocnêmio, joelho fletido isola
+  // o sóleo. Sem essa separação as sete panturrilhas do catálogo eram um padrão
+  // só, e o preenchedor de tempo empilhava três delas na mesma sessão.
+  if (grupo === 'panturrilha') {
+    if (/sentad/.test(n)) return 'joelho_fletido';
+    return 'joelho_estendido';
+  }
+  if (grupo === 'abdomen') {
+    if (/lateral|twist|obl[íi]qu/.test(n)) return 'rotacao';
+    if (/prancha/.test(n)) return 'antiextensao';
+    if (/infra|eleva[çc][ãa]o de pernas|escalador/.test(n)) return 'infra';
+    return 'supra';
+  }
+  if (grupo === 'trapezio') {
+    if (/remada alta|puxada alta/.test(n)) return 'alta';
+    return 'encolhimento';
+  }
   return 'outro';
+}
+
+/**
+ * Perfil de resistência — ONDE a carga é máxima ao longo da amplitude.
+ *
+ * ── Por que é uma pergunta diferente de "qual padrão de movimento" ────────
+ *
+ * Supino com barra e supino na polia são o mesmo padrão (empurrar horizontal) e
+ * não são o mesmo estímulo: na barra a carga desaparece no topo e é máxima no
+ * meio; no cabo ela é constante; na máquina a came decide. É isso — e só isso —
+ * que justifica dois exercícios do MESMO padrão na mesma sessão.
+ *
+ * Sem essa distinção, "dois exercícios por padrão" vira licença para supino de
+ * máquina e supino de smith juntos, que é a repetição que o teto deveria
+ * impedir. Com ela, o segundo exercício de um padrão só entra quando traz uma
+ * curva de resistência que o primeiro não tem.
+ *
+ * O equipamento do catálogo é a fonte quando existe; o nome é o plano B, para
+ * quem chama a função sem a linha do banco na mão.
+ */
+export function perfilDeResistencia(nome: string, equipamento?: string | null): string {
+  if (equipamento) return equipamento === 'livre' ? 'corporal' : equipamento;
+  const n = nome.toLowerCase();
+  if (/polia|cabo|crossover|corda|graviton/.test(n)) return 'cabo';
+  if (/m[áa]quina|smith|voador|peck|leg press|hack|mesa |cadeira |extensora|flexora/.test(n))
+    return 'maquina';
+  if (/halter/.test(n)) return 'halter';
+  if (/barra fixa|flex[ãa]o|mergulho|prancha|abdominal|ponte/.test(n)) return 'corporal';
+  if (/barra/.test(n)) return 'barra';
+  return 'corporal';
 }
 
 /**

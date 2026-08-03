@@ -418,9 +418,14 @@ export const EXERCICIOS: L[] = [
   ['Supino máquina no smith','peito','triceps,ombro','maquina','peso_reps','Smith_Machine_Bench_Press',
    'Banco centralizado sob a barra guiada.|Desça até a linha do mamilo.|Empurre travando o quadril no banco.',
    'O smith segura o equilíbrio: bom substituto do supino livre quando não há quem observe a série.'],
-  ['Crossover na polia baixa','peito','ombro','cabo','peso_reps','Cable_Chest_Press',
-   'Polias na altura do quadril, um pé à frente.|Junte as mãos à frente do peito.|Volte devagar até sentir o alongamento.',
-   'A tensão continua no fim do movimento, coisa que halter não faz — no crucifixo o peso alivia justo quando as mãos se juntam.'],
+  // Chamava-se "Crossover na polia baixa" e não era um crossover: a
+  // demonstração (`Cable_Chest_Press`) é um SUPINO na polia, o cotovelo estende
+  // e a classificação já dizia composto. Com o nome de crucifixo ele virava o
+  // gêmeo confuso do "Crossover na polia" que existe logo acima — dois nomes
+  // quase iguais, prescrições opostas, na mesma tela.
+  ['Supino na polia','peito','triceps,ombro','cabo','peso_reps','Cable_Chest_Press',
+   'Polias na altura do peito, um pé à frente para estabilizar.|Empurre as mãos para a frente até quase estender o cotovelo.|Volte devagar até sentir o peito alongar.',
+   'A tensão não some no fim do movimento, coisa que barra e halter não fazem — é a vantagem do cabo sobre o supino comum.'],
   ['Desenvolvimento máquina','ombro','triceps','maquina','peso_reps','Leverage_Shoulder_Press',
    'Costas apoiadas, pegada na altura das orelhas.|Empurre para cima sem travar o cotovelo.|Desça até o cotovelo passar de 90°.',
    'Tira a estabilização do core da conta e deixa o ombro receber toda a carga.'],

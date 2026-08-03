@@ -179,5 +179,77 @@ conferir('exercício novo nasceu com descanso definido', semDescanso.length === 
 await normalizar(adaptar(antigo));
 conferir('rodar de novo não duplica nada', conta() === EXERCICIOS.length, `${conta()}`);
 
+// ── 6. Exercício renomeado: e quem já está com o banco montado? ────────────
+//
+// "Crossover na polia baixa" tinha nome de crucifixo e demonstração de supino.
+// Corrigir só o seed não conserta banco nenhum: `completarCatalogo` casa por
+// NOME, então o nome novo entraria como linha nova e a errada ficaria do lado,
+// com todo o histórico preso nela.
+//
+// A correção renomeia PELO ID. Este teste existe para provar as duas metades
+// disso: o nome/imagem/texto mudam e `set_logs`, `personal_records` e
+// `routine_exercises` continuam apontando para a mesma linha.
+console.log('\n6. Exercício renomeado sem perder histórico');
+const comHistorico = new DatabaseSync(':memory:');
+comHistorico.exec(DDL);
+await aplicarMigracoes(adaptar(comHistorico));
+
+comHistorico
+  .prepare(
+    `INSERT INTO exercises (nome, grupo_primario, grupos_secundarios, equipamento, tipo_carga, media_url)
+     VALUES ('Crossover na polia baixa','peito','ombro','cabo','peso_reps','.../Cable_Chest_Press')`
+  )
+  .run();
+const exId = comHistorico.prepare(`SELECT id FROM exercises WHERE nome LIKE 'Crossover na polia baixa'`).get().id;
+
+comHistorico.prepare(`INSERT INTO routines (nome, ativa, criado_em) VALUES ('Meu treino',1,0)`).run();
+comHistorico.prepare(`INSERT INTO routine_days (routine_id, nome, ordem) VALUES (1,'A',0)`).run();
+comHistorico
+  .prepare(
+    `INSERT INTO routine_exercises (routine_day_id, exercise_id, ordem, series_alvo, descanso_seg)
+     VALUES (1,?,0,3,150)`
+  )
+  .run(exId);
+comHistorico
+  .prepare(`INSERT INTO workout_sessions (nome, iniciado_em) VALUES ('A — Peito e tríceps', 0)`)
+  .run();
+comHistorico
+  .prepare(
+    `INSERT INTO set_logs (session_id, exercise_id, serie_index, peso_kg, reps, registrado_em)
+     VALUES (1,?,1,40,10,0)`
+  )
+  .run(exId);
+comHistorico
+  .prepare(
+    `INSERT INTO personal_records (exercise_id, tipo, valor, atingido_em) VALUES (?,'carga_max',40,0)`
+  )
+  .run(exId);
+
+await normalizar(adaptar(comHistorico));
+
+const renomeado = comHistorico.prepare('SELECT * FROM exercises WHERE id = ?').get(exId);
+conferir('o nome errado sumiu do catálogo',
+  !comHistorico.prepare(`SELECT id FROM exercises WHERE nome = 'Crossover na polia baixa'`).get());
+conferir('virou "Supino na polia" NA MESMA LINHA', renomeado.nome === 'Supino na polia',
+  `id ${exId} → ${renomeado.nome}`);
+conferir('a demonstração continua sendo a do supino na polia',
+  (renomeado.media_url ?? '').includes('Cable_Chest_Press'));
+conferir('o secundário virou tríceps (é um empurrão, não um crucifixo)',
+  (renomeado.grupos_secundarios ?? '').includes('triceps'), renomeado.grupos_secundarios);
+
+const histIntacto = (t) =>
+  comHistorico.prepare(`SELECT COUNT(*) AS n FROM ${t} WHERE exercise_id = ?`).get(exId).n;
+conferir('set_logs preservado', histIntacto('set_logs') === 1, `${histIntacto('set_logs')} série(s)`);
+conferir('personal_records preservado', histIntacto('personal_records') === 1);
+conferir('routine_exercises preservado', histIntacto('routine_exercises') === 1);
+conferir('o catálogo não ganhou linha duplicada',
+  comHistorico.prepare(`SELECT COUNT(*) AS n FROM exercises WHERE nome = 'Supino na polia'`).get().n === 1);
+
+// Idempotente: a segunda abertura do banco não pode mexer em mais nada.
+await normalizar(adaptar(comHistorico));
+conferir('rodar de novo é inofensivo',
+  comHistorico.prepare(`SELECT COUNT(*) AS n FROM exercises WHERE nome = 'Supino na polia'`).get().n === 1 &&
+    histIntacto('set_logs') === 1);
+
 console.log(falhas ? `\n${falhas} falha(s)\n` : '\nTudo passou\n');
 process.exit(falhas ? 1 : 0);
