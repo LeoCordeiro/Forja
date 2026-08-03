@@ -327,6 +327,13 @@ const diretasDoDia = (d) => {
 
 const chave = (e) => `${e.grupo}:${padraoDe(e.nome, e.grupo)}`;
 
+/** Como o aviso escreve o nome do grupo — para conferir o texto entregue. */
+const COMO_SE_FALA_T = {
+  peito: 'peito', costas: 'costas', ombro: 'ombro', biceps: 'bíceps',
+  triceps: 'tríceps', quadriceps: 'quadríceps', posterior: 'posterior de coxa',
+  gluteo: 'glúteo', panturrilha: 'panturrilha', abdomen: 'abdômen',
+};
+
 /** Cenários que cobrem experiência, dias, local, foco e preferência. */
 const CENARIOS = [
   { nome: 'iniciante 3 dias', p: { ...base, dias: 3, diasDisponiveis: [1, 3, 5], experiencia: 'iniciante' } },
@@ -345,6 +352,13 @@ const CENARIOS = [
   { nome: 'foco inferior 4 dias', p: { ...base, dias: 4, focos: ['inferior'] } },
   { nome: 'foco glúteo 6 dias 90 min', p: { ...base, dias: 6, diasDisponiveis: [1, 2, 3, 4, 5, 6], focos: ['gluteo'], minutosPorDia: [90, 90, 90, 90, 90, 90, 90] } },
   { nome: 'avançado 4 dias 120 min', p: { ...base, experiencia: 'avancado', minutosPorDia: [120, 120, 120, 120, 120, 120, 120] } },
+  // Os quatro perfis do cross-review. Estão nomeados porque cada um pegou um
+  // defeito que os cenários acima não alcançavam — mantê-los aqui é o que
+  // impede o defeito de voltar em silêncio.
+  { nome: 'qa: foco ombro 3d/120min', p: { ...base, dias: 3, diasDisponiveis: [1, 3, 5], focos: ['ombro'], minutosPorDia: Array(7).fill(120) } },
+  { nome: 'qa: foco inferior 4d/120min livre/dor joelho', p: { ...base, experiencia: 'avancado', focos: ['inferior'], minutosPorDia: Array(7).fill(120), preferenciaEquipamento: 'livre', dores: ['joelho'] } },
+  { nome: 'qa: superior 6d/120min casa/dor lombar', p: { ...base, dias: 6, diasDisponiveis: [1, 2, 3, 4, 5, 6], focos: ['superior'], local: 'casa_simples', minutosPorDia: Array(7).fill(120), dores: ['lombar'] } },
+  { nome: 'qa: inferior 3d/45min casa', p: { ...base, dias: 3, diasDisponiveis: [1, 3, 5], focos: ['inferior'], local: 'casa_simples', minutosPorDia: Array(7).fill(45) } },
 ];
 
 const planos = [];
@@ -361,12 +375,22 @@ for (const { nome, plano } of planos) {
   for (const d of plano.dias) {
     const frac = fracionadoDoDia(d);
     const diretas = diretasDoDia(d);
+    const exsDoGrupo = (g) => d.exercicios.filter((e) => e.grupo === g).length;
     for (const [g, v] of Object.entries(frac)) {
-      // Grupo sem NENHUM trabalho direto na sessão só recebe respingo de
-      // composto alheio: não há série própria para cortar sem destruir o dono
-      // do composto, e isso o aviso de excesso indireto já cobre.
-      if (!diretas[g]) continue;
-      if (v > tetoSessao(g)) estouros.push(`${d.nome}/${g}=${v}`);
+      if (v <= tetoSessao(g)) continue;
+      // A ÚNICA exceção — e é a que a função de fato entrega, não a que seria
+      // conveniente supor. O grupo já está no mínimo: um exercício só, no piso
+      // de 2 séries. Aí o excesso é indireto de verdade (duas séries diretas
+      // não explicam um total de 10,5) e tirar o último exercício apagaria o
+      // grupo da sessão sem consertar nada.
+      //
+      // A versão anterior isentava todo grupo com `!diretas[g]`, ou seja,
+      // assumia exatamente a condição que o código NÃO cumpria: `ombro=15,5
+      // com 6 diretas em 3 exercícios` passava batido porque nenhum dos 9
+      // cenários caía nesse perfil. Era o teste prometendo garantia que a
+      // função não dava — a lição que originou esta fase.
+      if (exsDoGrupo(g) <= 1 && (diretas[g] ?? 0) <= 2) continue;
+      estouros.push(`${d.nome}/${g}=${v} (diretas ${diretas[g] ?? 0}, exs ${exsDoGrupo(g)})`);
     }
   }
   ok(`${nome}: nenhuma sessão acima do teto`, !estouros.length, estouros.join(', '));
@@ -536,6 +560,165 @@ console.log(
       .map((e) => `     ${e.nome} — ${e.series}×${e.repsMin}-${e.repsMax}, ${e.descanso}s [${chave(e)}]`)
       .join('\n')
 );
+
+// ── 14. Séries por exercício (B2) ─────────────────────────────────────────
+//
+// O teto por padrão, sozinho, trocou um defeito por outro: recusando exercício
+// redundante ele encolheu `quantos`, e `base = floor(naSessao / quantos)`
+// continuou dividindo o MESMO volume entre menos exercícios. Resultado medido
+// numa grade de 1.350 perfis: exercício com 5+ séries saltou de 497 para 1.272.
+// B2 é explícito — "3-4 séries por exercício; nunca de 1-2, nunca de 5+".
+console.log('\n14. Séries por exercício (teto de 4, B2)');
+for (const { nome, plano } of planos) {
+  const empilhados = [];
+  for (const d of plano.dias) {
+    for (const e of d.exercicios) {
+      if (e.grupo === 'cardio') continue;
+      if (e.series > 4) empilhados.push(`${d.nome}: ${e.series}x ${e.nome}`);
+    }
+  }
+  ok(`${nome}: nenhum exercício acima de 4 séries`, !empilhados.length, empilhados.join(' | '));
+}
+
+// ── 15. Grupo grande apagado da semana pelo relógio ───────────────────────
+//
+// O dia D do split com foco superior passou a abrir com peito/costas e o corte
+// por tempo apara do fim: uma agenda de 30 min terminava sem NENHUMA série
+// direta de ombro na semana. Pior, o aviso de excesso indireto — que rodava
+// antes do corte — dizia "ombro (27, sendo 12 diretas)" num plano com zero.
+//
+// A garantia possível não é "nunca some": com 30 min por sessão não cabe tudo,
+// e prometer o contrário seria mentir de novo. A garantia é que, quando some, o
+// plano DIZ. É a mesma régua do excesso indireto.
+console.log('\n15. Grupo grande que some da semana vem declarado');
+for (const cen of [
+  { nome: '4d/30min/foco peito/dor ombro', p: { ...base, dias: 4, diasDisponiveis: [1, 2, 4, 5], focos: ['peito'], experiencia: 'avancado', minutosPorDia: Array(7).fill(30), preferenciaEquipamento: 'maquina', dores: ['ombro'], objetivo: 'emagrecimento' } },
+  { nome: '4d/30min/sem foco', p: { ...base, minutosPorDia: Array(7).fill(30) } },
+  { nome: '5d/35min/foco superior', p: { ...base, dias: 5, diasDisponiveis: [1, 2, 3, 4, 5], focos: ['superior'], minutosPorDia: Array(7).fill(35) } },
+  { nome: '6d/30min/avancado', p: { ...base, dias: 6, diasDisponiveis: [1, 2, 3, 4, 5, 6], experiencia: 'avancado', minutosPorDia: Array(7).fill(30) } },
+]) {
+  const plano = await montarPlano(cen.p, fonte);
+  const direto = {};
+  for (const d of plano.dias)
+    for (const e of d.exercicios) if (e.grupo !== 'cardio') direto[e.grupo] = (direto[e.grupo] ?? 0) + e.series;
+
+  const sumiram = GRANDES_T.filter((g) => !(direto[g] > 0));
+  const declarado = plano.avisos.some((a) => a.includes('NENHUMA série direta na semana'));
+  ok(
+    `${cen.nome}: grupo grande que some vem declarado`,
+    !sumiram.length || declarado,
+    sumiram.length ? `sumiu: ${sumiram.join(', ')} — declarado: ${declarado}` : 'nenhum sumiu'
+  );
+
+  // E o aviso de excesso indireto não pode afirmar que sobra volume num grupo
+  // que ficou em zero: ele roda depois do corte justamente para não mentir.
+  const mente = plano.avisos.some(
+    (a) => a.includes('passa do alvo por causa dos compostos') &&
+      sumiram.some((g) => a.includes(COMO_SE_FALA_T[g] ?? g))
+  );
+  ok(`${cen.nome}: nenhum aviso diz que sobra o que está em zero`, !mente);
+}
+
+// ── 16. Os mesmos invariantes numa GRADE de perfis ────────────────────────
+//
+// Por que existe, se as seções 9, 10 e 14 já checam isso: elas checam em
+// cenários escolhidos a dedo, e cenário escolhido a dedo é exatamente como um
+// defeito real passa. O cross-review provou: as asserções novas de séries por
+// exercício e de teto por sessão PASSARAM contra o código defeituoso, porque
+// nenhum dos 9 cenários caía nos perfis que quebravam.
+//
+// Aqui a mesma régua roda numa grade de várias centenas de perfis, cobrindo
+// dias × experiência × minutos × local × preferência × foco. Reporta contagem e
+// o primeiro infrator de cada tipo — sem isso o próximo teto novo volta a ser
+// verificado só onde já se sabe que funciona.
+console.log('\n16. Invariantes de sessão numa grade de perfis');
+{
+  const DIAS = [1, 2, 3, 4, 5, 6];
+  const EXP = ['iniciante', 'intermediario', 'avancado'];
+  const MIN = [30, 45, 60, 90, 120];
+  const LOC = ['academia', 'academia_rede', 'academia_simples', 'casa_halteres', 'casa_simples'];
+  const PREF = ['maquina', 'livre', 'indiferente'];
+  const FOC = [[], ['peito'], ['costas'], ['ombro'], ['gluteo'], ['superior'], ['inferior']];
+  const OBJ = ['hipertrofia', 'recomposicao', 'emagrecimento'];
+  const DOR = [[], ['ombro'], ['joelho'], ['lombar']];
+
+  const grade = [];
+  let i = 0;
+  for (const dias of DIAS)
+    for (const experiencia of EXP)
+      for (const minutos of MIN)
+        for (const local of LOC)
+          for (const preferenciaEquipamento of PREF) {
+            grade.push({
+              dias,
+              diasDisponiveis: [1, 2, 3, 4, 5, 6].slice(0, dias),
+              minutosPorDia: Array(7).fill(minutos),
+              experiencia, local, preferenciaEquipamento,
+              focos: FOC[i % FOC.length],
+              objetivo: OBJ[i % OBJ.length],
+              dores: DOR[i % DOR.length],
+              barraFixaReps: [-1, 0, 3, 5, 8, 12][i % 6],
+            });
+            i++;
+          }
+
+  let empilhados = 0, acimaDoTeto = 0, padraoDemais = 0, sumiuSemAviso = 0;
+  const amostra = { empilhado: '', teto: '', padrao: '', sumiu: '' };
+
+  for (const p of grade) {
+    const plano = await montarPlano(p, fonte);
+    const rot = `${p.dias}d/${p.experiencia}/${p.minutosPorDia[1]}min/${p.local}/${p.preferenciaEquipamento}/foco=${p.focos.join('+') || 'nenhum'}`;
+    const direto = {};
+
+    for (const d of plano.dias) {
+      const frac = fracionadoDoDia(d);
+      const dir = diretasDoDia(d);
+      const conta = {};
+      for (const e of d.exercicios) {
+        if (e.grupo === 'cardio') continue;
+        direto[e.grupo] = (direto[e.grupo] ?? 0) + e.series;
+        conta[chave(e)] = (conta[chave(e)] ?? 0) + 1;
+        if (e.series > 4) {
+          empilhados++;
+          amostra.empilhado ||= `${rot} | ${d.nome} | ${e.series}x ${e.nome}`;
+        }
+      }
+      for (const [k, n] of Object.entries(conta))
+        if (n > 2) { padraoDemais++; amostra.padrao ||= `${rot} | ${d.nome} | ${k}=${n}`; }
+
+      for (const [g, v] of Object.entries(frac)) {
+        if (v <= tetoSessao(g)) continue;
+        const exs = d.exercicios.filter((e) => e.grupo === g).length;
+        if (exs <= 1 && (dir[g] ?? 0) <= 2) continue; // exceção declarada
+        acimaDoTeto++;
+        amostra.teto ||= `${rot} | ${d.nome} | ${g}=${v}/${tetoSessao(g)} (diretas ${dir[g] ?? 0}, exs ${exs})`;
+      }
+    }
+
+    // Grupo ausente só conta se a DIVISÃO o previa e o relógio o apagou.
+    //
+    // A divisão de 1 dia não prevê posterior nem glúteo — isso é o teto do que
+    // 1 dia permite, `divisaoDe` já explica, e exigir aviso ali seria cobrar
+    // ruído. A pergunta certa é: com tempo folgado o grupo aparecia? Se sim e
+    // agora não, foi o corte por tempo, e é isso que precisa estar escrito.
+    const sumiram = GRANDES_T.filter((g) => !(direto[g] > 0));
+    if (sumiram.length) {
+      const folgado = await montarPlano({ ...p, minutosPorDia: Array(7).fill(150) }, fonte);
+      const previstos = new Set(folgado.dias.flatMap((d) => d.exercicios.map((e) => e.grupo)));
+      const apagados = sumiram.filter((g) => previstos.has(g));
+      if (apagados.length && !plano.avisos.some((a) => a.includes('NENHUMA série direta na semana'))) {
+        sumiuSemAviso++;
+        amostra.sumiu ||= `${rot} | sem ${apagados.join(',')}`;
+      }
+    }
+  }
+
+  console.log(`   grade: ${grade.length} perfis`);
+  ok('nenhum exercício acima de 4 séries', empilhados === 0, `${empilhados} — ${amostra.empilhado}`);
+  ok('nenhuma sessão acima do teto fora da exceção', acimaDoTeto === 0, `${acimaDoTeto} — ${amostra.teto}`);
+  ok('nenhuma sessão com 3+ exercícios do mesmo padrão', padraoDemais === 0, `${padraoDemais} — ${amostra.padrao}`);
+  ok('grupo grande que some sempre vem declarado', sumiuSemAviso === 0, `${sumiuSemAviso} — ${amostra.sumiu}`);
+}
 
 console.log(falhas ? `\n${falhas} falha(s)\n` : '\nTudo passou\n');
 process.exit(falhas ? 1 : 0);

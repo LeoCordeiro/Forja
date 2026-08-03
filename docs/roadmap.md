@@ -165,6 +165,48 @@ completo, C Costas e bíceps, D Superior misto — idêntico ao que o harness
 prevê. Rotinas antigas continuam no banco com `ativa = 0` (a tela mostra
 "nada é apagado" e o histórico segue intacto). Zero erro de console.
 
+## Correção do cross-review de G1 (03/08/2026)
+
+O qa reprovou 3 achados em `ee543d2`, já em produção. Corrigidos na working tree.
+
+**ALTO-1 — a correção trocou redundância de padrão por empilhamento de série.**
+Recusar exercício redundante encolheu `quantos`, e `base = floor(naSessao /
+quantos)` continuou dividindo o mesmo volume entre menos exercícios. Numa grade
+de 1.350 perfis, exercício com 5+ séries foi de **497 (pré-G1) para 1.272**
+(2,6×) — pior que antes de G1. Corrigido em três pontos, porque cada um cria
+série por um caminho diferente: montagem, `consolidar` (que chegava a colapsar
+um grupo em UM exercício de 10 séries) e o passo final. Amplificador estrutural
+também corrigido: `posterior` e `gluteo` tinham 2 padrões cada contra 5 do
+quadríceps, o que dava teto efetivo de 4 exercícios por sessão e concentrava o
+empilhamento no dia de perna. Agora 6 e 5 padrões. De quebra, `coice` estava
+classificado como abdução — é extensão de quadril.
+**Medido: 1.272 → 0 (pré-G1 era 497).**
+
+**ALTO-2 — o teste prometia garantia que a função não dava.** `aparaUmaVezNaSessao`
+exigia que a remoção resolvesse o excesso inteiro (`excesso <= ultimo.series`) e
+desistia com 6 séries diretas na mesa. Escolhida a saída (a): **corte parcial** —
+remove o último exercício mesmo sem zerar o excesso, em passos, nunca abaixo de
+um exercício. A asserção declara a ÚNICA exceção que sobra e que o código de
+fato entrega: grupo com um exercício só, no piso de 2 séries. A exceção anterior
+(`if (!diretas[g]) continue`) presumia justamente a condição que o código não
+cumpria. **Medido: 4 → 0 sessões acima do teto fora da exceção.**
+
+**MÉDIO-1 — grupo grande sumindo da semana sem ninguém dizer.** `avisarExcessoIndireto`
+rodava ANTES do corte por tempo e por isso mentia: um perfil de 30 min terminava
+com zero série direta de ombro e o aviso dizia "ombro (27, sendo 12 diretas) —
+passa do alvo". Movido para o fim do pipeline, junto com um aviso novo que nomeia
+o grupo apagado pelo relógio. O dia D do split com foco superior também passou a
+abrir com ombro (é o grupo cuja segunda dose só existe ali). **A garantia não é
+"nunca some"** — com 30 min não cabe tudo, e prometer o contrário seria mentir de
+novo: a garantia é que, quando some, o plano diz.
+
+**O gate, de novo — e ele pegou o próprio remendo.** As asserções novas foram
+rodadas contra `ee543d2` e **passaram**, porque rodavam só nos 9 cenários
+nomeados: exatamente a crítica do qa. Foi preciso levar os invariantes para uma
+**grade de 1.350 perfis** (seção 16) e trazer os 4 perfis do qa para a lista
+nomeada. Só então falharam contra produção — **9 falhas** — e passaram com a
+correção. Nenhuma asserção existente foi afrouxada.
+
 ## Validação da fase 2 (31/07/2026)
 
 Working tree, sem commit. `tsc --noEmit` limpo (3×, a última no re-review do qa).
@@ -295,3 +337,23 @@ De G1 (03/08 — achados encontrados durante a implementação, nenhum virou có
     de classificação — a lista e o `padraoDe` concordam. Mexer muda descanso e
     ordem no programa inteiro: é decisão de prescrição, cabe em G2 junto da
     inversão de `descansoCorreto`, com teste de descanso no mesmo commit.
+
+Do cross-review do qa (03/08 — deixados fora da correção de propósito):
+
+17. **O aviso de sobra atribui à recuperação o que é limite estrutural** (M2):
+    "todo grupo já está no volume que a recuperação acompanha" também sai quando
+    o que travou foi o teto por padrão ou a falta de exercício no local — ou
+    seja, limite de catálogo/estrutura, não de fisiologia. O texto precisa
+    distinguir os dois casos; hoje ele afirma o mais tranquilizador dos dois.
+18. **Piso de 2 séries por exercício não é garantido** (M3): o teto de 4 virou
+    regra dura no passo final, o piso de 2 continua sendo só convenção de quem
+    cria série. B2 pede os dois lados ("nunca de 1-2, nunca de 5+").
+19. **O rename desiste se já existir `Supino na polia`** (B1): `renomearExercicios`
+    pula quando o nome novo já está no banco, para não fundir históricos. Quem
+    tiver criado um exercício com esse nome na mão fica com os dois. Conservador
+    de propósito, mas o usuário não é avisado.
+20. **Estabilidade de `Array.prototype.sort` no Hermes não foi verificada** (B2):
+    `ordenarPorPapelNoDia` depende de sort estável para manter o composto
+    principal na posição 1 do bloco. É garantido pela spec desde ES2019 e
+    verificado no V8 (web), não no Hermes do build nativo. Se o app for para
+    build nativo, conferir antes.

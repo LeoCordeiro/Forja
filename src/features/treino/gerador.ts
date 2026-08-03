@@ -202,6 +202,26 @@ const tetoDaSessao = (grupo: string) =>
 const MAX_EXERCICIOS_POR_PADRAO = 2;
 const tetoDoPadrao = (grupo: string) => (PEQUENOS.includes(grupo as Grupo) ? 6 : 8);
 
+/**
+ * Teto de séries de UM exercício. B2: "3-4 por exercício; nunca 1-2, nunca 5+".
+ *
+ * ── O buraco que ele fecha (e que o teto por padrão abriu) ───────────────
+ *
+ * Quando a seleção passou a recusar exercício redundante, `quantos` encolheu —
+ * mas `base = floor(naSessao / quantos)` continuou dividindo o MESMO volume
+ * entre menos exercícios. Trocou-se redundância de padrão por empilhamento de
+ * série: 8 séries de flexão nórdica num dia, 8 de flexão pique em outro. O teto
+ * de 4 que já existia em `preencherTempo` só barrava ACRÉSCIMO, e `consolidar`
+ * chegava a colapsar um grupo inteiro num exercício só de 10 séries.
+ *
+ * A partir da quinta série o mesmo movimento rende cada vez menos; o volume que
+ * não cabe em exercício distinto não deve virar série empilhada — ele
+ * simplesmente não entra, e a sobra é declarada. Aplicado em três pontos: na
+ * montagem, na consolidação e no passo final, porque cada um deles sabe criar
+ * série por um caminho diferente.
+ */
+const MAX_SERIES_POR_EXERCICIO = 4;
+
 const VOLUME_POR_EXPERIENCIA: Record<string, number> = {
   iniciante: 10,
   intermediario: 14,
@@ -308,7 +328,11 @@ const SPLITS_FOCO: Record<'superior' | 'inferior', Record<number, ModeloDia[]>> 
       { nome: 'A — Peito e tríceps', cor: COR.empurrar, grupos: ['peito', 'triceps', 'ombro'] },
       { nome: 'B — Inferior completo', cor: COR.perna, grupos: ['quadriceps', 'posterior', 'gluteo', 'panturrilha'] },
       { nome: 'C — Costas e bíceps', cor: COR.puxar, grupos: ['costas', 'biceps', 'trapezio'] },
-      { nome: 'D — Superior misto', cor: COR.ombro, grupos: ['peito', 'costas', 'ombro', 'triceps', 'biceps'] },
+      // Ombro ABRE o dia D. Ele é o grupo cuja segunda dose só existe aqui, e
+      // o corte por tempo apara do fim: com ombro em terceiro, uma agenda de 30
+      // min apagava o grupo da semana inteira. Peito e costas têm o dia próprio
+      // (A e C) para cair de volta; o ombro não tem.
+      { nome: 'D — Superior misto', cor: COR.ombro, grupos: ['ombro', 'peito', 'costas', 'triceps', 'biceps'] },
     ],
     5: [
       { nome: 'A — Peito e tríceps', cor: COR.empurrar, grupos: ['peito', 'triceps', 'ombro'] },
@@ -1037,7 +1061,10 @@ export async function montarPlano(
       const escolhidos = porPapel(selecionados);
       for (let i = 0; i < quantos; i++) {
         const e = escolhidos[i];
-        const porExercicio = base + (i < resto ? 1 : 0);
+        // O teto por exercício vem DEPOIS da divisão, e o que passa dele é
+        // descartado de propósito: com poucos padrões disponíveis não há onde
+        // colocar o resto do volume sem repetir movimento nem empilhar série.
+        const porExercicio = Math.min(MAX_SERIES_POR_EXERCICIO, base + (i < resto ? 1 : 0));
         usadosNoDia.add(e.nome);
         const [rmin, rmax] = repsDe(e.nome, grupo, p.experiencia);
         exercicios.push({
@@ -1084,13 +1111,26 @@ export async function montarPlano(
   // alvo volta ao alvo, e os minutos que ele devolve são exatamente os que
   // evitam que o corte por tempo coma os acessórios do fim da sessão.
   aparExcesso(dias, p);
-  avisarExcessoIndireto(dias, p, avisos);
+  // O aviso de excesso indireto SAIU daqui, para o fim do pipeline.
+  //
+  // Aqui ele descrevia o plano antes do corte por tempo, e virava mentira: um
+  // perfil de 30 min terminava com ZERO série direta de ombro na semana e o
+  // aviso dizia "ombro (27, sendo 12 diretas) — passa do alvo". O usuário lia
+  // que sobra ombro numa semana que não tem ombro nenhum.
 
   // Piso por grupo: 70% do alvo. Abaixo disso o estímulo daquele músculo deixa
   // de valer a pena, e é preferível a sessão passar um pouco do tempo.
   const volumeAtual = contarVolume(dias);
   const pisos: Record<string, number> = {};
   for (const g of Object.keys(volumeAtual)) pisos[g] = alvoSemanal(g as Grupo, p) * 0.7;
+
+  // Quais grupos grandes a divisão PREVIA antes de o relógio entrar na conta.
+  // É o único jeito de saber, no fim, se um grupo saiu inteiro por falta de
+  // tempo — depois do corte ele simplesmente não está lá, e a ausência é
+  // indistinguível de "o split nunca previu".
+  const previstos = new Set(
+    Object.keys(diretasPorGrupo(dias)).filter((g) => !PEQUENOS.includes(g as Grupo))
+  );
 
   for (const d of dias) {
     const minutos = d.diaSemana !== null ? (p.minutosPorDia[d.diaSemana] ?? 60) : 60;
@@ -1119,9 +1159,10 @@ export async function montarPlano(
 
   for (const d of dias) d.minutos = emMinutos(estimarDuracao(paraEstimativa(d)).totalSeg);
 
-  // Depois do aparo, não antes: o aviso precisa declarar a sobra que de fato
-  // existe no plano entregue, e não a que existia antes de o teto cortar.
+  // Depois do aparo, não antes: os avisos precisam descrever o plano ENTREGUE.
   avisarSobraDeTempo(dias, p, avisos);
+  avisarExcessoIndireto(dias, p, avisos);
+  avisarGrupoApagado(dias, previstos, avisos);
 
   // Avisa só das substituições que APARECERAM no plano.
   //
@@ -1411,7 +1452,14 @@ function consolidar(dias: DiaGerado[]) {
       // ângulo diferente com 3 e 2 séries cobrem o músculo melhor. Colapsar em
       // um só era pior que o problema das 2 séries que a consolidação existe
       // para resolver.
-      const cabem = Math.max(1, Math.min(doGrupo.length, Math.round(total / MIN_SERIES)));
+      const porVolume = Math.min(doGrupo.length, Math.round(total / MIN_SERIES));
+      // ...mas nunca a ponto de estourar o teto por exercício. Com 10 séries e
+      // um exercício só, `round(10/3)` mandava consolidar tudo num movimento de
+      // 10 séries — o oposto do que a consolidação existe para fazer. Aqui ela
+      // é obrigada a manter exercícios suficientes para o resultado caber em 4
+      // séries cada, quando o grupo tem exercícios para isso.
+      const minimoPeloTeto = Math.min(doGrupo.length, Math.ceil(total / MAX_SERIES_POR_EXERCICIO));
+      const cabem = Math.max(1, porVolume, minimoPeloTeto);
       if (cabem >= doGrupo.length) continue;
 
       // Os que ficam são os primeiros: a ordem já reflete prioridade.
@@ -1422,7 +1470,7 @@ function consolidar(dias: DiaGerado[]) {
       const base = Math.floor(total / ficam.length);
       const resto = total % ficam.length;
       ficam.forEach((e, i) => {
-        e.series = Math.min(TETO_SERIES_SESSAO, base + (i < resto ? 1 : 0));
+        e.series = Math.min(MAX_SERIES_POR_EXERCICIO, base + (i < resto ? 1 : 0));
       });
     }
   }
@@ -1445,6 +1493,46 @@ function fracionadoNaSessao(d: DiaGerado): Record<string, number> {
     for (const s of e.secundarios) somar(s, e.series * 0.5);
   }
   return out;
+}
+
+/** Séries diretas por grupo na SEMANA. Volume indireto não entra. */
+function diretasPorGrupo(dias: DiaGerado[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const d of dias)
+    for (const e of d.exercicios) {
+      if (e.grupo === 'cardio') continue;
+      out[e.grupo] = (out[e.grupo] ?? 0) + e.series;
+    }
+  return out;
+}
+
+/**
+ * Diz quando um grupo grande sumiu da semana INTEIRA por falta de tempo.
+ *
+ * ── Por que não bastava o aviso de corte que já existe ───────────────────
+ *
+ * `cortarParaCaber` avisa "6 exercícios a menos para caber em 30 min" e
+ * "posterior ficou abaixo do mínimo semanal". Nenhum dos dois cobre o caso
+ * extremo: o grupo não ficou abaixo do mínimo, ele ficou em ZERO. Um perfil de
+ * 4 dias × 30 min terminava sem uma única série direta de ombro na semana e o
+ * plano não dizia isso em lugar nenhum — pior, o aviso de excesso indireto
+ * chegava a afirmar que sobrava ombro.
+ *
+ * Some do plano é diferente de sair enxuto, e é a única informação que faz a
+ * pessoa decidir arrumar dez minutos a mais ou um quarto dia.
+ */
+function avisarGrupoApagado(dias: DiaGerado[], previstos: Set<string>, avisos: string[]) {
+  const direto = diretasPorGrupo(dias);
+  const sumiram = [...previstos].filter((g) => !(direto[g] > 0));
+  if (!sumiram.length) return;
+
+  const nomes = sumiram.map((g) => COMO_SE_FALA[g] ?? g).join(', ');
+  avisos.push(
+    `${nomes} ficou sem NENHUMA série direta na semana: o tempo de cada sessão não deu para ` +
+      `chegar até ${sumiram.length > 1 ? 'esses grupos' : 'esse grupo'}. Não é escolha do plano, é ` +
+      `o limite do relógio — e é o tipo de buraco que não aparece sozinho depois de algumas ` +
+      `semanas. Dez minutos a mais por sessão, ou um dia a mais na semana, resolvem.`
+  );
 }
 
 /** Séries diretas por grupo no dia. */
@@ -1473,19 +1561,31 @@ function cortarUmaSerie(itens: DiaGerado['exercicios']): boolean {
  *
  * Três regras, na ordem em que importam:
  *
+ * 0. **Exercício acima de 4 séries.** O empilhamento que o teto por padrão
+ *    criou ao encolher o número de exercícios sem encolher o volume.
  * 1. **Exercício a mais no mesmo padrão.** Rede de segurança do que a seleção
  *    já garante — se um segundo supino do mesmo padrão e do mesmo perfil de
  *    resistência chegou até aqui por algum caminho, ele sai.
  * 2. **Grupo acima do teto fracionado** (12 grande / 10 pequeno). Corta série
- *    DIRETA, do exercício mais carregado para o menos, até o piso de 2.
+ *    DIRETA, do exercício mais carregado para o menos, até o piso de 2; depois
+ *    remove exercício do fim, **mesmo que a remoção não zere o excesso sozinha**.
  * 3. **Padrão acima do teto de séries** (8 grande / 6 pequeno).
  *
  * O que ele NÃO faz: cortar o composto de outro grupo para consertar o volume
  * indireto. Se o tríceps estoura por causa dos supinos, tirar supino destruiria
  * o peito — esse excesso é consequência de uma escolha feita por outro motivo, e
- * quem fala dele é `avisarExcessoIndireto`. Por isso o laço pode terminar com um
- * grupo ainda acima do teto: quando isso acontece, é indireto puro e não há
- * série própria para tirar.
+ * quem fala dele é `avisarExcessoIndireto`.
+ *
+ * ── A única saída com o grupo ainda acima do teto ────────────────────────
+ *
+ * O corte parcial (regra 2) foi acrescentado porque a versão anterior exigia
+ * que a remoção resolvesse o excesso inteiro (`excesso <= ultimo.series`) e por
+ * isso desistia com 6 séries diretas na mesa: um ombro de 15,5 num teto de 12
+ * ficava lá, e o teste da seção 9 prometia que isso não acontecia. Agora só
+ * existe UMA saída sem resolver, e ela é declarada no teste: quando o grupo
+ * chegou a **um único exercício no piso de 2 séries**. Aí o excesso é de fato
+ * indireto — duas séries diretas não explicam um total de 10,5 — e tirar o
+ * último exercício apagaria o grupo da sessão para não consertar nada.
  */
 function aplicarTetosDaSessao(dias: DiaGerado[], equip: Equipamentos) {
   for (const d of dias) {
@@ -1504,6 +1604,14 @@ function aparaUmaVezNaSessao(d: DiaGerado, equip: Equipamentos): boolean {
     d.exercicios = d.exercicios.filter((e) => !(e.grupo === alvo.grupo && e.nome === alvo.nome));
   };
 
+  // 0. Série empilhada num exercício só.
+  for (const e of forca) {
+    if (e.series > MAX_SERIES_POR_EXERCICIO) {
+      e.series -= 1;
+      return true;
+    }
+  }
+
   // 1. Padrão repetido além do teto.
   for (const g of grupos) {
     const doGrupo = forca.filter((e) => e.grupo === g);
@@ -1517,19 +1625,22 @@ function aparaUmaVezNaSessao(d: DiaGerado, equip: Equipamentos): boolean {
 
   // 2. Grupo acima do teto fracionado da sessão.
   const frac = fracionadoNaSessao(d);
-  const diretas = diretasNaSessao(d);
   for (const g of grupos) {
     const excesso = (frac[g] ?? 0) - tetoDaSessao(g);
     if (excesso <= 0) continue;
     const doGrupo = forca.filter((e) => e.grupo === g);
     if (cortarUmaSerie(doGrupo)) return true;
-    // Todas no piso e o grupo ainda estoura: só vale tirar um exercício se isso
-    // resolver. Tirar sem resolver seria perder trabalho direto para não
-    // consertar nada — e o que sobra é excesso indireto, que não se conserta
-    // aqui.
-    const ultimo = doGrupo[doGrupo.length - 1];
-    if (doGrupo.length > 1 && (diretas[g] ?? 0) > 2 && excesso <= ultimo.series) {
-      remover(ultimo);
+    // Todas no piso e o grupo ainda estoura: remove o último exercício do grupo
+    // — o menos prioritário — mesmo que a remoção sozinha não zere o excesso.
+    //
+    // A condição anterior era `excesso <= ultimo.series`, ou seja, "só remove se
+    // resolver de uma vez". Com três exercícios de 2 séries e excesso de 3,5,
+    // nenhuma remoção isolada resolvia e o laço desistia com o grupo 30% acima
+    // do teto. Em passos, resolve: cada remoção tira 2 diretas e o laço volta.
+    // Nunca abaixo de UM exercício, porque aí o que sobra é excesso indireto e
+    // apagar o grupo da sessão não conserta nada.
+    if (doGrupo.length > 1) {
+      remover(doGrupo[doGrupo.length - 1]);
       return true;
     }
   }

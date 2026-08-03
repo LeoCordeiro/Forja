@@ -324,13 +324,32 @@ export function padraoDe(nome: string, grupo: string): string {
     if (/adutora/.test(n)) return 'aducao';
     return 'agachamento';
   }
+  // Posterior e glúteo tinham DOIS padrões cada, contra cinco do quadríceps.
+  // Com teto de 2 exercícios por padrão, isso dava teto efetivo de 4 exercícios
+  // por sessão nesses grupos — e o volume que não cabia em exercício virava
+  // série empilhada no que sobrou (8 séries de flexão nórdica num dia só). O
+  // critério aqui é o mesmo dos outros grupos: o que muda o COMPRIMENTO em que
+  // o músculo recebe carga é padrão diferente.
   if (grupo === 'posterior') {
-    if (/flexora|nórdica|nordica|ham raise/.test(n)) return 'joelho';
+    // Dentro da flexão de joelho o ângulo do QUADRIL decide o comprimento do
+    // isquiotibial: sentado (quadril fletido) trabalha alongado, deitado
+    // (quadril estendido) trabalha encurtado. São estímulos diferentes.
+    if (/sentad|cadeira flexora/.test(n)) return 'joelho_sentado';
+    if (/nórdica|nordica|ham raise/.test(n)) return 'joelho_excentrico';
+    if (/flexora em p[ée]/.test(n)) return 'joelho_unilateral';
+    if (/flexora/.test(n)) return 'joelho_deitado';
+    if (/hiperexten/.test(n)) return 'lombar';
     return 'quadril';
   }
   if (grupo === 'gluteo') {
-    if (/abdu|coice|monster/.test(n)) return 'abducao';
-    return 'extensao';
+    if (/abdu|monster/.test(n)) return 'abducao';
+    // Coice é extensão de quadril, não abdução: estava no balde errado desde o
+    // começo, e o balde errado é o que faz dois movimentos diferentes disputarem
+    // a mesma vaga.
+    if (/coice/.test(n)) return 'extensao_unilateral';
+    if (/pull through|bom dia|stiff|romeno/.test(n)) return 'hinge';
+    if (/subida|afundo|b[úu]lgaro/.test(n)) return 'unilateral_em_pe';
+    return 'ponte';
   }
   // Braço também tem padrão, e ignorar isso deixava cinco séries da MESMA rosca
   // seguidas. O que muda entre eles é onde o músculo fica mais alongado: banco
