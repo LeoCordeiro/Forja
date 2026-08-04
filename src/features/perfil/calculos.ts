@@ -92,32 +92,18 @@ export function metaCalorica(gastoTotal: number, objetivo: Objetivo): number {
   return Math.round(gastoTotal);
 }
 
-/**
- * Divisão de macros.
- *
- * Proteína é calculada por peso corporal, não por percentual das calorias —
- * percentual faz a proteína despencar em dieta de déficit, justo quando ela
- * mais protege a massa magra. Gordura tem piso de 20% por questão hormonal.
- * O carboidrato fica com o que sobrar.
- */
-export function macros(kcalAlvo: number, pesoKg: number, objetivo: Objetivo): Macros {
-  const gPorKg =
-    objetivo === 'emagrecimento'
-      ? 2.2
-      : objetivo === 'recomposicao'
-        ? 2.4
-        : objetivo === 'hipertrofia'
-          ? 1.9
-          : 1.8;
-  const proteina_g = Math.round(pesoKg * gPorKg);
-
-  const gordura_g = Math.round((kcalAlvo * 0.25) / 9);
-
-  const restante = kcalAlvo - proteina_g * 4 - gordura_g * 9;
-  const carbo_g = Math.max(0, Math.round(restante / 4));
-
-  return { kcal: kcalAlvo, proteina_g, carbo_g, gordura_g };
-}
+// ── `macros()` foi APAGADA daqui, e o motivo é a regra da própria Fase 5 ───
+//
+// Ela dividia as calorias com a proteína saindo do PESO TOTAL — inclusive o
+// coeficiente de 2,2 g por kg de peso no emagrecimento, que é a linha que
+// produz os 264 g/dia para 120 kg com 40% de gordura. Quando `meta.ts` virou a
+// rota única, ela ficou sem chamador
+// e continuou exportada e chamável: a Fase 5 renomeou `REGIOES_DOR.evitar`
+// para `exemplos` justificando que "lista antiga viva ao lado da regra nova é
+// a que a próxima pessoa acha primeiro", e não aplicou o critério ao próprio
+// domínio. A conta inteira mora em `meta.ts`. A versão legada, que o harness
+// usa para rodar contra commits antigos, mora no harness com o nome do que ela
+// é (`macrosLegadoPorPesoTotal`).
 
 /**
  * 1RM estimado pela fórmula de Epley.

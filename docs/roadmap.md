@@ -27,7 +27,8 @@ Prescrição-alvo (o que devia sair): `prescricao-alvo.md` na mesma pasta.
 | G3 | Treinador que explica e varia | execução detalhada, técnicas de intensidade, objetivo do exercício, variação entre ciclos | **feita, não commitada** — gate: **30 falhas contra `c241562`, 0 depois**. Ver "Validação de G3" |
 | 4 | Série em 1 toque | U1 U2 U5 U6 U7 | **feita, não commitada** — gate: **33 falhas contra `bb6babf`, 0 depois**. Ver "Validação da fase 4" |
 | 5 | Segurança e nutrição | F5 N3 N6 N8 U8 | **feita, não commitada** — gate: **50 falhas contra `ee156d5`, 0 depois**. Ver "Validação da fase 5" |
-| 6 | Sobras do P2 | F7 F9 F10 N4 N10 | pendente |
+| 5.1 | Correção dos críticos que a Fase 5 criou | N17 N11 N12 N13 N14 N15 N18 N10 N20 N21 | **feita, não commitada** — gate: **37 falhas contra `bfb4e91`, 0 depois**. Ver "Validação da fase 5.1" |
+| 6 | Sobras do P2 | F7 F9 F10 N4 N5 N7 N9 N16 N19 N22 N23 | pendente |
 | 7 | Re-auditoria (rodada 2) | comparar com os dois consolidados | após as fases acima |
 
 ### G1 — Estrutura e seleção (A2, A1, A11, A3, A4, A8)
@@ -137,6 +138,272 @@ estão no código (`ACSM 2026` em volume.ts, Baz-Valle/Coleman em programa.ts,
 Refalo/Nuzzo/Haugen em gerador.ts) NÃO foram verificadas — não tratar como
 evidência nem reaproveitar em texto de produto sem WebFetch antes. As 5 fontes
 verificadas estão no cabeçalho do fitness.md.
+
+## Validação da fase 5.1 — os críticos que a Fase 5 criou na nutrição (04/08/2026)
+
+Working tree, sem commit. `tsc --noEmit` limpo. `testar:gerador` e
+`testar:migracao` 100%. **Sem mudança de schema** — o envelhecimento da medição
+usa `body_metrics` (`tmb_kcal`, `gordura_pct`, `peso_kg`, `medido_em`, todos da
+v2) e a decisão de recálculo lê `nutrition_targets.origem`, que já era gravada e
+nunca lida. Nada a responder sobre "quem já está com o banco estragado": nenhuma
+coluna nova, nenhuma linha reescrita, e quem já tem uma meta manual salva passa a
+ser respeitado na primeira abertura, sem migração.
+
+**O gate.** As réguas foram corrigidas e escritas ANTES de qualquer correção de
+código, e rodadas contra `bfb4e91` num worktree com o MESMO arquivo de teste:
+**37 falhas de 506 asserções**. Nenhuma asserção de G1/G2/G2.1/Fase 4/Fase 5/G3
+quebrou dos dois lados (469 ok antes, 506 ok depois). Depois: **0**.
+
+| Invariante | UNIDADE | contra `bfb4e91` | depois |
+|---|---|---|---|
+| 33 (f) teto de 3,1 g/kg de massa magra, TODO objetivo | **dia de dieta** (672 corpos) | 96 | 0 |
+| 33 (f2) piso de 1,6 g/kg de peso, TODO objetivo | **dia de dieta** | 140 | 0 |
+| 33 (f3) corpo fora de toda fonte é declarado | **dia de dieta** | vazia | 0 de 96 |
+| 33 (h) ordenação déficit ≥ superávit | **par de objetivos para o mesmo corpo** | 106 pares | 0 |
+| 33. teto de déficit contra a FONTE | **kcal/dia para um corpo** | 7 de 7 | 0 |
+| 33. ramo sem altura nem idade (N20) | **dia sem composição corporal** | 28 | 0 |
+| 34. medição envelhece, TMB **e** gordura | **dia de dieta ao longo do tempo** | 13 | 0 |
+| 41. meta manual sobrevive à pesagem | **decisão de meta ao longo do tempo** | 7 | 0 |
+| 42. plano do dia soma o dia | **plano de refeições de um dia** | 3 | 0 |
+| 43. regra antiga não fica viva ao lado da nova | **símbolo exportado sem chamador** | 3 | 0 |
+
+### N17 — a quarta régua que não podia falhar
+
+`(f2)` media `meta.proteina_g / c.pesoKg` contra 1,4-2,0 em hipertrofia e
+manutenção. A proteína **era** `round(peso × 1,9)`, então a razão valia 1,9
+sempre: a asserção era aritmeticamente incapaz de falhar. E o comentário
+imediatamente acima dela **descrevia o defeito com precisão** — "quem tem
+gordura alta em ganhar massa recebe até 4,2 g/kg de massa magra" — enquanto a
+asserção media na unidade em que esse defeito é invisível.
+
+Quarta vez neste projeto: M3 do cardio, este `(f2)`, e as duas do G2.
+
+A régua nova mede **todo objetivo nas duas unidades**, porque cada uma só pega o
+defeito que mora nela: *peso* não pega proteína que ignora a composição corporal
+(264 g para 120 kg com 40% é 2,2 g/kg de peso, dentro de qualquer faixa medida em
+peso); *massa magra* não pega proteína abaixo do platô de dose-resposta, que
+Morton mediu por peso total. E nasceu a unidade que nada media: **par de
+objetivos para o mesmo corpo** — as duas proteínas podem estar cada uma dentro da
+sua faixa e **na ordem errada uma em relação à outra**, que é exatamente o estado
+que a Fase 5 criou. Separadas, as duas passam.
+
+`(f3)` ganhou guarda de vacuidade explícita (`96 de 672 corpos` acima de
+3,1 g/kg de massa magra), porque ela é a única das novas que não falhava contra
+`bfb4e91` — e uma asserção que nunca falhou é a definição do problema acima.
+
+### N11 — a inversão, e a ordenação virou algébrica
+
+| corpo | déficit antes | superávit antes | déficit depois | superávit depois |
+|---|---|---|---|---|
+| 120 kg / 40% | 173 g (2,40 MM) | **228 g (3,17)** | 192 g (2,67) | **192 g (2,67)** |
+| 88 kg / 27,2% (Leonardo) | 154 g (2,40) | **167 g (2,61)** | 154 g (2,40) | **154 g (2,40)** |
+| 62 kg / 12% | 131 g (2,40) | 118 g (2,16) | 131 g (2,40) | 118 g (2,16) |
+
+O envelope é um só para os quatro objetivos:
+
+```
+max( 1,6 × peso , min( dose , 2,4 × massa magra ) )
+```
+
+com `dose` = o próprio teto no déficit (o alvo É o tecido) e 1,9 / 1,8 g/kg de
+peso fora dele. **O teto do superávit é o mesmo número do alvo do déficit, e não
+por coincidência** — deriva da mesma constante. Com isso a ordenação deixa de
+depender de aritmética: superávit é `max(piso, min(dose, teto))`, déficit é
+`max(piso, teto)`, e `min(dose, teto) ≤ teto`. Não depende de nenhum dos números
+continuarem como estão, que é a propriedade que faltava — o defeito nasceu de
+mudar um número num ramo só.
+
+Acima de ~21% de gordura os dois **empatam**, e isso está reportado em vez de
+disfarçado: os dois batem no mesmo teto de massa magra, e forçar um degrau ali
+seria alimentar tecido que não existe. A ordenação estrita continua onde a
+evidência a sustenta (abaixo de 20,8%, o ponto de cruzamento algébrico).
+
+- **Piso de 1,6 g/kg de peso** = platô de Morton 2018 (PubMed 28698222, aberta e
+  conferida: *"beyond total protein intakes of 1.62 g/kg/day resulted in no
+  further RET-induced gains in FFM"*, IC 1,03-2,20). Ele impede o teto de
+  empurrar a proteína abaixo do que a meta-análise sustenta — 140 corpos da grade
+  estavam abaixo dele.
+- **Acima de ~48% de gordura** o piso e o teto se contradizem e nenhuma fonte
+  cobre o corpo. **96 de 672** corpos da grade caem aí, e os 96 recebem a
+  declaração na tela em vez de um número liso.
+- **O ramo sem altura nem idade** subiu de 1,8 para **2,0 g/kg de peso** (topo da
+  faixa geral da ISSN), porque 1,8 < 1,9 invertia a ordem justamente onde não há
+  denominador para escondê-la — e a grade nunca tocava esse ramo (N20).
+- **A tela diz POR QUE a base muda com o objetivo.** "Em déficit o alvo é RETER
+  um tecido, então o tecido é a conta"; fora dele, "o alvo é um platô de
+  dose-resposta que a pesquisa mediu por kg de PESO". Duas bases sem explicação
+  são indistinguíveis de bug — foi assim que a inversão passou uma fase inteira.
+
+### N12 — 31 kcal/kg era o valor por LIBRA
+
+Alpert 2005 (PubMed 15615615, aberta e conferida) diz **290 ± 25 kJ/kg·dia**.
+290 ÷ 4,184 = **69,3 kcal por kg de gordura por dia**. Os 31 do código são
+31,4 kcal/**lb** ≈ 69,2 kcal/kg aplicados por quilograma — **2,2× mais apertado
+que a fonte**, e apertado para o lado que INFLA a meta de quem é magro.
+
+Enquanto a função era código morto não custava nada. A Fase 5 a ligou como piso
+calórico e o número entrou na meta de todo mundo:
+
+| 75 kg / 8% de gordura | com 31 | com a fonte |
+|---|---|---|
+| teto de déficit | 186 kcal | **416 kcal** |
+| déficit pedido (15%) | 386 kcal | 386 kcal |
+| meta | 2.387 (déficit real 7,2%) | **2.187 (15%)** |
+
+**O caso que o roadmap registrou como sucesso de N8 era inteiramente artefato
+desta conversão:** 62 kg / 12%, "meta 2.280 → 2.451". O teto certo para esse
+corpo é 516 kcal, o déficit pedido é 402, e o piso **não morde** — a meta é
+2.280, como sempre foi.
+
+O mecanismo trocou para **taxa de perda**, que é como a literatura aplicada
+expressa o limite: 0,5-1,0% do peso por semana (Ruiz-Castellano 2021,
+*Nutrients* 13(9):3255, PMC8471721, aberta e conferida), com Alpert corrigido
+como backstop absoluto. Vale o menor dos dois, porque nenhum sozinho cobre os
+dois corpos: Alpert aperta em quem é magro (6 kg de gordura = 416 kcal/dia), a
+taxa aperta em quem tem muita (63 kg de gordura "entregariam" 4.366 kcal/dia, o
+que seria perder 4% do peso por semana — **280 corpos da grade** estavam nessa
+faixa). Para o Leonardo o teto é 968 kcal contra os 435 que ele tem: não morde.
+
+O invariante (b) da seção 33 media o clamp usando a própria `deficitMaximoSeguro`
+como referência — ele prova que o freio está ligado e não pode dizer nada sobre o
+número do freio. A régua nova confere a constante contra a **fonte**, com a
+conversão feita na frente, em kJ e em % por semana.
+
+### N13 — a meta manual não sobrevivia à próxima pesagem
+
+`recalcularMeta` gravava `salvarMeta(macros, 'auto')` sem consultar a origem da
+vigente, e é disparada em toda pesagem, toda bioimpedância e toda edição de
+perfil. A Fase 5 investiu a fase inteira em fazer o caminho manual bom — a escada
+de gordura, os avisos, a conferência que soma — e ele era descartado na manhã
+seguinte, sem nada na tela.
+
+A decisão virou `decidirRecalculo` em `meta.ts` (pura, testável); `api.ts` é a
+casca fina, como `prescricaoDaRotina` × `recalcularPapeisDoDia` em G2.1. A frase
+aparece nos três disparadores.
+
+### N14 — a explicação do piso era calculada e jogada fora
+
+`recalcularMeta` desestruturava os avisos só para descartá-los, e `resumo()` só
+usava `automatica.avisos` **quando não existia meta salva** — o que, depois do
+onboarding, nunca acontece. Os avisos de N8 apareciam no onboarding e no botão
+"Recalcular", e nunca mais. No estado estável o piso mordia em silêncio: o
+defeito que a própria Fase 5 nomeou para o TMB, reproduzido no vizinho de baixo.
+
+`Resumo` passou a carregar **duas listas com rótulos e cores diferentes**:
+`razaoMeta` (por que esta meta é essa — informativo, permanente, neutro) e
+`avisosMeta` (o que está errado com ela — alerta, laranja). E são perguntas
+diferentes de verdade, não rótulos: **em 96 dos 672 corpos da grade a meta
+automática tem razão e zero alerta**, ou seja, mostrar só `avisosMeta` apaga a
+explicação inteira. A razão **não é gravada** em `nutrition_targets` — é derivada
+do peso de hoje, e congelá-la é o histórico mentiroso da regra 6.
+
+### N15 + N18 — envelhecer em vez de expirar, e a mesma política para os dois
+
+N6 pôs validade no TMB e deixou o **`gordura_pct` da mesma linha** valer para
+sempre — mesma medição, mesmo dia, mesmo aparelho, duas políticas contraditórias
+dentro do mesmo `resumo()`, e a que ficou de fora é a que decide a proteína.
+Misturar o peso de hoje com a gordura de três meses assume que todo peso ganho
+teve a composição da medição antiga, e `massaMagraDe` devolvia `estimada: false`
+nesse caso.
+
+E a expiração era desproporcional: o Leonardo cai pelos dois gatilhos (4,39% e
+92 dias) e o que ela troca são **31 kcal**, num caso em que a fórmula acertou com
+2 kcal. Ele veria um card laranja de alerta por isso. Além disso o dano original
+(TMB velho superestimando o gasto) só existe quando o peso CAI; ele subiu, que é
+o lado seguro, e a regra tratava os dois sentidos igual.
+
+A política agora é uma só, `envelhecer`, usada pelas duas vigências:
+
+```
+offset  = medido − estimado(peso do dia da medição)
+vigente = estimado(peso de hoje) + offset × envelhecer(dias)     // 16 semanas
+```
+
+O que a medição acrescenta não é o valor absoluto — é o quanto ESTE corpo difere
+do que a fórmula prevê para ele, e esse desvio continua valendo quando o peso
+muda. Medido na régua que a expiração não passa: **o maior salto de um dia para
+o outro caiu de 172 kcal para 2 kcal**. Nada armazenado além do que
+`body_metrics` já tem; a decisão continua na leitura.
+
+`massaMagraDe` ganhou `origem` em três estados (`bioimpedancia` / `ajustada` /
+`imc`), e a tela mostra os três. `tmbMedido: boolean` e `tmbMotivo` saíram do
+`Resumo`: o booleano tinha dois estados para três situações, e o motivo era o
+card que a expiração precisava e o envelhecimento não precisa.
+
+**E o texto parou de dizer que a balança mede metabolismo.** Ela estima a massa
+livre de gordura por impedância e joga numa equação interna — fórmula
+substituindo fórmula. Karagun & Baklaci 2024 (*Medicine* 103(35):e39542,
+PMC11365691, aberta e conferida): superestima ~185 kcal contra calorimetria
+indireta, e **só 36,1%** das medições caem dentro de ±10%. Era essa confusão que
+dava à balança poder de veto sobre a fórmula, e que fez a correção ser "expirar"
+em vez de "misturar".
+
+### N10 e N21, os baratos
+
+**N10** — `noite.slice(0, max(3, refeicoesPorDia))` cortava do FIM de uma lista
+em ordem cronológica, e o fim é o jantar, que no treino da noite é o
+`pos_treino`. Com 4 refeições as fatias somavam **0,72** do dia e não havia
+pós-treino; com 3, **0,58** e o pré-treino sumia junto. Os outros quatro ramos já
+ignoravam `refeicoes_por_dia`. Medido em 20 combinações (5 horários × 4
+contagens): 3 falhas → 0.
+
+**N21** — três símbolos exportados sem chamador, contra a regra que a própria
+Fase 5 escreveu ao renomear `REGIOES_DOR.evitar` para `exemplos` ("lista antiga
+viva ao lado da regra nova é a que a próxima pessoa acha primeiro"). Apagados:
+`macros()` de `calculos.ts` (que ainda continha o coeficiente de 2,2 g/kg de peso
+no emagrecimento — a função que produz os 264 g), `definirMetaCalorica` e
+`projetar`. O legado que o harness precisa para rodar contra commits antigos
+mudou para dentro de `scripts/` com o nome do que é:
+`macrosLegadoPorPesoTotal`.
+
+### Validado no navegador a 390×844
+
+Chrome headless próprio com `Emulation.setDeviceMetricsOverride` e
+`Input.dispatchMouseEvent` — o Browser pane não compõe frames e o clique
+sintético não chega ao `Pressable`. **Onboarding dirigido de ponta a ponta pela
+primeira vez** (os 9 passos, com clique real): 178 cm / 88 kg / "Perder gordura"
+→ prévia com TMB 1.808, TDEE 2.802, meta 2.381 e **P 156 g** (2,4 g/kg de massa
+magra de 65,2 kg, estimada pelo IMC).
+
+Fluxo completo do achado N13, no app real: perfil mostrando as duas unidades da
+proteína e a frase da base → "Macros da meta" → baixar para 1.800 kcal → salvar →
+**pesar 87,2 kg no dia seguinte** → a folha responde *"Sua meta manual de 1.800
+kcal continua valendo. Com o seu peso de hoje, a automática seria 2.372 kcal"* →
+voltar ao perfil e a meta **continua 1.800**, com a razão (cinza) separada dos
+dois alertas (laranja: abaixo do basal, e déficit de 990 acima dos 959 kcal que o
+teto novo permite). Depois, bioimpedância com 27,2% e TMB 1.980: a legenda do
+metabolismo vira "da bioimpedância" e a base da proteína troca de "estimada pelo
+IMC" para "63,5 kg, da bioimpedância". Zero erro de console em todas as telas.
+
+De quebra, a tela entregou um decimal com ponto na legenda da massa magra
+("63.5 kg") — corrigido para `num(_, 1)`.
+
+**Não validado no navegador:** o estado **`ajustado`** da medição. Ele exige uma
+bioimpedância com data passada, e a tela só grava com a data de hoje — inserir
+direto no banco não é alcançável pela página (o bundle do Metro não expõe os
+módulos). Está coberto pelas asserções da seção 34, que exercitam os 130 dias
+seguintes de uma medição. **Conferir no celular** daqui a algumas semanas: a
+legenda do metabolismo basal deve virar "da bioimpedância, ajustado ao seu peso
+de hoje", e a da gordura corporal "ajustada ao seu peso de hoje (27,2% na
+balança)". Também não dirigido pela tela: o plano de refeições da noite (N10) —
+mudar o horário de treino passa pela tela de preferências; coberto pela seção 42.
+
+### Registrado, NÃO feito nesta fase
+
+Com os números que a revisora deu, para a fase 6:
+
+- **N16** — rampa de proteína por magreza. Hoje o alvo é 2,4 g/kg de massa magra
+  para qualquer percentual de gordura; Helms escala com a severidade do déficit e
+  com quão magro o atleta já é (2,3-3,1).
+- **N4** — o cardápio ignora as restrições alimentares do perfil.
+- **N5** — fibra não entra na meta. Agora com guideline forte: **OMS, ≥ 25 g/dia**.
+- **N7** — meta de água congelada: não acompanha peso nem clima nem treino.
+- **N9** — pendência da auditoria de 29/07.
+- **N19** — o texto do piso calórico ainda fala em "metabolismo basal" onde o que
+  morde pode ser o teto de mobilização.
+- **N20** — **fechado nesta fase**: o ramo `dadosParaEstimar === undefined` entrou
+  na grade e é o que N11 mais expôs.
+- **N22, N23** — pendências da auditoria de 29/07.
 
 ## Validação de G3 — Treinador que explica e varia (04/08/2026)
 

@@ -13,7 +13,7 @@ import {
   salvarMeta,
   salvarPerfil,
 } from '@/features/perfil/api';
-import { macrosParaMetaManual } from '@/features/perfil/meta';
+import { TEXTO_ORIGEM_TMB, macrosParaMetaManual } from '@/features/perfil/meta';
 import { estatisticas } from '@/features/treino/api';
 import { getStats, progressoNivel } from '@/features/gamificacao/api';
 import {
@@ -127,17 +127,30 @@ export default function Perfil() {
             legenda={classificacaoImc(r.imcValor).texto}
             cor={classificacaoImc(r.imcValor).cor}
           />
+          {/* Três estados, não dois. "Ajustado" é a bioimpedância antiga
+              aplicada ao peso de hoje: ela continua pesando, só não é mais a
+              medição crua. Chamar isso de "medido" era o palpite com etiqueta
+              de medição; expirar era jogar fora o que ela tinha de próprio. */}
           <Metrica
             label="Metabolismo basal"
             valor={num(r.tmbValor)}
-            legenda={r.tmbMedido ? 'medido na bioimpedância' : 'estimado por fórmula'}
-            cor={r.tmbMedido ? colors.success : undefined}
+            legenda={TEXTO_ORIGEM_TMB[r.tmbOrigem]}
+            cor={r.tmbOrigem === 'medido' ? colors.success : undefined}
           />
           {r.gorduraPct !== null ? (
             <Metrica
               label="Gordura corporal"
               valor={`${num(r.gorduraPct, 1)}%`}
-              legenda={r.massaMagraKg ? `${r.massaMagraKg} kg de massa magra` : 'da bioimpedância'}
+              legenda={
+                r.gorduraOrigem === 'ajustada'
+                  ? `ajustada ao seu peso de hoje (${num(r.gorduraMedidaPct ?? 0, 1)}% na balança)`
+                  : r.massaMagraKg
+                    ? // `num` e não interpolação crua: `massaMagraKg` é um
+                      // decimal, e "63.5 kg" com ponto no meio de uma frase em
+                      // português é sujeira que só aparece na tela.
+                      `${num(r.massaMagraKg, 1)} kg de massa magra`
+                    : 'da bioimpedância'
+              }
               cor={colors.warn}
             />
           ) : null}
@@ -157,22 +170,6 @@ export default function Perfil() {
             cor={colors.primary}
           />
         </View>
-        {/* ── Por que o metabolismo medido saiu de cena ──────────────────
-            Um número que muda sozinho e não se explica é pior que o número
-            velho: a bioimpedância continua no histórico, o que mudou é que ela
-            parou de valer para a meta de hoje. Sem esta linha o usuário só
-            veria o "medido na bioimpedância" virar "estimado por fórmula". */}
-        {r.tmbMotivo ? (
-          <Card faixa={colors.warn} padding={spacing.md}>
-            <View style={{ flexDirection: 'row', gap: spacing.sm, alignItems: 'flex-start' }}>
-              <Ionicons name="time-outline" size={16} color={colors.warn} />
-              <Txt v="small" size={12} cor={colors.textDim} style={{ flex: 1 }}>
-                {r.tmbMotivo}
-              </Txt>
-            </View>
-          </Card>
-        ) : null}
-
         <Card onPress={() => setEditandoMeta(true)}>
           <View style={s.entre}>
             <View style={{ flex: 1 }}>
@@ -185,15 +182,40 @@ export default function Perfil() {
               <Txt v="small" size={11} cor={colors.textFaint}>
                 Proteína: {r.baseCalculoMeta}
               </Txt>
+              {/* E POR QUE a base é essa. O app usa massa magra num objetivo e
+                  peso no outro; duas bases sem explicação são indistinguíveis
+                  de bug — foi assim que a inversão entre déficit e superávit
+                  passou por uma fase inteira sem ninguém estranhar. */}
+              <Txt v="small" size={11} cor={colors.textFaint} style={{ marginTop: 4 }}>
+                {r.porqueBaseMeta}
+              </Txt>
             </View>
             <Ionicons name="chevron-forward" size={19} color={colors.textFaint} />
           </View>
         </Card>
 
-        {/* ── Freios que morderam ────────────────────────────────────────
-            Piso calórico, déficit acima do que a gordura entrega, carboidrato
-            espremido. As três contas existiam no código e nenhuma chegava à
-            tela — `deficitMaximoSeguro` estava escrito e nunca era chamado. */}
+        {/* ── Por que esta meta é essa ───────────────────────────────────
+            Informativo e PERMANENTE, com cara de informação. Era calculado e
+            jogado fora: os avisos do piso apareciam no onboarding e no botão
+            "Recalcular" e nunca mais, porque `resumo()` só os usava quando não
+            existia meta salva — o que, depois do onboarding, nunca acontece.
+            No estado estável o piso mordia em silêncio. */}
+        {r.razaoMeta.map((a) => (
+          <Card key={a} padding={spacing.md}>
+            <View style={{ flexDirection: 'row', gap: spacing.sm, alignItems: 'flex-start' }}>
+              <Ionicons name="information-circle-outline" size={16} color={colors.textDim} />
+              <Txt v="small" size={12} cor={colors.textDim} style={{ flex: 1 }}>
+                {a}
+              </Txt>
+            </View>
+          </Card>
+        ))}
+
+        {/* ── O que está ERRADO com esta meta ────────────────────────────
+            Pergunta diferente da de cima, e por isso lista e cor diferentes.
+            Piso calórico furado, déficit acima do que a gordura entrega,
+            carboidrato espremido. Juntar as duas sob o mesmo laranja
+            transformaria toda explicação em alarme. */}
         {r.avisosMeta.map((a) => (
           <Card key={a} faixa={colors.warn} padding={spacing.md}>
             <View style={{ flexDirection: 'row', gap: spacing.sm, alignItems: 'flex-start' }}>

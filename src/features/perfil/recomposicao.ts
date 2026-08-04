@@ -91,6 +91,16 @@ export function gorduraPorImc(
 }
 
 /**
+ * De onde saiu o percentual de gordura que virou massa magra.
+ *
+ * `bioimpedancia` é a medição do dia; `ajustada` é a mesma medição depois de
+ * acompanhar o peso (ver `gorduraVigente` em `meta.ts`); `imc` é a equação de
+ * Deurenberg, sem medição nenhuma. Os três eram dois — e a medição de três
+ * meses atrás, aplicada ao peso de hoje, se apresentava como `bioimpedancia`.
+ */
+export type OrigemComposicao = 'bioimpedancia' | 'ajustada' | 'imc';
+
+/**
  * Massa magra em kg — medida quando existe bioimpedância, estimada quando não.
  *
  * ── Por que a estimativa está aqui, e não um fallback para o peso total ──
@@ -103,17 +113,32 @@ export function gorduraPorImc(
  *
  * `null` só quando não há como estimar (falta altura, idade ou gênero). Aí
  * quem chama decide o que fazer, em vez de receber um número inventado.
+ *
+ * ── `estimada` deixou de ser um booleano de duas pontas ──────────────────
+ *
+ * Um percentual medido há três meses, aplicado ao peso de hoje, voltava com
+ * `estimada: false` — palpite com etiqueta de medição, e a suposição
+ * escondida era que todo peso ganho ou perdido no meio tempo tinha a
+ * composição da medição antiga. Quem chama passa `origem` e o retorno diz a
+ * verdade; `estimada` continua existindo e significa "não é uma medição
+ * direta", que é o que a tela precisa saber para não mentir.
  */
 export function massaMagraDe(
   pesoKg: number,
   gorduraPct: number | null,
-  estimar?: { alturaCm: number; idade: number; genero: string }
-): { kg: number; pct: number; estimada: boolean } | null {
+  estimar?: { alturaCm: number; idade: number; genero: string },
+  origem: OrigemComposicao = 'bioimpedancia'
+): { kg: number; pct: number; estimada: boolean; origem: OrigemComposicao } | null {
   if (gorduraPct !== null && gorduraPct !== undefined)
-    return { kg: pesoKg * (1 - gorduraPct / 100), pct: gorduraPct, estimada: false };
+    return {
+      kg: pesoKg * (1 - gorduraPct / 100),
+      pct: gorduraPct,
+      estimada: origem !== 'bioimpedancia',
+      origem,
+    };
   if (!estimar) return null;
   const pct = gorduraPorImc(pesoKg, estimar.alturaCm, estimar.idade, estimar.genero);
-  return { kg: pesoKg * (1 - pct / 100), pct, estimada: true };
+  return { kg: pesoKg * (1 - pct / 100), pct, estimada: true, origem: 'imc' };
 }
 
 /** Massa magra e massa gorda em kg, a partir do percentual da bioimpedância. */
@@ -185,59 +210,71 @@ export function classificarGordura(
   return { texto: 'Muito alto', cor: '#FF4757' };
 }
 
+/** 1 kg de gordura corporal ≈ 7.700 kcal. */
+export const KCAL_POR_KG_GORDURA = 7700;
+
 /**
- * Projeção realista de perda de gordura.
+ * Taxa máxima de perda de peso, como fração do peso corporal por semana.
  *
- * O teto de mobilização de gordura corporal é de aproximadamente 31 kcal por
- * kg de gordura por dia (Alpert, 2005). Passar disso, o déficit sai de massa
- * magra — é o que faz gente emagrecer e ficar flácida.
+ * Ruiz-Castellano et al. 2021, *Nutrients* 13(9):3255 — "Achieving an Optimal
+ * Fat Loss Phase in Resistance-Trained Athletes"
+ * (https://pmc.ncbi.nlm.nih.gov/articles/PMC8471721/, aberta e conferida):
+ * *"a loss of BW of 0.5–1.0 %/week, accompanied by a high protein intake and
+ * resistance exercises, could favor the retention of FFM"*. Os autores pedem
+ * a ponta de baixo conforme a gordura corporal cai — o que aqui acontece
+ * sozinho, porque o teto de mobilização abaixo aperta junto.
+ *
+ * 1,0% é o TETO, não a recomendação: o app usa 15% de déficit e quase nunca
+ * chega perto disso.
+ */
+export const TAXA_PERDA_SEMANAL_MAX = 0.01;
+
+/**
+ * Energia que a gordura corporal consegue entregar por dia, em kcal por kg.
+ *
+ * Alpert 2005 (https://pubmed.ncbi.nlm.nih.gov/15615615/, aberta e conferida):
+ * *"a value of (290+/-25) kJ/kgd"*. 290 kJ ÷ 4,184 = **69,3 kcal por kg de
+ * gordura por dia**.
+ *
+ * ── O erro que este número conserta ──────────────────────────────────────
+ *
+ * O código dizia **31**, citando o mesmo artigo. 31,4 é o valor por LIBRA
+ * (31,4 kcal/lb ≈ 69,2 kcal/kg) — aplicado por quilograma vira um teto 2,2×
+ * mais apertado que a fonte. Enquanto esta função era código morto isso não
+ * custava nada; a Fase 5 a ligou como piso calórico e o número passou a
+ * INFLAR a meta de quem é magro: 75 kg com 8% de gordura tem teto de 186 kcal
+ * pelo número errado e 416 pelo da fonte, então um déficit pedido de 386 era
+ * cortado para 186 e a meta subia 200 kcal — com a tela explicando o corte
+ * citando o artigo.
+ */
+export const KCAL_POR_KG_GORDURA_DIA = 290 / 4.184;
+
+/**
+ * O maior déficit diário que este corpo aguenta — pelo menor dos dois tetos.
+ *
+ * São duas perguntas diferentes e as duas limitam:
+ *   · **Quanto a gordura entrega por dia** (Alpert). Aperta em quem é magro:
+ *     6 kg de gordura só liberam ~416 kcal/dia, e cortar mais que isso tira
+ *     massa magra — é o que faz gente emagrecer e ficar flácida.
+ *   · **Quão rápido dá para perder** (Ruiz-Castellano). Aperta em quem tem
+ *     muita gordura: 63 kg de gordura "entregariam" 4.366 kcal/dia pelo
+ *     primeiro teto, o que seria perder 4% do peso por semana.
+ *
+ * Nenhum dos dois sozinho cobre os dois corpos, então vale o menor.
  */
 export function deficitMaximoSeguro(pesoKg: number, gorduraPct: number): number {
   const gorduraKg = (pesoKg * gorduraPct) / 100;
-  return Math.round(gorduraKg * 31);
+  const porMobilizacao = gorduraKg * KCAL_POR_KG_GORDURA_DIA;
+  const porTaxaDePerda = (pesoKg * TAXA_PERDA_SEMANAL_MAX * KCAL_POR_KG_GORDURA) / 7;
+  return Math.round(Math.min(porMobilizacao, porTaxaDePerda));
 }
 
-export interface Projecao {
-  semanas: number;
-  pesoFinal: number;
-  gorduraFinalPct: number;
-  perdaGorduraKg: number;
-  ganhoMagraKg: number;
-}
-
-/**
- * Projeta a evolução da composição corporal.
- *
- * Em recomposição, parte do déficit vem da gordura e ainda se ganha massa
- * magra — devagar. O ganho aqui é conservador de propósito: prometer 1 kg de
- * músculo por mês para quem não é iniciante é fantasia, e frustração é o que
- * mais faz gente largar.
- */
-export function projetar(
-  pesoKg: number,
-  gorduraPct: number,
-  deficitDiario: number,
-  semanas: number,
-  apto: boolean
-): Projecao {
-  const { gorduraKg, magraKg } = composicao(pesoKg, gorduraPct);
-
-  // 7.700 kcal ≈ 1 kg de gordura.
-  const perdaGorduraKg = Math.round(((deficitDiario * 7 * semanas) / 7700) * 10) / 10;
-  // Iniciante/retomando: ~0,25 kg/semana de massa magra; caso contrário, ~0,05.
-  const ganhoMagraKg = Math.round((apto ? 0.25 : 0.05) * semanas * 10) / 10;
-
-  const novaGordura = Math.max(gorduraKg * 0.05, gorduraKg - perdaGorduraKg);
-  const novaMagra = magraKg + ganhoMagraKg;
-  const pesoFinal = Math.round((novaGordura + novaMagra) * 10) / 10;
-
-  return {
-    semanas,
-    pesoFinal,
-    gorduraFinalPct: Math.round((novaGordura / pesoFinal) * 1000) / 10,
-    perdaGorduraKg,
-    ganhoMagraKg,
-  };
+/** Qual dos dois tetos está mordendo — a tela precisa dizer o motivo certo. */
+export function tetoQueMorde(pesoKg: number, gorduraPct: number): 'gordura' | 'ritmo' {
+  const gorduraKg = (pesoKg * gorduraPct) / 100;
+  return gorduraKg * KCAL_POR_KG_GORDURA_DIA <= (pesoKg * TAXA_PERDA_SEMANAL_MAX * KCAL_POR_KG_GORDURA) / 7
+    ? 'gordura'
+    : 'ritmo';
 }
 
 export const LABEL_OBJETIVO_V2: Record<string, string> = {

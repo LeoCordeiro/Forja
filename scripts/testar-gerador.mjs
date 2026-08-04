@@ -21,7 +21,7 @@ import {
 } from '../src/features/treino/classificacao.ts';
 // Nutrição: os módulos PUROS (sem `@/db/client`) que a grade de dia de dieta
 // consome. `perfil/api.ts` não entra aqui de propósito — ele importa o banco.
-import { macros, metaCalorica, tdee, tmb } from '../src/features/perfil/calculos.ts';
+import { metaCalorica, tdee, tmb } from '../src/features/perfil/calculos.ts';
 import { DEFICIT_RECOMPOSICAO, deficitMaximoSeguro, gorduraPorImc } from '../src/features/perfil/recomposicao.ts';
 // `macrosRecomposicao` só existe no código ANTERIOR — ela virou a rota única de
 // `meta.ts`. Namespace pelo motivo de sempre: com import nomeado, rodar este
@@ -2823,12 +2823,34 @@ console.log('\n33. Meta de nutrição por dia de dieta (N3, N8)');
   ok('e o piso calórico é uma função declarada', typeof META.pisoCalorico === 'function',
      typeof META.pisoCalorico);
 
+  /**
+   * A regra ANTERIOR à Fase 5, replicada aqui com nome explícito.
+   *
+   * Ela morava em `calculos.macros()` e continuou exportada e chamável depois
+   * que `meta.ts` virou a rota única — inclusive com o `2.2` sobre o peso
+   * total, que é a linha que produz os 264 g. Lista antiga viva ao lado da
+   * regra nova é a que a próxima pessoa acha primeiro: a Fase 5 escreveu isso
+   * ao renomear `REGIOES_DOR.evitar` e não aplicou ao próprio domínio. Agora
+   * o legado mora onde o legado é usado — no harness, com o nome do que ele é.
+   */
+  const macrosLegadoPorPesoTotal = (kcalAlvo, pesoKg, objetivo) => {
+    const gPorKg =
+      objetivo === 'emagrecimento' ? 2.2
+      : objetivo === 'recomposicao' ? 2.4
+      : objetivo === 'hipertrofia' ? 1.9
+      : 1.8;
+    const proteina_g = Math.round(pesoKg * gPorKg);
+    const gordura_g = Math.round((kcalAlvo * 0.25) / 9);
+    const carbo_g = Math.max(0, Math.round((kcalAlvo - proteina_g * 4 - gordura_g * 9) / 4));
+    return { kcal: kcalAlvo, proteina_g, carbo_g, gordura_g };
+  };
+
   // Fallback = o caminho de hoje, replicado só para o GATE poder rodar contra
   // `ee156d5`: recomposição pela massa magra, todo o resto pelo peso total.
   const legado = (gasto, pesoKg, objetivo, gorduraPct, estimar) =>
     objetivo === 'recomposicao'
       ? RECOMP.macrosRecomposicao(Math.round(gasto * DEFICIT_RECOMPOSICAO), pesoKg, gorduraPct, estimar)
-      : macros(metaCalorica(gasto, objetivo), pesoKg, objetivo);
+      : macrosLegadoPorPesoTotal(metaCalorica(gasto, objetivo), pesoKg, objetivo);
   const calcular =
     META.calcularMetaDetalhada ??
     ((e) => ({ meta: legado(e.tdee, e.pesoKg, e.objetivo, e.gorduraPct, e.estimar), avisos: [] }));
@@ -2861,7 +2883,12 @@ console.log('\n33. Meta de nutrição por dia de dieta (N3, N8)');
 
   let semPiso = 0, deficitDemais = 0, carboZeroCalado = 0, gorduraBaixa = 0;
   let naoFecha = 0, proteinaForaDaFaixa = 0, incoerenteObjetivo = 0;
-  const am = { piso: '', deficit: '', carbo: '', gord: '', fecha: '', prot: '', coerente: '' };
+  let proteinaAbaixoDoPlato = 0, semDeclararForaDaFaixa = 0, ordemInvertida = 0;
+  let foraDeQualquerFonte = 0;
+  const am = {
+    piso: '', deficit: '', carbo: '', gord: '', fecha: '', prot: '', coerente: '',
+    plato: '', foraFonte: '', ordem: '',
+  };
   const porObjetivo = {};
 
   for (const c of corpos) {
@@ -2911,42 +2938,78 @@ console.log('\n33. Meta de nutrição por dia de dieta (N3, N8)');
       naoFecha++;
       am.fecha ||= `${rot}: macros somam ${soma} para meta ${meta.kcal}`;
     }
-    // (f) proteína dentro da faixa que a evidência aberta sustenta, medida
-    //     onde ela é medida: por kg de MASSA MAGRA (Helms 2014: 2,3-3,1 em
-    //     déficit).
+    // ── (f) PROTEÍNA — as DUAS unidades, em TODO objetivo (N17) ──────────
     //
-    // UNIDADE E ESCOPO: os objetivos de DÉFICIT, que são os que N3 unificou.
-    // Hipertrofia e manutenção continuam sobre o peso total (1,9 e 1,8 g/kg) e
-    // isso está medido logo abaixo, em (f2), em vez de escondido: mudar a
-    // proteína do bulking não é o que o achado pede, e a consequência (quem
-    // tem gordura alta em "ganhar massa" recebe até 4,2 g/kg de massa magra)
-    // está registrada para o Leonardo decidir.
+    // UNIDADE: **g por kg de massa magra** (teto) *e* **g por kg de peso**
+    // (piso). As duas, sempre, nos quatro objetivos.
+    //
+    // A régua anterior media déficit em massa magra e ganho em peso, e a de
+    // ganho era **aritmeticamente incapaz de falhar**: a proteína de
+    // hipertrofia ERA `round(peso × 1,9)`, então `proteina/peso` valia 1,9 e a
+    // faixa cobrada era 1,4-2,0. O comentário logo acima dela descrevia o
+    // defeito com precisão ("quem tem gordura alta em ganhar massa recebe até
+    // 4,2 g/kg de massa magra") enquanto a asserção media na unidade em que
+    // esse defeito é invisível. Quarta vez neste projeto: M3 do cardio, este
+    // (f2), e as duas do G2.
+    //
+    // Cada unidade só pega o defeito que mora nela, e é por isso que precisam
+    // ser as duas:
+    //   · **peso** não pega proteína que ignora a composição corporal (N3:
+    //     264 g para 120 kg com 40% de gordura é 2,2 g/kg de peso — dentro de
+    //     qualquer faixa medida em peso, e alimentando 48 kg de gordura).
+    //   · **massa magra** não pega proteína abaixo do platô de dose-resposta
+    //     (Morton 2018, 1,62 g/kg de PESO, IC 1,03-2,20 — a meta-análise que
+    //     define onde o ganho para de subir, e ela é por peso total).
+    //
+    // Teto: 3,1 g/kg de massa magra (Helms 2014, topo da faixa de atleta em
+    // corte agressivo). Piso: 1,6 g/kg de peso (Morton). Onde os dois se
+    // contradizem — gordura acima de ~48%, em que o piso sozinho já estoura o
+    // teto — nenhuma fonte cobre o corpo, e a exigência passa a ser que o app
+    // DIGA isso em vez de imprimir um número com cara de prescrição.
     const gPorKgMM = meta.proteina_g / massaMagra;
-    if (['emagrecimento', 'recomposicao'].includes(c.objetivo) && (gPorKgMM > 3.1 || gPorKgMM < 1.6)) {
-      proteinaForaDaFaixa++;
-      am.prot ||= `${rot}: ${meta.proteina_g} g = ${gPorKgMM.toFixed(2)} g/kg de massa magra`;
+    const gPorKgPeso = meta.proteina_g / c.pesoKg;
+    if (gPorKgPeso < 1.6 - 0.02) {
+      proteinaAbaixoDoPlato++;
+      am.plato ||= `${rot}: ${meta.proteina_g} g = ${gPorKgPeso.toFixed(2)} g/kg de peso (platô de Morton 1,62)`;
     }
-    // (f2) e onde a régua é o peso total, ela é a da ISSN: 1,4-2,0 g/kg/dia.
-    if (['hipertrofia', 'manutencao'].includes(c.objetivo)) {
-      const gPorKgPeso = meta.proteina_g / c.pesoKg;
-      if (gPorKgPeso > 2.0 || gPorKgPeso < 1.4) {
+    if (gPorKgMM > 3.1) {
+      // Passar do teto de Helms só se justifica quando o PISO de Morton
+      // obrigou — acima de ~48% de gordura os dois se contradizem, e aí
+      // nenhum denominador cobre o corpo. Fora disso é defeito.
+      if (gPorKgPeso > 1.6 + 0.02) {
         proteinaForaDaFaixa++;
-        am.prot ||= `${rot}: ${meta.proteina_g} g = ${gPorKgPeso.toFixed(2)} g/kg de peso`;
+        am.prot ||= `${rot}: ${meta.proteina_g} g = ${gPorKgMM.toFixed(2)} g/kg de massa magra (teto 3,1), e o piso de Morton não obrigava (${gPorKgPeso.toFixed(2)} g/kg de peso)`;
+      } else {
+        // O piso obrigou — e aí o app tem que DIZER que o número saiu da
+        // faixa de toda fonte aberta. Impresso liso ao lado dos que estão
+        // dentro, ele é indistinguível de prescrição.
+        foraDeQualquerFonte++;
+        if (!avisos.some((a) => /faixa|fonte|estimativa|referência/i.test(a))) {
+          semDeclararForaDaFaixa++;
+          am.foraFonte ||= `${rot}: ${gPorKgMM.toFixed(2)} g/kg de massa magra sem nenhum aviso`;
+        }
       }
     }
   }
 
-  // (g) o MESMO corpo em déficit não pode receber duas proteínas muito
-  //     diferentes só porque marcou "perder gordura" em vez de "recomposição".
-  //     É a incoerência de modelo que N3 descreve: 264 g contra 173 g.
+  // ── (g) e (h): a unidade é o PAR DE OBJETIVOS PARA O MESMO CORPO ───────
+  //
+  // Nenhuma régua de um corpo só pega isto. As proteínas de déficit e de
+  // superávit podem estar ambas dentro das faixas, cada uma na sua unidade, e
+  // **na ordem errada uma em relação à outra** — que é exatamente o estado que
+  // a Fase 5 criou ao consertar um ramo e não olhar o outro. A comparação é a
+  // medição; separadas, as duas passam.
   const chaveCorpo = (c) => `${c.pesoKg}/${c.gorduraReal}/${c.genero}/${c.alturaCm}/${c.idadeAnos}/${c.nivel}/${c.gorduraPct === null}`;
   const porCorpo = new Map();
-  for (const o of ['emagrecimento', 'recomposicao'])
+  for (const o of OBJETIVOS)
     for (const c of porObjetivo[o] ?? []) {
       const k = chaveCorpo(c);
       if (!porCorpo.has(k)) porCorpo.set(k, {});
       porCorpo.get(k)[o] = c;
     }
+
+  // (g) o mesmo corpo em déficit não recebe duas proteínas diferentes só
+  //     porque marcou "perder gordura" em vez de "recomposição" (N3).
   let piorRazao = 1;
   for (const [, par] of porCorpo) {
     if (!par.emagrecimento || !par.recomposicao) continue;
@@ -2960,16 +3023,54 @@ console.log('\n33. Meta de nutrição por dia de dieta (N3, N8)');
     piorRazao = Math.max(piorRazao, razao);
   }
 
+  // (h) ORDENAÇÃO — proteína em restrição calórica nunca abaixo da de
+  //     superávit, para o MESMO corpo (N11).
+  //
+  // A evidência afirma a direção explicitamente: a ISSN dá 2,3-3,1 g/kg em
+  // restrição contra 1,4-2,0 geral, e Helms escala com a severidade do
+  // déficit — em déficit a proteína tem dupla função, construir e proteger.
+  // Antes da Fase 5 a ordem estava certa por acidente (264 g de emagrecimento
+  // contra 228 de hipertrofia, os dois sobre o peso total). Depois dela, e só
+  // acima de ~21% de gordura, "ganhar massa" passou a receber MAIS: o ponto de
+  // cruzamento é algébrico, `2,4 × (1 − GC) = 1,9` → GC = 20,8%, e nenhuma
+  // régua olhava os dois ramos ao mesmo tempo.
+  let piorInversao = 0;
+  for (const [, par] of porCorpo)
+    for (const d of ['emagrecimento', 'recomposicao'])
+      for (const s of ['hipertrofia', 'manutencao']) {
+        if (!par[d] || !par[s]) continue;
+        const pd = par[d].meta.proteina_g;
+        const ps = par[s].meta.proteina_g;
+        if (ps > pd + 1) {
+          ordemInvertida++;
+          const gc = par[d].gorduraReal;
+          am.ordem ||= `${par[d].pesoKg}kg/${gc}%: ${d} ${pd} g < ${s} ${ps} g (${(ps / (par[d].pesoKg * (1 - gc / 100))).toFixed(2)} g/kg de massa magra no superávit)`;
+          piorInversao = Math.max(piorInversao, ps - pd);
+        }
+      }
+
   console.log(`   grade: ${corpos.length} corpos (peso 50-140, gordura 8-45%, 4 objetivos, 2 gêneros, com/sem bio)`);
   ok('(a) meta automática nunca abaixo do metabolismo basal', semPiso === 0, `${semPiso} — ${am.piso}`);
   ok('(b) déficit nunca acima do que a gordura corporal entrega', deficitDemais === 0, `${deficitDemais} — ${am.deficit}`);
   ok('(c) carboidrato em 0 g nunca em silêncio', carboZeroCalado === 0, `${carboZeroCalado} — ${am.carbo}`);
   ok('(d) gordura nunca abaixo de 20% das calorias', gorduraBaixa === 0, `${gorduraBaixa} — ${am.gord}`);
   ok('(e) os macros sempre fecham a caloria da meta', naoFecha === 0, `${naoFecha} — ${am.fecha}`);
-  ok('(f) déficit: proteína entre 1,6 e 3,1 g/kg de MASSA MAGRA; ganho: 1,4-2,0 g/kg de peso',
+  ok('(f) TODO objetivo: proteína no máx. 3,1 g/kg de MASSA MAGRA (Helms)',
      proteinaForaDaFaixa === 0, `${proteinaForaDaFaixa} — ${am.prot}`);
+  ok('(f2) TODO objetivo: proteína no mín. 1,6 g/kg de PESO (platô de Morton)',
+     proteinaAbaixoDoPlato === 0, `${proteinaAbaixoDoPlato} — ${am.plato}`);
+  ok('(f3) corpo que nenhuma fonte cobre recebe a estimativa DECLARADA, não um número liso',
+     semDeclararForaDaFaixa === 0, `${semDeclararForaDaFaixa} de ${foraDeQualquerFonte} — ${am.foraFonte}`);
+  // Sem esta linha, (f3) passa por vacuidade: se nenhum corpo da grade
+  // estourasse a faixa, ela seria uma asserção que não pode falhar — o defeito
+  // que esta fase inteira existe para consertar.
+  ok('(f3) e havia corpos fora da faixa para medir (a régua não passou por vacuidade)',
+     foraDeQualquerFonte > 0, `${foraDeQualquerFonte} de ${corpos.length} corpos acima de 3,1 g/kg de massa magra`);
   ok('(g) o mesmo corpo em déficit recebe a mesma proteína nos dois objetivos',
      incoerenteObjetivo === 0, `${incoerenteObjetivo} — ${am.coerente} (pior razão ${piorRazao.toFixed(2)}×)`);
+  ok('(h) proteína em déficit NUNCA abaixo da de superávit, no mesmo corpo',
+     ordemInvertida === 0,
+     `${ordemInvertida} par(es) invertidos, pior por ${piorInversao} g — ${am.ordem}`);
 
   // ── A meta MANUAL, que é onde o carbo ia a zero em silêncio ────────────
   //
@@ -3029,6 +3130,133 @@ console.log('\n33. Meta de nutrição por dia de dieta (N3, N8)');
        avisos.join(' | ') || 'nenhum aviso');
   }
 
+  // ── O TETO DE DÉFICIT, conferido contra a FONTE (N12) ─────────────────
+  //
+  // UNIDADE: **kcal por dia para um corpo** — mas a pergunta é sobre a
+  // CONSTANTE, não sobre o encanamento. O invariante (b) acima mede o clamp
+  // usando a própria `deficitMaximoSeguro` como referência: ele prova que o
+  // freio está ligado e não pode dizer nada sobre o número do freio estar
+  // certo. Enquanto a função era código morto isso não custava nada; a Fase 5
+  // a ligou como piso calórico e o número entrou na meta de todo mundo.
+  //
+  // Alpert 2005 (https://pubmed.ncbi.nlm.nih.gov/15615615/, aberto e conferido):
+  // *"a value of (290+/-25) kJ/kgd"*. A conversão é feita aqui, na frente, em
+  // vez de num número mágico: 290 / 4,184 = **69,3 kcal por kg de gordura por
+  // dia**. Os 31 do código são o valor por LIBRA (31,4 kcal/lb ≈ 69,2 kcal/kg)
+  // aplicado por quilograma — 2,2× mais apertado que a fonte, o que INFLA a
+  // meta de quem é magro em vez de proteger.
+  //
+  // E o teto de verdade da literatura aplicada não é esse: é taxa de perda,
+  // 0,5-1,0% do peso por semana (Ruiz-Castellano 2021, Nutrients 13(9):3255,
+  // https://pmc.ncbi.nlm.nih.gov/articles/PMC8471721/, aberto e conferido).
+  // Os dois são teto; o que vale é o menor.
+  {
+    const ALPERT_KJ_POR_KG_DIA = 290; // Alpert 2005
+    const KJ_POR_KCAL = 4.184;
+    const TAXA_MAX_SEMANAL = 0.01; // Ruiz-Castellano 2021, topo da faixa
+    const KCAL_POR_KG_GORDURA = 7700;
+    const tetoDaFonte = (pesoKg, gorduraPct) =>
+      Math.min(
+        ((pesoKg * gorduraPct) / 100) * (ALPERT_KJ_POR_KG_DIA / KJ_POR_KCAL),
+        (pesoKg * TAXA_MAX_SEMANAL * KCAL_POR_KG_GORDURA) / 7
+      );
+
+    let foraDaFonte = 0, amostraFonte = '';
+    for (const [pesoKg, gorduraPct] of [[75, 8], [62, 12], [88, 27.2], [100, 20], [120, 40], [140, 45], [50, 45]]) {
+      const codigo = deficitMaximoSeguro(pesoKg, gorduraPct);
+      const fonte = tetoDaFonte(pesoKg, gorduraPct);
+      if (Math.abs(codigo - fonte) > Math.max(3, fonte * 0.02)) {
+        foraDaFonte++;
+        amostraFonte ||= `${pesoKg}kg/${gorduraPct}%: código ${codigo} kcal, fonte ${Math.round(fonte)} kcal`;
+      }
+    }
+    ok('o teto de déficit vale o que a fonte diz, nas unidades da fonte',
+       foraDaFonte === 0, `${foraDaFonte} de 7 — ${amostraFonte}`);
+
+    // O caso que a revisora abriu: quem é magro é quem paga a conversão errada.
+    // 75 kg com 8% de gordura tem 6 kg de gordura; a 69,3 kcal/kg isso são
+    // 416 kcal/dia, e a 31 são 186 — o déficit de 15% (386 kcal) é cortado
+    // para 186 e a meta SOBE 200 kcal sem que nada esteja errado com ela.
+    const magro = deficitMaximoSeguro(75, 8);
+    ok('e o corpo magro não é o que mais sofre com o teto',
+       magro > 380, `${magro} kcal/dia para 6 kg de gordura (Alpert: 416)`);
+
+    // Nenhum teto pode autorizar perda acima de 1%/semana, por mais gordura
+    // que o corpo tenha: 63 kg de gordura × 69,3 dariam 4.366 kcal/dia.
+    let acimaDaTaxa = 0, amostraTaxa = '';
+    for (const c of corpos) {
+      const gPct = c.gorduraPct ?? gorduraPorImc(c.pesoKg, c.alturaCm, c.idadeAnos, c.genero);
+      const pctSemana = (deficitMaximoSeguro(c.pesoKg, gPct) * 7) / KCAL_POR_KG_GORDURA / c.pesoKg;
+      if (pctSemana > TAXA_MAX_SEMANAL + 0.0005) {
+        acimaDaTaxa++;
+        amostraTaxa ||= `${c.pesoKg}kg/${gPct}%: ${(pctSemana * 100).toFixed(2)}% do peso por semana`;
+      }
+    }
+    ok('e nenhum teto autoriza perder mais de 1% do peso por semana',
+       acimaDaTaxa === 0, `${acimaDaTaxa} — ${amostraTaxa}`);
+
+    // A tela imprime a explicação. Ela citava os 31 kcal/kg como se fossem a
+    // fonte — número errado dito com a autoridade de um artigo.
+    const FONTE_RECOMP = readFileSync(new URL('../src/features/perfil/recomposicao.ts', import.meta.url), 'utf8');
+    ok('e nenhum texto do app ainda cita os 31 kcal por kg como sendo Alpert',
+       !/31\s*kcal/i.test(FONTE_RECOMP) && !/gorduraKg \* 31/.test(FONTE_RECOMP),
+       /31\s*kcal/i.test(FONTE_RECOMP) ? 'recomposicao.ts ainda diz 31 kcal/kg' : 'corrigido');
+  }
+
+  // ── O ramo sem altura nem idade, que a grade nunca tocou (N20) ─────────
+  //
+  // UNIDADE: **dia de dieta sem composição corporal**. `dadosParaEstimar`
+  // devolve `undefined` quando falta altura ou idade, e aí `massaMagraDe` é
+  // `null`: o cálculo cai num terceiro ramo que a grade acima nunca exercita,
+  // porque ela sempre passa `estimar`. É o ramo em que o app não sabe NADA
+  // sobre composição — e é justamente onde a ordenação entre objetivos tem
+  // que continuar valendo, porque não há denominador para escondê-la.
+  {
+    let semDadosOrdem = 0, semDadosFaixa = 0, semDadosMudo = 0;
+    const amSem = { ordem: '', faixa: '', mudo: '' };
+    for (const pesoKg of PESOS)
+      for (const genero of GENEROS) {
+        const basal = tmb(pesoKg, 172, 34, genero);
+        const gasto = tdee(basal, 'moderado');
+        const semDados = {};
+        for (const objetivo of OBJETIVOS) {
+          const r = calcular({
+            tdee: gasto, basal, pesoKg, objetivo,
+            gorduraPct: null, estimar: undefined, genero,
+          }) ?? {};
+          semDados[objetivo] = r;
+          const gPorKgPeso = (r.meta?.proteina_g ?? 0) / pesoKg;
+          // Sem composição corporal a única régua honesta é a da ISSN, que é
+          // por peso total: 1,4-2,0 g/kg/dia (Jäger 2017).
+          if (gPorKgPeso > 2.0 + 0.02 || gPorKgPeso < 1.4 - 0.02) {
+            semDadosFaixa++;
+            amSem.faixa ||= `${pesoKg}kg/${genero}/${objetivo}: ${gPorKgPeso.toFixed(2)} g/kg de peso`;
+          }
+          // E a tela precisa dizer que não há composição corporal na conta.
+          const base = r.baseCalculo ?? '';
+          if (!/sem dados|sem bioimped|não foi possível|sem estimar|peso/i.test(base)) {
+            semDadosMudo++;
+            amSem.mudo ||= `${pesoKg}kg/${objetivo}: "${base}"`;
+          }
+        }
+        for (const d of ['emagrecimento', 'recomposicao'])
+          for (const s of ['hipertrofia', 'manutencao']) {
+            const pd = semDados[d]?.meta?.proteina_g ?? 0;
+            const ps = semDados[s]?.meta?.proteina_g ?? 0;
+            if (ps > pd + 1) {
+              semDadosOrdem++;
+              amSem.ordem ||= `${pesoKg}kg/${genero}: ${d} ${pd} g < ${s} ${ps} g`;
+            }
+          }
+      }
+    ok('sem altura nem idade, a ordem entre déficit e superávit continua valendo',
+       semDadosOrdem === 0, `${semDadosOrdem} — ${amSem.ordem}`);
+    ok('e a proteína fica na faixa da ISSN por peso total (1,4-2,0 g/kg)',
+       semDadosFaixa === 0, `${semDadosFaixa} — ${amSem.faixa}`);
+    ok('e a tela diz que a conta saiu sem composição corporal',
+       semDadosMudo === 0, `${semDadosMudo} — ${amSem.mudo}`);
+  }
+
   // O caso literal do achado N3.
   {
     const basal = tmb(120, 178, 38, 'masculino');
@@ -3040,72 +3268,247 @@ console.log('\n33. Meta de nutrição por dia de dieta (N3, N8)');
     ok('120 kg com 40% de gordura em "perder gordura" não recebe 264 g de proteína',
        p > 0 && p < 200, `${p} g (massa magra 72 kg)`);
   }
+
+  // ── Os três corpos da revisora, com a inversão nomeada (N11) ───────────
+  //
+  // A tabela que a revisão de nutrição levantou contra `c241562`. Fora da
+  // grade porque são os números que ela leu na tela, com nome e sobrenome —
+  // e porque um deles é o do Leonardo.
+  {
+    const proteinaDe = (pesoKg, gorduraPct, objetivo, alturaCm, idadeAnos, genero) => {
+      const basal = tmb(pesoKg, alturaCm, idadeAnos, genero);
+      const r = calcular({
+        tdee: tdee(basal, 'moderado'), basal, pesoKg, objetivo, gorduraPct,
+        estimar: { alturaCm, idade: idadeAnos, genero }, genero,
+      });
+      return r?.meta?.proteina_g ?? 0;
+    };
+    for (const [rot, pesoKg, gorduraPct, alturaCm, idadeAnos, genero] of [
+      ['120 kg / 40%', 120, 40, 178, 38, 'masculino'],
+      ['88 kg / 27,2% (Leonardo)', 88, 27.2, 178, 38, 'masculino'],
+      ['62 kg / 12%', 62, 12, 172, 30, 'masculino'],
+    ]) {
+      const d = proteinaDe(pesoKg, gorduraPct, 'emagrecimento', alturaCm, idadeAnos, genero);
+      const s = proteinaDe(pesoKg, gorduraPct, 'hipertrofia', alturaCm, idadeAnos, genero);
+      const mm = pesoKg * (1 - gorduraPct / 100);
+      ok(`${rot}: "ganhar massa" não recebe mais proteína que "perder gordura"`,
+         s <= d + 1,
+         `déficit ${d} g (${(d / mm).toFixed(2)} g/kg MM) × superávit ${s} g (${(s / mm).toFixed(2)} g/kg MM)`);
+    }
+  }
 }
 
-// ── 34. O TMB medido envelhece (N6) ────────────────────────────────────────
+// ── 34. A medição ENVELHECE em vez de expirar — TMB e gordura (N15, N18) ───
 //
 // UNIDADE: **dia de dieta**, de novo — mas a pergunta é outra: com que número o
-// dia é calculado. Depois de uma bioimpedância, `usa_tmb_medido = 1` para
-// sempre. Recomposição funcionando = peso caindo = TMB real caindo; com o TMB
-// de três meses atrás o TDEE fica superestimado e o "déficit de 15%" vira 8-10%
-// real. O progresso trava e nada na tela explica.
-console.log('\n34. TMB medido tem validade e ela é dita (N6)');
+// dia é calculado, e o que acontece com esse número conforme o corpo anda.
+//
+// ── O que a Fase 5 fez, e por que meia solução é pior que nenhuma ─────────
+//
+// N6 pôs validade no TMB da bioimpedância (desvio de peso > 3%, idade > 8
+// semanas) e deixou o **`gordura_pct` da mesma linha** valer para sempre. É a
+// mesma medição, do mesmo dia, do mesmo aparelho, com duas políticas
+// contraditórias dentro do mesmo `resumo()` — e é o `gordura_pct` que decide a
+// proteína, ou seja a política que ficou de fora é a que mais pesa.
+//
+// Pior: misturar o peso de HOJE com a gordura de três meses atrás assume que
+// todo peso ganho ou perdido teve a composição da medição antiga. E
+// `massaMagraDe` devolve `estimada: false` nesse caso — palpite impresso com a
+// etiqueta de medição.
+//
+// ── E a expiração é desproporcional (N18) ────────────────────────────────
+//
+// Os gatilhos são defensáveis como números e a política é grosseira. O
+// Leonardo cai pelos dois (4,39% de desvio e 92 dias) e o que a expiração
+// troca são **35 kcal**, num caso em que a fórmula acertou com 2 kcal de
+// diferença — e ele veria um card laranja de alerta por isso. Além disso o
+// dano que N6 descreve (TMB velho superestimando o gasto) só existe quando o
+// peso CAI; ele subiu, que é o lado seguro, e a regra trata os dois sentidos
+// igual.
+//
+// ── A política, uma só para os dois ──────────────────────────────────────
+//
+// Envelhecimento, não expiração: guardar `offset = medido − estimado(peso da
+// medição)` e usar `estimativa(peso de hoje) + offset`, com o offset decaindo
+// a zero ao longo de ~16 semanas. Acompanha o peso sozinho, não descarta nada,
+// não precisa de card de alerta, e preserva a informação individual em vez de
+// jogá-la fora. Nada armazenado além do que `body_metrics` já tem.
+console.log('\n34. A medição envelhece em vez de expirar (N15, N18)');
 {
-  ok('existe uma regra de vigência para o TMB medido', typeof META.tmbVigente === 'function',
-     typeof META.tmbVigente);
+  ok('existe UMA regra de envelhecimento, e ela é uma função', typeof META.envelhecer === 'function',
+     typeof META.envelhecer);
+  ok('existe a vigência do TMB', typeof META.tmbVigente === 'function', typeof META.tmbVigente);
+  ok('e existe a vigência da GORDURA, que é quem decide a proteína',
+     typeof META.gorduraVigente === 'function',
+     typeof META.gorduraVigente === 'function' ? 'gorduraVigente' : 'a gordura da bioimpedância vale para sempre');
+
+  const envelhecer = META.envelhecer ?? ((_o, dias) => (dias === null ? 1 : dias === 0 ? 1 : 0));
+  ok('o offset nasce inteiro e chega a zero em 16 semanas',
+     Math.abs(envelhecer(1, 0) - 1) < 0.001 && Math.abs(envelhecer(1, 112)) < 0.001 &&
+       Math.abs(envelhecer(1, 56) - 0.5) < 0.02,
+     `dia 0 = ${envelhecer(1, 0).toFixed(3)}, dia 56 = ${envelhecer(1, 56).toFixed(3)}, dia 112 = ${envelhecer(1, 112).toFixed(3)}`);
+
+  // Mifflin-St Jeor com os dados do Leonardo — a mesma função que o app usa.
+  const ALT = 178, IDADE = 38, GEN = 'masculino';
+  const mifflin = (pesoKg) => tmb(pesoKg, ALT, IDADE, GEN);
   const vigente =
     META.tmbVigente ??
-    // Fallback = a regra de hoje: medido ganha da estimativa, sempre.
+    // Fallback = a regra de HOJE (expiração dura), para o gate poder rodar
+    // contra `bfb4e91` e falhar por asserção em vez de morrer no link.
     ((e) => ({ valor: e.medidoKcal ?? e.estimado, medido: e.medidoKcal != null, motivo: null }));
 
-  const cenario = (extra) =>
-    vigente({
-      medidoKcal: 1980, medidoEm: '2026-06-01', pesoNaMedicao: 88,
-      pesoAtual: 88, estimado: 1850, hojeIso: '2026-06-15', ...extra,
+  const cenario = (extra) => {
+    const pesoNaMedicao = extra.pesoNaMedicao ?? 88;
+    const pesoAtual = extra.pesoAtual ?? 88;
+    return vigente({
+      medidoKcal: 1980,
+      medidoEm: '2026-06-01',
+      pesoNaMedicao,
+      pesoAtual,
+      estimadoNaMedicao: mifflin(pesoNaMedicao),
+      estimado: mifflin(pesoAtual),
+      hojeIso: '2026-06-01',
+      ...extra,
     });
+  };
 
-  const fresco = cenario({});
-  ok('medição recente e peso igual: o medido vale', fresco.medido === true && fresco.valor === 1980,
-     `${fresco.valor} (medido=${fresco.medido})`);
+  const hoje = cenario({});
+  ok('medição de hoje, peso de hoje: o número é o medido, sem ajuste',
+     Math.abs(hoje.valor - 1980) <= 1, `${hoje.valor} (esperado 1980)`);
 
-  const magrou = cenario({ pesoAtual: 82 });
-  ok('peso 6,8% abaixo do dia da medição: volta para a estimativa',
-     magrou.medido === false && magrou.valor === 1850, `${magrou.valor} (medido=${magrou.medido})`);
-  ok('e o motivo diz o peso da medição e o de hoje',
-     typeof magrou.motivo === 'string' && /88/.test(magrou.motivo) && /82/.test(magrou.motivo),
-     magrou.motivo ?? 'sem motivo');
+  // ── O que a expiração jogava fora: a informação individual ─────────────
+  //
+  // A bioimpedância disse que este corpo gasta 172 kcal a mais do que a
+  // fórmula prevê para ele. Esse offset é a única coisa que a medição
+  // acrescenta — e ela continua valendo quando o peso muda, só que aplicada
+  // sobre a estimativa do peso NOVO. Descartar tudo porque o peso mudou 3% é
+  // jogar fora o que a medição tinha de próprio junto com o que ela tinha de
+  // velho.
+  const offsetReal = 1980 - mifflin(88);
+  const magrou = cenario({ pesoAtual: 82, hojeIso: '2026-06-15' });
+  const esperadoMagrou = mifflin(82) + offsetReal * envelhecer(1, 14);
+  ok('peso 6,8% abaixo: o número acompanha o peso novo em vez de ser descartado',
+     Math.abs(magrou.valor - esperadoMagrou) <= 2,
+     `${magrou.valor} (esperado ${Math.round(esperadoMagrou)}; a estimativa pura daria ${Math.round(mifflin(82))})`);
+  ok('e ele fica ENTRE a estimativa pura e a medição crua',
+     magrou.valor > mifflin(82) && magrou.valor < 1980,
+     `${Math.round(mifflin(82))} < ${magrou.valor} < 1980`);
 
-  const velho = cenario({ hojeIso: '2026-09-20' });
-  ok('medição de mais de 8 semanas atrás expira', velho.medido === false && velho.valor === 1850,
-     `${velho.valor} (medido=${velho.medido})`);
-  ok('e o motivo diz a data da medição',
-     typeof velho.motivo === 'string' && /01\/06|2026-06-01/.test(velho.motivo),
-     velho.motivo ?? 'sem motivo');
+  // ── Sem degrau: é isto que separa envelhecer de expirar ────────────────
+  //
+  // A régua que a expiração não passa. Dois dias consecutivos em torno do
+  // antigo corte de 8 semanas trocavam 134 kcal de uma vez — um número que
+  // muda sozinho, de uma quinta para uma sexta, sem nada ter acontecido com o
+  // corpo. É o defeito que a própria Fase 5 nomeou ("um número que muda
+  // sozinho e não se explica é pior que o número velho") aplicado à regra que
+  // ela escreveu para consertá-lo.
+  const emDias = (d) => {
+    const base = Date.parse('2026-06-01') + d * 86_400_000;
+    return cenario({ hojeIso: new Date(base).toISOString().slice(0, 10) });
+  };
+  let maiorDegrau = 0, ondeDegrau = '';
+  for (let d = 1; d <= 130; d++) {
+    const salto = Math.abs(emDias(d).valor - emDias(d - 1).valor);
+    if (salto > maiorDegrau) { maiorDegrau = salto; ondeDegrau = `dia ${d - 1} → ${d}`; }
+  }
+  ok('o número nunca dá um degrau: de um dia para o outro muda no máximo 4 kcal',
+     maiorDegrau <= 4, `maior salto ${Math.round(maiorDegrau)} kcal (${ondeDegrau})`);
 
-  const engordou = cenario({ pesoAtual: 95 });
-  ok('desvio para cima também expira (o TMB medido subiu junto)',
-     engordou.medido === false, `${engordou.valor} (medido=${engordou.medido})`);
+  // Depois de 16 semanas o offset acabou e o que resta é a fórmula pura — sem
+  // aviso, porque nada de estranho aconteceu: a medição envelheceu.
+  const antiga = cenario({ hojeIso: '2026-10-01' }); // 122 dias
+  ok('depois de 16 semanas sobra a estimativa pura',
+     Math.abs(antiga.valor - mifflin(88)) <= 1, `${antiga.valor} (fórmula: ${Math.round(mifflin(88))})`);
 
-  const quase = cenario({ pesoAtual: 86.5 });
-  ok('desvio pequeno (1,7%) não joga fora uma medição boa', quase.medido === true,
-     `${quase.valor} (medido=${quase.medido})`);
+  // ── O caso do Leonardo, que caía pelos DOIS gatilhos (N18) ─────────────
+  const leo = cenario({ pesoAtual: 91.86, hojeIso: '2026-09-01' }); // 92 dias, +4,39%
+  ok('92 dias e 4,39% de desvio não viram card laranja de alerta',
+     !leo.motivo && leo.origem === 'ajustado',
+     `motivo: ${leo.motivo ?? 'nenhum'} · origem: ${leo.origem} — a medição envelheceu, não expirou`);
+  ok('e o que a expiração trocaria é pequeno demais para virar alerta',
+     Math.abs(leo.valor - mifflin(91.86)) < 60,
+     `${leo.valor} contra ${Math.round(mifflin(91.86))} da fórmula pura — ${Math.round(Math.abs(leo.valor - mifflin(91.86)))} kcal de diferença`);
 
   const semMedida = vigente({
-    medidoKcal: null, medidoEm: null, pesoNaMedicao: null,
-    pesoAtual: 88, estimado: 1850, hojeIso: '2026-06-15',
+    medidoKcal: null, medidoEm: null, pesoNaMedicao: null, estimadoNaMedicao: null,
+    pesoAtual: 88, estimado: mifflin(88), hojeIso: '2026-06-15',
   });
   ok('sem bioimpedância nenhuma, usa a estimativa sem inventar motivo',
-     semMedida.medido === false && semMedida.valor === 1850 && !semMedida.motivo,
+     semMedida.medido === false && Math.abs(semMedida.valor - mifflin(88)) <= 1 && !semMedida.motivo,
      `${semMedida.valor} / ${semMedida.motivo ?? 'sem motivo'}`);
 
-  // E a tela de perfil diz. Um número que mudou sozinho e não se explica é
-  // pior que o número velho.
-  const FONTE_PERFIL = readFileSync(new URL('../app/(tabs)/perfil.tsx', import.meta.url), 'utf8');
-  ok('a tela de perfil mostra por que o TMB medido saiu de cena',
-     /tmbMotivo|motivoTmb|tmbAviso/.test(FONTE_PERFIL),
-     /tmbMotivo|motivoTmb|tmbAviso/.test(FONTE_PERFIL) ? 'exibe' : 'o número muda sozinho e ninguém explica');
-}
+  // ── N15: a GORDURA da mesma linha, pela MESMA política ─────────────────
+  {
+    const gv = META.gorduraVigente;
+    const estimar = { alturaCm: ALT, idade: IDADE, genero: GEN };
+    const chamar = (extra) =>
+      typeof gv === 'function'
+        ? gv({
+            medidoPct: 27.2, medidoEm: '2026-06-01', pesoNaMedicao: 88,
+            pesoAtual: 88, hojeIso: '2026-06-01', estimar, ...extra,
+          })
+        : // Fallback = a regra de hoje: o percentual vale para sempre, cru.
+          { pct: 27.2, origem: 'bioimpedancia', diasDesde: null };
 
+    const g0 = chamar({});
+    ok('gordura medida hoje vale como medida',
+       Math.abs((g0?.pct ?? 0) - 27.2) < 0.05 && g0?.origem === 'bioimpedancia',
+       `${g0?.pct}% (${g0?.origem})`);
+
+    // A mesma medição, 92 dias depois e com 3,86 kg a mais. A gordura NÃO
+    // pode ser a mesma: assumir que todo o peso ganho tem a composição da
+    // medição antiga é a suposição que ninguém escreveu e o app faz.
+    const g1 = chamar({ pesoAtual: 91.86, hojeIso: '2026-09-01' });
+    ok('gordura de 3 meses atrás com 3,9 kg a mais não continua valendo crua',
+       Math.abs((g1?.pct ?? 27.2) - 27.2) > 0.15,
+       `${g1?.pct?.toFixed?.(1) ?? g1?.pct}% contra os 27,2% do dia da medição`);
+    ok('e ela deixa de se apresentar como medição',
+       g1?.origem !== 'bioimpedancia', `origem = ${g1?.origem}`);
+    ok('e ela também não dá degrau — é a mesma política do TMB',
+       typeof META.gorduraVigente === 'function' &&
+         typeof META.envelhecer === 'function' &&
+         /envelhecer\(/.test(readFileSync(new URL('../src/features/perfil/meta.ts', import.meta.url), 'utf8')),
+       'as duas vigências saem da mesma função de envelhecimento');
+
+    // E a massa magra precisa saber. `estimada: false` para um número que é
+    // metade medição e metade fórmula é o palpite com etiqueta de medição.
+    const mm = RECOMP.massaMagraDe?.(91.86, g1?.pct ?? 27.2, estimar, g1?.origem);
+    ok('a massa magra declara quando o percentual foi ajustado, não medido',
+       mm && mm.origem !== undefined && mm.origem !== 'bioimpedancia',
+       mm ? `origem = ${mm.origem}` : 'massaMagraDe não conhece origem');
+  }
+
+  // ── Uma política só, e ela chega às duas pontas do `resumo()` ──────────
+  const FONTE_API = readFileSync(new URL('../src/features/perfil/api.ts', import.meta.url), 'utf8');
+  ok('o resumo aplica a vigência à gordura, não só ao TMB',
+     /gorduraVigente/.test(FONTE_API),
+     /gorduraVigente/.test(FONTE_API) ? 'ligada' : 'bio?.gordura_pct entra cru no cálculo da proteína');
+
+  // ── E o texto para de dizer que a balança mede metabolismo ─────────────
+  //
+  // Ela não mede. Estima a massa livre de gordura por impedância e joga numa
+  // equação interna — é fórmula substituindo fórmula, não medição
+  // substituindo estimativa. Karagun & Baklaci 2024 (Medicine 103(35):e39542,
+  // https://pmc.ncbi.nlm.nih.gov/articles/PMC11365691/, aberto e conferido):
+  // a BIA superestima em ~185 kcal contra calorimetria indireta e só 36,1%
+  // dos casos caem dentro de ±10%. Vender isso como "o seu TMB real" é o
+  // motivo de a Fase 5 ter dado à balança poder de veto sobre a fórmula.
+  const FONTE_AJUDAS = readFileSync(new URL('../src/shared/ajudas.ts', import.meta.url), 'utf8');
+  ok('o app não diz mais que a bioimpedância MEDE o metabolismo',
+     !/ela mede o seu TMB real/i.test(FONTE_AJUDAS),
+     /ela mede o seu TMB real/i.test(FONTE_AJUDAS) ? 'ajudas.ts ainda promete medição' : 'corrigido');
+  ok('e diz que ela estima por equação, com a ordem de grandeza do erro',
+     /equação|equacao/i.test(FONTE_AJUDAS) && /impedância|impedancia/i.test(FONTE_AJUDAS) &&
+       /185|36,1|36\.1/.test(FONTE_AJUDAS),
+     'o texto precisa dizer que é estimativa, por impedância, e quanto erra');
+
+  // A tela de perfil continua dizendo de onde o número vem — o que mudou é
+  // que agora existe um terceiro estado, "ajustado", e ele não é alerta.
+  const FONTE_PERFIL = readFileSync(new URL('../app/(tabs)/perfil.tsx', import.meta.url), 'utf8');
+  ok('a tela de perfil distingue medido, ajustado e estimado',
+     /ajustad/i.test(FONTE_PERFIL),
+     /ajustad/i.test(FONTE_PERFIL) ? 'exibe' : 'só medido × estimado, e o ajustado passa por medido');
+}
 // ── 35. O teclado nativo não cobre o campo do Sheet (U8) ───────────────────
 //
 // UNIDADE: a TELA — o mesmo da seção 27. `Sheet` é `Modal` + posição absoluta
@@ -3834,6 +4237,208 @@ console.log('\n40. B8 nível 1: a transição entre blocos (unidade nova)');
      /quebra/i.test(FONTE_TELA_EX) ? 'ligada' : 'o gráfico não sabe que a âncora mudou');
   ok('e existe como descobrir a quebra a partir das rotinas já salvas',
      /quebrasDeAncora|ancorasDaRotina/.test(FONTE_API), 'sem leitura no api.ts');
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FASE 5.1 — o que a Fase 5 criou na nutrição
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── 41. A meta manual sobrevive à próxima pesagem (N13, N14) ───────────────
+//
+// UNIDADE: **decisão de meta ao longo do tempo** — não a meta de um dia, mas o
+// que acontece com ela no dia seguinte. Nenhum invariante deste arquivo media
+// isso: a seção 33 varre 672 corpos num instante congelado, e o defeito só
+// existe no segundo instante.
+//
+// `recalcularMeta` grava `salvarMeta(macros, 'auto')` **sem olhar a origem da
+// meta vigente**, e roda em toda pesagem, toda bioimpedância e toda edição de
+// perfil. A pessoa ajusta para 1.800 kcal, lê os avisos, aceita — e na manhã
+// seguinte, ao se pesar, a meta volta para 2.464 sem nada na tela. A Fase 5
+// investiu a fase inteira em fazer o caminho manual bom (a escada de gordura,
+// os avisos, a conferência que soma) e ele é descartado na pesagem seguinte.
+//
+// E o vizinho de baixo (N14): `recalcularMeta` descarta os avisos
+// explicitamente (`const { avisos: _avisos, ...macros } = m;`), e `resumo()` só
+// usa `automatica.avisos` **quando não existe meta salva** — o que, depois do
+// onboarding, nunca acontece. Os avisos de N8 aparecem no onboarding e no botão
+// "Recalcular", e nunca mais. No estado estável o piso morde em silêncio.
+console.log('\n41. A meta manual sobrevive à pesagem, e o piso continua explicado (N13, N14)');
+{
+  const FONTE_API_PERFIL = readFileSync(new URL('../src/features/perfil/api.ts', import.meta.url), 'utf8');
+
+  // A decisão mora num módulo PURO, como a conta da meta já mora. Regra do
+  // projeto e lição da Fase 5: o que vive dentro de `api.ts` é inalcançável
+  // para este arquivo, e foi por isso que a proteína sobre o peso total
+  // sobreviveu anos sem nenhum invariante.
+  ok('a decisão de sobrescrever a meta é uma função pura, testável',
+     typeof META.decidirRecalculo === 'function',
+     typeof META.decidirRecalculo === 'function' ? 'decidirRecalculo' : 'a regra mora dentro de api.ts, fora do alcance do harness');
+
+  const decidir =
+    META.decidirRecalculo ??
+    // Fallback = a regra de hoje: grava sempre, sem olhar a origem.
+    (() => ({ gravar: true, aviso: null }));
+
+  const automatica = { kcal: 2464, proteina_g: 154, carbo_g: 300, gordura_g: 68 };
+
+  const semNada = decidir({ vigente: null, automatica });
+  ok('sem meta salva, a automática entra', semNada.gravar === true, JSON.stringify(semNada));
+
+  const eraAuto = decidir({
+    vigente: { kcal: 2400, proteina_g: 150, carbo_g: 290, gordura_g: 67, origem: 'auto' },
+    automatica,
+  });
+  ok('meta automática antiga é substituída pela nova', eraAuto.gravar === true, JSON.stringify(eraAuto));
+
+  const eraManual = decidir({
+    vigente: { kcal: 1800, proteina_g: 154, carbo_g: 170, gordura_g: 50, origem: 'manual' },
+    automatica,
+  });
+  ok('meta MANUAL não é sobrescrita pela pesagem da manhã seguinte',
+     eraManual.gravar === false, JSON.stringify(eraManual));
+  ok('e a pessoa fica sabendo qual seria a automática de hoje',
+     typeof eraManual.aviso === 'string' && /1\.?800/.test(eraManual.aviso) && /2\.?464/.test(eraManual.aviso),
+     eraManual.aviso ?? 'sem aviso — a meta manual continua valendo e ninguém diz nada');
+
+  // E o fio: as três telas que disparam o recálculo precisam usar a decisão.
+  ok('recalcularMeta consulta a origem da meta vigente antes de gravar',
+     /decidirRecalculo/.test(FONTE_API_PERFIL),
+     /decidirRecalculo/.test(FONTE_API_PERFIL) ? 'ligada' : "recalcularMeta grava 'auto' cego");
+
+  // ── N14: a razão da meta é calculada e jogada fora ──────────────────────
+  //
+  // As duas listas respondem perguntas diferentes, e a prova é aritmética:
+  // existem corpos em que a meta automática tem RAZÃO (o piso mordeu, e por
+  // quê) e zero ALERTA (ela é, por construção, uma meta correta). Para esses
+  // corpos, mostrar só `avisosDaMeta` apaga a explicação inteira.
+  {
+    const auditar = META.avisosDaMeta ?? (() => []);
+    const calcular2 = META.calcularMetaDetalhada;
+    // Grade própria: a da seção 33 mora dentro do bloco dela, e copiar o laço
+    // é mais honesto que vazar o escopo — aqui a pergunta é outra.
+    const corpos41 = [];
+    let i41 = 0;
+    for (const pesoKg of [50, 62, 75, 88, 105, 120, 140])
+      for (const gordura of [8, 15, 22, 30, 38, 45])
+        for (const objetivo of ['emagrecimento', 'recomposicao', 'hipertrofia', 'manutencao'])
+          for (const genero of ['masculino', 'feminino'])
+            for (const medida of [true, false]) {
+              corpos41.push({
+                pesoKg, gorduraReal: gordura, objetivo, genero,
+                alturaCm: [158, 172, 186][i41 % 3],
+                idadeAnos: [22, 34, 47, 58][i41 % 4],
+                nivel: ['sedentario', 'moderado', 'intenso'][i41 % 3],
+                gorduraPct: medida ? gordura : null,
+              });
+              i41++;
+            }
+    let razaoQueSomeria = 0, amostraRazao = '';
+    if (typeof calcular2 === 'function')
+      for (const c of corpos41) {
+        const basal = tmb(c.pesoKg, c.alturaCm, c.idadeAnos, c.genero);
+        const gasto = tdee(basal, c.nivel);
+        const estimar = { alturaCm: c.alturaCm, idade: c.idadeAnos, genero: c.genero };
+        const ctx = { basal, tdee: gasto, pesoKg: c.pesoKg, gorduraPct: c.gorduraPct, estimar, genero: c.genero, objetivo: c.objetivo };
+        const r = calcular2({ tdee: gasto, basal, pesoKg: c.pesoKg, objetivo: c.objetivo, gorduraPct: c.gorduraPct, estimar, genero: c.genero });
+        if ((r.avisos ?? []).length > 0 && auditar(r.meta, ctx).length === 0) {
+          razaoQueSomeria++;
+          amostraRazao ||= `${c.pesoKg}kg/${c.gorduraReal}%/${c.objetivo}: "${r.avisos[0].slice(0, 70)}…"`;
+        }
+      }
+    ok('existem corpos cuja RAZÃO some se a tela só mostrar o que está errado',
+       razaoQueSomeria > 0, `${razaoQueSomeria} de ${corpos41.length} — ex.: ${amostraRazao}`);
+    ok('por isso o resumo carrega a razão separada do alerta',
+       /razaoMeta/.test(FONTE_API_PERFIL),
+       /razaoMeta/.test(FONTE_API_PERFIL) ? 'razaoMeta + avisosMeta' : 'só avisosMeta, e ela some no estado estável');
+    ok('e recalcularMeta não joga mais os avisos no lixo',
+       !/avisos:\s*_avisos/.test(FONTE_API_PERFIL),
+       /avisos:\s*_avisos/.test(FONTE_API_PERFIL) ? 'ainda descarta com `const { avisos: _avisos, ...macros }`' : 'derivado na leitura');
+
+    // Regra 6: a razão é derivada, não é decisão. Gravá-la em
+    // `nutrition_targets` congelaria uma explicação que depende do peso de
+    // hoje — exatamente o histórico mentiroso que a regra proíbe.
+    const insert = FONTE_API_PERFIL.match(/INSERT INTO nutrition_targets[\s\S]{0,220}/)?.[0] ?? '';
+    ok('e a razão NÃO é gravada em nutrition_targets (regra 6)',
+       !/razao|motivo|aviso/i.test(insert), insert.replace(/\s+/g, ' ').slice(0, 110));
+  }
+
+  // A tela precisa mostrar as duas com rótulos diferentes. "Duas listas de
+  // texto laranja" seria a mesma coisa que uma.
+  const FONTE_PERFIL_TELA = readFileSync(new URL('../app/(tabs)/perfil.tsx', import.meta.url), 'utf8');
+  ok('a tela de perfil mostra a razão e o alerta como coisas diferentes',
+     /razaoMeta/.test(FONTE_PERFIL_TELA),
+     /razaoMeta/.test(FONTE_PERFIL_TELA) ? 'dois blocos' : 'a tela só conhece avisosMeta');
+}
+
+// ── 42. Treino à noite não perde o pós-treino (N10) ───────────────────────
+//
+// UNIDADE: **plano de refeições de um dia** — as fatias de caloria de um dia
+// inteiro, que precisam somar o dia inteiro.
+//
+// `planoDoDia` corta o ramo `noite` com `slice(0, max(3, refeicoesPorDia))` e
+// os outros quatro ramos ignoram `refeicoes_por_dia`. Só que a lista da noite
+// está em ordem cronológica e o jantar — que é o `pos_treino` — é o ÚLTIMO
+// item: com 4 refeições ele some e as fatias somam 0,72 do dia; com 3, somam
+// 0,58 e o pré-treino vai junto. Quem treina à noite fica sem as duas
+// refeições que o arquivo inteiro existe para posicionar.
+console.log('\n42. O plano do dia soma o dia, em todo horário de treino (N10)');
+{
+  const TIMING = await carregarModulo('../src/features/dieta/timing.ts');
+  ok('existe o plano de refeições por horário de treino', typeof TIMING.planoDoDia === 'function',
+     typeof TIMING.planoDoDia);
+  const plano = TIMING.planoDoDia ?? (() => []);
+  const HORARIOS = ['jejum', 'manha', 'almoco', 'tarde', 'noite'];
+
+  let naoSoma = 0, semPos = 0, semPre = 0;
+  const amT = { soma: '', pos: '', pre: '' };
+  for (const h of HORARIOS)
+    for (const n of [3, 4, 5, 6]) {
+      const p = plano(h, n, '06:30');
+      const soma = p.reduce((s, r) => s + (r.fatiaKcal ?? 0), 0);
+      if (Math.abs(soma - 1) > 0.02) {
+        naoSoma++;
+        amT.soma ||= `${h} com ${n} refeições: as fatias somam ${soma.toFixed(2)} do dia`;
+      }
+      if (!p.some((r) => r.papel === 'pos_treino')) {
+        semPos++;
+        amT.pos ||= `${h} com ${n} refeições: nenhuma refeição pós-treino`;
+      }
+      if (!p.some((r) => r.papel === 'pre_treino')) {
+        semPre++;
+        amT.pre ||= `${h} com ${n} refeições: nenhuma refeição pré-treino`;
+      }
+    }
+  ok('as fatias de caloria somam o dia inteiro em todo horário',
+     naoSoma === 0, `${naoSoma} de 20 — ${amT.soma}`);
+  ok('todo plano tem a refeição de DEPOIS do treino', semPos === 0, `${semPos} de 20 — ${amT.pos}`);
+  ok('e a de ANTES', semPre === 0, `${semPre} de 20 — ${amT.pre}`);
+}
+
+// ── 43. Código morto novo, contra a regra que a própria Fase 5 escreveu ────
+//
+// UNIDADE: **símbolo exportado sem chamador**. A Fase 5 renomeou
+// `REGIOES_DOR.evitar` para `exemplos` com uma justificativa escrita — "lista
+// antiga viva ao lado da regra nova é a que a próxima pessoa acha primeiro" —
+// e não aplicou o critério ao próprio domínio. `macros()` continua exportada,
+// chamável, e ainda contém `objetivo === 'emagrecimento' ? 2.2` sobre o peso
+// total: é a função que produz os 264 g, viva ao lado da que produz 192.
+console.log('\n43. A regra antiga não fica viva ao lado da nova (N21)');
+{
+  const FONTE_CALCULOS = readFileSync(new URL('../src/features/perfil/calculos.ts', import.meta.url), 'utf8');
+  const FONTE_RECOMP2 = readFileSync(new URL('../src/features/perfil/recomposicao.ts', import.meta.url), 'utf8');
+  const FONTE_API2 = readFileSync(new URL('../src/features/perfil/api.ts', import.meta.url), 'utf8');
+  const CALC = await carregarModulo('../src/features/perfil/calculos.ts');
+  const API_FONTE_OK = /export async function definirMetaCalorica/.test(FONTE_API2);
+
+  ok('a proteína sobre o PESO TOTAL não existe mais em src/',
+     typeof CALC.macros !== 'function' && !/'emagrecimento'\s*\n?\s*\?\s*2\.2/.test(FONTE_CALCULOS),
+     typeof CALC.macros === 'function' ? 'calculos.macros() continua exportada e chamável' : 'apagada');
+  ok('definirMetaCalorica não continua exportada sem chamador',
+     !API_FONTE_OK, API_FONTE_OK ? 'zero chamadores em app/ e src/' : 'apagada');
+  ok('projetar não continua exportada sem chamador',
+     !/export function projetar/.test(FONTE_RECOMP2),
+     /export function projetar/.test(FONTE_RECOMP2) ? 'zero chamadores em app/ e src/' : 'apagada');
 }
 
 console.log(falhas ? `\n${falhas} falha(s)\n` : '\nTudo passou\n');

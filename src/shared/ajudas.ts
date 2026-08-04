@@ -115,12 +115,12 @@ export const AJUDA: Record<string, ConteudoAjuda> = {
       'Quantas calorias seu corpo gasta em repouso absoluto, só para manter os órgãos funcionando. É a base de todo cálculo de dieta.',
     passos: [
       'O app estima pela fórmula de Mifflin-St Jeor, usando peso, altura, idade e sexo.',
-      'Se você fez bioimpedância, ela mede o seu TMB real — que costuma ser mais preciso.',
-      'Registrando o valor medido, o app passa a usá-lo no lugar da estimativa.',
+      'A balança de bioimpedância NÃO mede metabolismo: ela estima sua massa livre de gordura pela impedância e joga esse valor numa equação interna. É fórmula no lugar de fórmula, não medição no lugar de estimativa.',
+      'Ainda assim ela acrescenta informação — sobre o SEU corpo, que a fórmula geral não conhece. O app guarda a diferença entre os dois números e a aplica sobre o seu peso de hoje.',
     ],
-    dica: 'O TMB muda quando você ganha músculo ou perde peso. Vale refazer a bioimpedância a cada 2 ou 3 meses.',
+    dica: 'Essa diferença vale menos a cada semana e some em uns 4 meses — o corpo muda. Refazer a bioimpedância a cada 2 ou 3 meses mantém o número descrevendo você.',
     porque:
-      'A fórmula assume uma composição corporal média. Quem tem mais músculo que a média gasta mais do que ela prevê — e acaba comendo de menos sem saber.',
+      'Comparada com calorimetria indireta (que mede de verdade, pelo ar que você respira), a bioimpedância superestima em torno de 185 kcal por dia, e só 36% das medições caem dentro de 10% do valor real. Tratar o número da balança como verdade absoluta é trocar um erro conhecido por um erro maior.',
   },
 
   tdee: {

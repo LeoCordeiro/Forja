@@ -31,6 +31,8 @@ export default function Bioimpedancia() {
   const router = useRouter();
   const [v, setV] = useState<Record<string, string>>({});
   const [salvando, setSalvando] = useState(false);
+  /** "Sua meta manual continua valendo" — dito no momento em que ela não é sobrescrita. */
+  const [avisoMeta, setAvisoMeta] = useState<string | null>(null);
 
   const { dados, recarregar } = useDados(async () => {
     const [r, ultima] = await Promise.all([resumo(), ultimaBioimpedancia()]);
@@ -58,11 +60,13 @@ export default function Bioimpedancia() {
       if (Object.keys(m).length === 0) return;
 
       await salvarMedida({ ...m, origem: 'bioimpedancia' });
-      // TMB medido muda o TDEE, que muda a meta inteira.
-      await recalcularMeta();
+      // A bioimpedância muda o TDEE e a composição, que mudam a meta inteira —
+      // mas só quando ela é automática. Meta escolhida à mão é decisão.
+      const r = await recalcularMeta();
       await avaliarConquistas();
       buzz.ok();
       setV({});
+      setAvisoMeta(r.gravou ? null : r.aviso);
       recarregar();
     } finally {
       setSalvando(false);
@@ -234,6 +238,17 @@ export default function Bioimpedancia() {
         ))}
 
         <Button titulo="Salvar exame" full tam="lg" onPress={salvar} carregando={salvando} />
+
+        {avisoMeta ? (
+          <Card padding={spacing.md}>
+            <View style={{ flexDirection: 'row', gap: spacing.sm, alignItems: 'flex-start' }}>
+              <Ionicons name="information-circle-outline" size={16} color={colors.textDim} />
+              <Txt v="small" size={12} cor={colors.textDim} style={{ flex: 1 }}>
+                {avisoMeta}
+              </Txt>
+            </View>
+          </Card>
+        ) : null}
 
         <Card>
           <Txt v="label">Onde fazer</Txt>

@@ -276,6 +276,15 @@ function SheetMedidas({
 }) {
   const [v, setV] = useState<Record<string, string>>({});
   const [salvando, setSalvando] = useState(false);
+  /**
+   * "Sua meta manual continua valendo" — dito AQUI, no momento da pesagem.
+   *
+   * Era o contrário: a pesagem sobrescrevia a meta escolhida à mão e não dizia
+   * nada. Quem ajustou para 1.800 kcal na véspera se pesava de manhã e a meta
+   * voltava para 2.464 sem uma palavra. Agora ela não é sobrescrita — e a
+   * pessoa fica sabendo aqui, sem precisar ir até o Perfil descobrir.
+   */
+  const [avisoMeta, setAvisoMeta] = useState<string | null>(null);
 
   const campos = [
     { k: 'peso_kg', label: 'Peso', sufixo: 'kg' },
@@ -297,11 +306,17 @@ function SheetMedidas({
       if (Object.keys(dados).length === 0) return;
 
       await salvarMedida(dados);
-      // Peso novo muda TMB e TDEE — a meta de macros tem que acompanhar.
-      if (dados.peso_kg) await recalcularMeta();
+      // Peso novo muda TMB e TDEE — a meta de macros tem que acompanhar. Mas
+      // só quando ela é automática: uma meta escolhida à mão é decisão, não
+      // derivado, e a pesagem da manhã não pode desfazê-la em silêncio.
+      const r = dados.peso_kg ? await recalcularMeta() : null;
       await avaliarConquistas();
       buzz.ok();
       setV({});
+      if (r && !r.gravou && r.aviso) {
+        setAvisoMeta(r.aviso);
+        return; // a folha fica aberta com a frase; fechar engoliria o recado
+      }
       onSalvo();
     } finally {
       setSalvando(false);
@@ -326,7 +341,28 @@ function SheetMedidas({
             onChangeText={(t) => setV((p) => ({ ...p, [c.k]: t }))}
           />
         ))}
-        <Button titulo="Salvar" full tam="lg" onPress={salvar} carregando={salvando} />
+        {avisoMeta ? (
+          <Card padding={spacing.md}>
+            <View style={{ flexDirection: 'row', gap: spacing.sm, alignItems: 'flex-start' }}>
+              <Ionicons name="information-circle-outline" size={16} color={colors.textDim} />
+              <Txt v="small" size={12} cor={colors.textDim} style={{ flex: 1 }}>
+                {avisoMeta}
+              </Txt>
+            </View>
+            <Button
+              titulo="Entendi"
+              variante="fantasma"
+              full
+              style={{ marginTop: spacing.sm }}
+              onPress={() => {
+                setAvisoMeta(null);
+                onSalvo();
+              }}
+            />
+          </Card>
+        ) : (
+          <Button titulo="Salvar" full tam="lg" onPress={salvar} carregando={salvando} />
+        )}
       </View>
     </Sheet>
   );

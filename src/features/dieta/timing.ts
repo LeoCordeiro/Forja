@@ -151,7 +151,16 @@ export function planoDoDia(
     ];
   }
 
-  // Noite
+  // Noite.
+  //
+  // Sem `slice`, e é correção: `noite.slice(0, Math.max(3, refeicoesPorDia))`
+  // cortava do FIM de uma lista em ordem cronológica — e o fim é o jantar, que
+  // no treino da noite é o `pos_treino`. Com 4 refeições as fatias somavam 0,72
+  // do dia e não havia pós-treino; com 3, somavam 0,58 e o pré-treino sumia
+  // junto. Quem treina à noite ficava sem as duas refeições que este arquivo
+  // existe para posicionar. Os outros quatro ramos já ignoram
+  // `refeicoes_por_dia` — quantas refeições cabem no dia é escolha de rotina,
+  // e apagar o pós-treino não é a forma de respeitá-la.
   const noite: RefeicaoPlanejada[] = [
     { tipo: 'cafe', hora: hhmm(horaAcorda + 0.5), papel: 'normal', fatiaKcal: 0.22, orientacao: 'Café da manhã completo.' },
     { tipo: 'lanche_manha', hora: '10:00', papel: 'normal', fatiaKcal: 0.1, orientacao: 'Lanche leve.' },
@@ -172,7 +181,7 @@ export function planoDoDia(
         'Pós-treino. Comer bem depois de treinar à noite não engorda mais — o total do dia é o que conta.',
     },
   ];
-  return noite.slice(0, Math.max(3, refeicoesPorDia));
+  return noite;
 }
 
 /** Tags de receita adequadas ao papel da refeição. */

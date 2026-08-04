@@ -6,10 +6,12 @@ import { tdee, tmb } from './calculos';
 import {
   avisosDaMeta,
   calcularMetaDetalhada,
-  macrosParaMetaManual,
+  decidirRecalculo,
+  gorduraVigente,
   tmbVigente,
   type TmbVigente,
 } from './meta';
+import type { OrigemComposicao } from './recomposicao';
 import { metaDiaria } from '../agua/api';
 
 export async function getPerfil(): Promise<Profile | null> {
@@ -236,28 +238,56 @@ export interface Resumo {
   pesoKg: number;
   imcValor: number;
   tmbValor: number;
-  /** true quando o TMB vem da bioimpedância, não da fórmula. */
-  tmbMedido: boolean;
   tdeeValor: number;
   meta: Macros;
   /** De onde a proteína saiu. Uma linha, para a tela mostrar. */
   baseCalculoMeta: string;
+  /** Por que a base é essa, e não a que o objetivo vizinho usa. */
+  porqueBaseMeta: string;
   /**
-   * O que está errado com a meta VIGENTE (a salva, inclusive se for manual).
+   * **Por que esta meta é essa** — informativo, permanente, nunca alerta.
    *
-   * Vazio quase sempre. Quando não está, é piso calórico, déficit acima do que
-   * a gordura entrega ou carboidrato espremido — coisas que a tela precisa
-   * dizer em vez de guardar.
+   * O piso calórico que mordeu, o teto de mobilização de gordura, a gordura
+   * que teve que descer para a conta caber. Era calculado e jogado fora:
+   * `recalcularMeta` desestruturava os avisos só para descartá-los, e
+   * `resumo()` só usava os da automática **quando não existia meta salva** —
+   * o que, depois do onboarding, nunca acontece. No estado estável o piso
+   * mordia em silêncio.
+   */
+  razaoMeta: string[];
+  /**
+   * **O que está ERRADO com a meta vigente** — alerta, e só aparece quando há.
+   *
+   * Pergunta diferente da de cima, e por isso lista diferente: a meta
+   * automática pode ter uma razão longa e zero problemas. Juntar as duas sob o
+   * mesmo rótulo laranja transformaria toda explicação em alarme.
    */
   avisosMeta: string[];
+  /** `true` quando a meta vigente foi escolhida à mão. */
+  metaManual: boolean;
+  /** A caloria que o app calcularia sozinho hoje — para comparar com a manual. */
+  metaAutomaticaKcal: number;
   idadeAnos: number;
+  /** Já envelhecido: a bioimpedância de 3 meses ajustada ao peso de hoje. */
   gorduraPct: number | null;
+  /** O percentual cru da última bioimpedância, como ela saiu da balança. */
+  gorduraMedidaPct: number | null;
+  gorduraOrigem: OrigemComposicao;
   visceral: number | null;
   musculoPct: number | null;
   massaMagraKg: number | null;
   metaAguaMl: number;
-  /** Por que o TMB medido saiu de cena — `null` quando ele vale ou não existe. */
-  tmbMotivo: string | null;
+  /**
+   * De onde o TMB de hoje veio: medido, ajustado ao peso atual, ou estimado.
+   *
+   * Substituiu `tmbMedido: boolean` **e** `tmbMotivo: string | null`. O
+   * booleano tinha dois estados para três situações e fazia a bioimpedância de
+   * três meses atrás se apresentar como a de hoje; o motivo era o card laranja
+   * que a expiração precisava e o envelhecimento não precisa. Os dois viraram
+   * uma legenda permanente — e ficaram fora do `Resumo`, porque campo morto ao
+   * lado do campo vivo é o que a próxima pessoa acha primeiro.
+   */
+  tmbOrigem: 'medido' | 'ajustado' | 'estimado';
 }
 
 export async function resumo(): Promise<Resumo | null> {
@@ -269,19 +299,25 @@ export async function resumo(): Promise<Resumo | null> {
   const pesoKg = medida?.peso_kg ?? 70;
   const idadeAnos = idade(perfil.data_nascimento);
 
-  // ── TMB: medido ganha da estimativa, mas não para sempre ───────────────
+  const estimar = dadosParaEstimar(perfil);
+
+  // ── TMB: a fórmula de hoje, mais o desvio que a balança mediu ───────────
   //
   // A fórmula assume composição corporal média e quem treina está longe dela,
-  // então a bioimpedância é melhor — enquanto ela ainda descreve este corpo.
-  // Era aí que o app parava: `usa_tmb_medido = 1` valia indefinidamente, e com
-  // o peso caindo o TDEE ficava superestimado até o "déficit de 15%" virar
-  // 8-10% real, sem nada na tela explicando o progresso travado.
+  // então a bioimpedância acrescenta informação — mas o que ela acrescenta é o
+  // DESVIO deste corpo, não o valor absoluto. Guardar o valor fazia o TDEE
+  // ficar superestimado com o peso caindo (N6); expirar o valor jogava fora a
+  // informação individual junto com a velha (N18). O desvio acompanha o peso e
+  // envelhece — ver `tmbVigente`.
   const estimado = tmb(pesoKg, perfil.altura_cm, idadeAnos, perfil.genero);
   const medicaoTmb = await ultimaComTmb();
   const vigente: TmbVigente = tmbVigente({
     medidoKcal: perfil.usa_tmb_medido ? (perfil.tmb_medido_kcal ?? null) : null,
     medidoEm: medicaoTmb?.medido_em ?? null,
     pesoNaMedicao: medicaoTmb?.peso_kg ?? null,
+    estimadoNaMedicao: medicaoTmb?.peso_kg
+      ? tmb(medicaoTmb.peso_kg, perfil.altura_cm, idadeAnos, perfil.genero)
+      : null,
     pesoAtual: pesoKg,
     estimado,
     hojeIso: hoje(),
@@ -289,21 +325,36 @@ export async function resumo(): Promise<Resumo | null> {
   const basal = vigente.valor;
   const gasto = tdee(basal, perfil.nivel_atividade);
 
-  const gorduraPct = bio?.gordura_pct ?? null;
+  // ── E a GORDURA da mesma linha, pela MESMA política (N15) ──────────────
+  //
+  // Era `bio?.gordura_pct` cru, valendo para sempre — a mesma medição com duas
+  // políticas contraditórias dentro deste mesmo `resumo()`, e a que ficou de
+  // fora é a que decide a proteína.
+  const gordura = gorduraVigente({
+    medidoPct: bio?.gordura_pct ?? null,
+    medidoEm: bio?.medido_em ?? null,
+    pesoNaMedicao: bio?.peso_kg ?? null,
+    pesoAtual: pesoKg,
+    hojeIso: hoje(),
+    estimar,
+  });
+  const gorduraPct = gordura.pct;
   const massaMagraKg = gorduraPct !== null ? Math.round(pesoKg * (1 - gorduraPct / 100) * 10) / 10 : null;
 
-  const estimar = dadosParaEstimar(perfil);
-  const automatica = calcularMetaDetalhada({
-    tdee: gasto,
+  const ctxMeta = {
     basal,
+    tdee: gasto,
     pesoKg,
-    objetivo: perfil.objetivo,
     gorduraPct,
+    gorduraOrigem: gordura.origem,
     estimar,
     genero: perfil.genero,
-  });
+    objetivo: perfil.objetivo,
+  };
+  const automatica = calcularMetaDetalhada({ ...ctxMeta, tdee: gasto, basal, pesoKg });
 
   const salva = await metaAtual();
+  const manual = salva?.origem === 'manual';
   const meta: Macros = salva
     ? {
         kcal: salva.kcal,
@@ -318,26 +369,31 @@ export async function resumo(): Promise<Resumo | null> {
     pesoKg,
     imcValor: pesoKg / Math.pow(perfil.altura_cm / 100, 2),
     tmbValor: Math.round(basal),
-    tmbMedido: vigente.medido,
-    tmbMotivo: vigente.motivo,
+    tmbOrigem: vigente.origem,
     tdeeValor: Math.round(gasto),
     meta,
     baseCalculoMeta: automatica.baseCalculo,
-    // A meta salva pode ser manual e antiga: auditar na LEITURA é o que faz o
-    // aviso continuar valendo quando o peso muda meses depois.
-    avisosMeta: salva
-      ? avisosDaMeta(meta, {
-          basal,
-          tdee: gasto,
-          pesoKg,
-          gorduraPct,
-          estimar,
-          genero: perfil.genero,
-          objetivo: perfil.objetivo,
-        })
+    porqueBaseMeta: automatica.porqueBase,
+    // ── As duas listas, e elas respondem perguntas diferentes (N14) ─────
+    //
+    // A RAZÃO é a da meta automática e vale sempre — o piso mordeu, o teto de
+    // gordura mordeu, a gordura desceu para caber. Só some quando a meta
+    // vigente é manual: aí a razão da automática não descreve o que está na
+    // tela, e o que a pessoa precisa saber é outra coisa (N13).
+    razaoMeta: manual
+      ? [decidirRecalculo({ vigente: { ...meta, origem: 'manual' }, automatica: automatica.meta }).aviso ?? '']
+          .filter(Boolean)
       : automatica.avisos,
+    // O ALERTA é sobre a meta que está valendo, inclusive uma manual antiga:
+    // auditar na LEITURA é o que faz o aviso continuar valendo quando o peso
+    // muda meses depois.
+    avisosMeta: avisosDaMeta(meta, ctxMeta),
+    metaManual: manual,
+    metaAutomaticaKcal: automatica.meta.kcal,
     idadeAnos,
     gorduraPct,
+    gorduraMedidaPct: bio?.gordura_pct ?? null,
+    gorduraOrigem: gordura.origem,
     visceral: bio?.gordura_visceral ?? null,
     musculoPct: bio?.musculo_pct ?? null,
     massaMagraKg,
@@ -382,34 +438,35 @@ export async function metaAutomatica(): Promise<(Macros & { avisos: string[] }) 
     pesoKg: r.pesoKg,
     objetivo: r.perfil.objetivo,
     gorduraPct: r.gorduraPct,
+    gorduraOrigem: r.gorduraOrigem,
     estimar: dadosParaEstimar(r.perfil),
     genero: r.perfil.genero,
   });
   return { ...c.meta, avisos: c.avisos };
 }
 
-/** Recalcula a meta a partir do peso atual — chamado ao registrar novo peso. */
-export async function recalcularMeta() {
-  const m = await metaAutomatica();
-  if (m) {
-    const { avisos: _avisos, ...macros } = m;
-    await salvarMeta(macros, 'auto');
-  }
-}
-
 /**
- * Meta de calorias definida à mão.
+ * Recalcula a meta a partir do peso atual — sem atropelar a escolha da pessoa.
  *
- * Proteína continua sendo piso de saúde. O que mudou é a ORDEM do ajuste: a
- * gordura cede até 20% das calorias antes de o carboidrato apertar, e a meta
- * que não fecha volta com aviso em vez de gravar `carbo 0 g` em silêncio.
+ * Disparada em toda pesagem, toda bioimpedância e toda edição de perfil. Ela
+ * gravava `'auto'` **sem consultar a origem da meta vigente**: quem ajustava
+ * para 1.800 kcal via a meta voltar para 2.464 na manhã seguinte, ao se pesar,
+ * sem nada na tela. Devolve o que aconteceu para a tela dizer — a decisão em si
+ * mora em `meta.ts`, testável (N13).
  */
-export async function definirMetaCalorica(kcal: number): Promise<string[]> {
-  const base = await metaAutomatica();
-  if (!base) return [];
-  const { meta, avisos } = macrosParaMetaManual(kcal, base);
-  await salvarMeta(meta, 'manual');
-  return avisos;
+export async function recalcularMeta(): Promise<{ gravou: boolean; aviso: string | null }> {
+  const m = await metaAutomatica();
+  if (!m) return { gravou: false, aviso: null };
+  const { avisos, ...macros } = m;
+  const vigente = await metaAtual();
+  const d = decidirRecalculo({ vigente, automatica: macros });
+  if (!d.gravar) return { gravou: false, aviso: d.aviso };
+  await salvarMeta(macros, 'auto');
+  // Os avisos não são gravados: são derivados do peso de hoje, e congelá-los
+  // em `nutrition_targets` criaria a explicação mentirosa que a regra 6 do
+  // projeto proíbe. `resumo()` os recalcula na leitura, em `razaoMeta`.
+  void avisos;
+  return { gravou: true, aviso: null };
 }
 
 export async function definirMetaAgua(ml: number) {
