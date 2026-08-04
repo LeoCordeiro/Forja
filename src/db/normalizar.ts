@@ -1,6 +1,11 @@
 import type * as SQLite from 'expo-sqlite';
 import { COMPOSTOS, COMPOSTOS_PESADOS } from '@/features/treino/classificacao';
-import { descansoCorreto, descansoLegado, type Papel } from '@/features/treino/papel';
+import {
+  descansoCorreto,
+  papeisDaRotina,
+  prescricaoDe,
+  type Papel,
+} from '@/features/treino/papel';
 import { EXERCICIOS, MEDIA_BASE } from './seed/exercicios';
 
 /**
@@ -18,6 +23,11 @@ export async function normalizar(db: SQLite.SQLiteDatabase) {
   await renomearExercicios(db);
   await completarCatalogo(db);
   await classificarExercicios(db);
+  // ORDEM: o papel entra ANTES do descanso, e isso é a fase inteira.
+  // Sem papel, `corrigirDescansos` cai no fallback que trata todo
+  // multiarticular como principal — o que é falso a partir do segundo
+  // exercício do grupo e daria descanso ERRADO, não só diferente.
+  await preencherPapeis(db);
   await corrigirDescansos(db);
 }
 
@@ -113,7 +123,7 @@ async function completarCatalogo(db: SQLite.SQLiteDatabase) {
   await db.execAsync(
     `CREATE TABLE IF NOT EXISTS app_flags (key TEXT PRIMARY KEY, value TEXT NOT NULL)`
   );
-  await db.runAsync(`DELETE FROM app_flags WHERE key = 'descansos_v3'`);
+  await db.runAsync(`DELETE FROM app_flags WHERE key = '${FLAG_DESCANSO}'`);
   await db.runAsync('UPDATE exercises SET eh_composto = 0');
 }
 
@@ -151,14 +161,124 @@ async function classificarExercicios(db: SQLite.SQLiteDatabase) {
 }
 
 /**
+ * Preenche `papel` e RIR nas rotinas anteriores à v16 — pelo contexto do DIA.
+ *
+ * ── E quem já está com o banco estragado? ────────────────────────────────
+ *
+ * Ele é atendido aqui, sem tocar em nada que seja histórico. Este passo roda em
+ * `normalizar`, a cada abertura do banco, e escreve em UMA tabela só:
+ * `routine_exercises`, e só nas linhas em que `papel IS NULL`. `set_logs`,
+ * `personal_records`, `point_events` e `workout_sessions` não aparecem nem numa
+ * cláusula — o histórico, os recordes e o XP saem de lá e continuam exatamente
+ * como estavam. Nenhuma linha é criada, nenhuma é apagada. Rodar dez vezes é
+ * igual a rodar uma, porque a segunda passada não encontra mais NULL.
+ *
+ * ── Por que por DIA, e não por linha ─────────────────────────────────────
+ *
+ * Papel é propriedade da SESSÃO. Ler a linha isolada dá a resposta certa no
+ * primeiro exercício do grupo e errada em todos os seguintes: o segundo supino
+ * do dia é complementar, não principal — a diferença é 150 s contra 180 s e
+ * RIR 1-2 contra 2-3. Foi exatamente por isso que G2 preferiu não mexer no
+ * plano de quem já usava: o fallback sem papel trata todo multiarticular como
+ * principal, e aplicar a regra nova sobre ele daria descanso ERRADO, não só
+ * diferente (medido: 4 de 5 linhas mudando e a sessão ganhando 7 minutos).
+ *
+ * Com a coluna preenchida pelo contexto do dia, a regra nova passa a valer para
+ * todo mundo de uma vez — e as telas param de deduzir papel em runtime, que era
+ * a segunda fonte de verdade. `papeisDaRotina` é a MESMA função que a tela do
+ * dia e o executor usam; nada aqui reimplementa a regra.
+ *
+ * ── O que este passo NÃO preenche, e por quê ─────────────────────────────
+ *
+ * `aquecimento_series` fica em 0. Aproximação é prescrição NOVA (duas séries a
+ * mais no principal), não correção de um dado ausente — a rotina antiga não as
+ * tinha porque ninguém as prescreveu, e inventá-las por baixo mudaria o treino
+ * de quem não pediu. Quem quiser as aproximações refaz o treino, e aí elas
+ * nascem com o resto.
+ */
+async function preencherPapeis(db: SQLite.SQLiteDatabase) {
+  const linhas = await db.getAllAsync<{
+    id: number;
+    dia: number;
+    nome: string;
+    grupo: string;
+    equipamento: string | null;
+    tipoCarga: string | null;
+    papel: string | null;
+  }>(
+    `SELECT re.id, re.routine_day_id AS dia, e.nome, e.grupo_primario AS grupo,
+            e.equipamento, e.tipo_carga AS tipoCarga, re.papel
+       FROM routine_exercises re
+       JOIN exercises e ON e.id = re.exercise_id
+      ORDER BY re.routine_day_id, re.ordem, re.id`
+  );
+  if (!linhas.length) return;
+
+  const porDia = new Map<number, typeof linhas>();
+  for (const l of linhas) {
+    if (!porDia.has(l.dia)) porDia.set(l.dia, []);
+    porDia.get(l.dia)!.push(l);
+  }
+
+  let preenchidas = 0;
+  for (const doDia of porDia.values()) {
+    // `papeisDaRotina` devolve o papel GRAVADO quando ele existe e o derivado
+    // quando não — por isso a escolha de alguém nunca é sobrescrita, e por isso
+    // um dia meio preenchido converge para o resto sem virar dois critérios.
+    const papeis = papeisDaRotina(doDia);
+    for (const l of doDia) {
+      if (l.papel) continue; // já resolvida: idempotência mora aqui
+      const papel = papeis.get(l.id)?.papel;
+      if (!papel) continue; // cardio: papel não se aplica, e inventar um mente
+
+      // Série por TEMPO não tem "repetição que sobrou" para contar, e o
+      // excêntrico puro também não — `prescricaoDe` já devolve `rir: null` no
+      // segundo caso, e o primeiro é decidido aqui, como no gerador.
+      const pres = prescricaoDe(papel, l.nome, l.grupo, l.equipamento, l.tipoCarga);
+      const rir = l.tipoCarga === 'tempo' ? null : pres.rir;
+
+      await db.runAsync(
+        'UPDATE routine_exercises SET papel = ?, rir_min = ?, rir_max = ? WHERE id = ?',
+        [papel, rir?.[0] ?? null, rir?.[1] ?? null, l.id]
+      );
+      preenchidas++;
+    }
+  }
+
+  if (preenchidas > 0) {
+    console.log(
+      `[forja] papel e esforço (RIR) preenchidos em ${preenchidas} exercício(s) das suas rotinas`
+    );
+  }
+}
+
+/**
  * Ajusta o descanso das rotinas já existentes.
  *
  * Só sobe, nunca desce: se a pessoa configurou 4 minutos de propósito, isso é
  * escolha dela. O que corrigimos é o valor curto demais herdado do catálogo.
+ *
+ * ── O fallback sem papel morreu, e por quê ───────────────────────────────
+ *
+ * Até G2 esta função tinha dois ramos: a linha com papel usava a regra nova, a
+ * sem papel usava `descansoLegado` (a regra pré-G2, que saía de "é composto?" +
+ * repetições). O motivo era bom — sem papel, a regra nova erra — mas a solução
+ * era conservar a regra velha para sempre em metade da base. Com `preencherPapeis`
+ * rodando logo acima, `papel` NULL só sobra em cardio, e ali o descanso é 0 de
+ * qualquer forma. Uma regra só, para todo mundo. `descansoLegado` foi apagado
+ * de `papel.ts` junto: função morta com regra velha não é neutra — é a que a
+ * próxima pessoa acha primeiro, e foi assim que `descansoSugerido` sobreviveu
+ * até A5.
+ *
+ * A flag subiu para `descansos_v4` de propósito: quem já tem `descansos_v3`
+ * gravada nunca mais rodaria este passo, e é justamente essa pessoa — a que já
+ * usa o app — que a decisão do Leonardo mandou atender.
  */
+const FLAG_DESCANSO = 'descansos_v4';
+
 async function corrigirDescansos(db: SQLite.SQLiteDatabase) {
   const jaFeito = await db.getFirstAsync<{ v: string }>(
-    `SELECT value AS v FROM app_flags WHERE key = 'descansos_v3'`
+    `SELECT value AS v FROM app_flags WHERE key = '${FLAG_DESCANSO}'`
   ).catch(() => null);
   if (jaFeito?.v) return;
 
@@ -166,7 +286,7 @@ async function corrigirDescansos(db: SQLite.SQLiteDatabase) {
     `CREATE TABLE IF NOT EXISTS app_flags (key TEXT PRIMARY KEY, value TEXT NOT NULL)`
   );
   const flag = await db.getFirstAsync<{ v: string }>(
-    `SELECT value AS v FROM app_flags WHERE key = 'descansos_v3'`
+    `SELECT value AS v FROM app_flags WHERE key = '${FLAG_DESCANSO}'`
   );
   if (flag?.v) return;
 
@@ -175,34 +295,33 @@ async function corrigirDescansos(db: SQLite.SQLiteDatabase) {
     nome: string;
     grupo: string;
     equipamento: string | null;
+    tipoCarga: string | null;
     papel: string | null;
     reps_max: number | null;
     descanso_seg: number;
   }>(
-    `SELECT re.id, e.nome, e.grupo_primario AS grupo, e.equipamento, re.papel,
-            re.reps_max, re.descanso_seg
+    `SELECT re.id, e.nome, e.grupo_primario AS grupo, e.equipamento,
+            e.tipo_carga AS tipoCarga, re.papel, re.reps_max, re.descanso_seg
        FROM routine_exercises re
        JOIN exercises e ON e.id = re.exercise_id`
   );
 
   let ajustadas = 0;
+  const subiram: string[] = [];
   for (const l of linhas) {
-    // ── A linha com papel usa a regra nova; a sem papel, a antiga ──────────
-    //
-    // Rotina anterior à v16 não tem papel, e sem ele a regra nova trata todo
-    // multiarticular como principal — falso a partir do segundo exercício do
-    // grupo. Aplicar isso aqui faria o plano que já está no aparelho ganhar
-    // ~7 min por sessão sozinho, sem ninguém pedir, estourando o tempo para o
-    // qual ele foi dimensionado. Rotina que funciona em produção só muda por
-    // decisão do dono: quando ele refizer o treino, ela nasce com papel e com
-    // a regra nova de uma vez.
-    const papel = (l.papel as Papel | null) ?? null;
-    const ideal = papel
-      ? descansoCorreto(l.nome, l.reps_max ?? 10, l.grupo, papel, l.equipamento)
-      : descansoLegado(l.nome, l.reps_max ?? 10, l.grupo);
+    const papel = (l.papel as Papel | null) ?? undefined;
+    const ideal = descansoCorreto(
+      l.nome,
+      l.reps_max ?? 10,
+      l.grupo,
+      papel,
+      l.equipamento,
+      l.tipoCarga
+    );
     if (ideal > l.descanso_seg) {
       await db.runAsync('UPDATE routine_exercises SET descanso_seg = ? WHERE id = ?', [ideal, l.id]);
       ajustadas++;
+      if (subiram.length < 3) subiram.push(`${l.nome} ${l.descanso_seg}→${ideal}s`);
     }
     // Marca composto na linha da rotina — a tela usa para explicar o descanso.
     await db.runAsync('UPDATE routine_exercises SET eh_composto = ? WHERE id = ?', [
@@ -211,12 +330,19 @@ async function corrigirDescansos(db: SQLite.SQLiteDatabase) {
     ]);
   }
 
-  await db.runAsync(`INSERT OR REPLACE INTO app_flags (key, value) VALUES ('descansos_v3', ?)`, [
+  await db.runAsync(`INSERT OR REPLACE INTO app_flags (key, value) VALUES ('${FLAG_DESCANSO}', ?)`, [
     String(ajustadas),
   ]);
 
+  // O log diz o que ACONTECEU, não o que a função faria. Antes ele dizia
+  // "descanso corrigido em N" sem N nenhum de referência e sem dizer para
+  // quanto; quando ele aparecia depois de uma mudança de regra, não dava para
+  // saber se a regra nova tinha pegado ou se o número vinha do catálogo.
   if (ajustadas > 0) {
-    console.log(`[forja] descanso corrigido em ${ajustadas} exercício(s) das suas rotinas`);
+    console.log(
+      `[forja] descanso corrigido em ${ajustadas} de ${linhas.length} exercício(s) das suas ` +
+        `rotinas, agora pelo papel de cada um — ex.: ${subiram.join(', ')}`
+    );
   }
 }
 

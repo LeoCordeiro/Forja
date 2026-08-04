@@ -29,6 +29,8 @@
  * rotina inteira.
  */
 
+import type { Fase } from './periodizacao';
+
 export interface SemanaDoBloco {
   semana: number;
   titulo: string;
@@ -102,6 +104,18 @@ export const BLOCO: SemanaDoBloco[] = [
       'Metade das séries, mesma carga. Não é folga: manter o peso é o que segura a força enquanto a fadiga sai.',
   },
 ];
+
+/**
+ * Que FASE é a semana do bloco — uma definição só (M3-texto).
+ *
+ * A regra vivia dentro de `resolverFase`, e a tela do programa não a tinha:
+ * ela imprimia o campo `rir` cru da semana ("parar a 3 da falha") ao lado de
+ * linhas que dizem RIR 1-2 e RIR 0-2. Mesmo defeito do chip do executor, outra
+ * tela. Com a fase nomeada aqui, as duas leem a direção do mesmo lugar.
+ */
+export function faseDaSemanaDoBloco(s: SemanaDoBloco, semana: number): Fase {
+  return s.volumePct < 100 ? 'deload' : semana >= 5 ? 'intensificacao' : 'acumulo';
+}
 
 export function semanaDoBloco(inicioIso: string | null, hojeIso: string): number {
   if (!inicioIso) return 1;

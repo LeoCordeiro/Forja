@@ -1,4 +1,4 @@
-import { ehComposto, ehPesado, padraoDe, perfilDeResistencia } from './classificacao';
+import { ehComposto, padraoDe, perfilDeResistencia } from './classificacao';
 
 /**
  * O PAPEL de cada exercício na sessão — e tudo que sai dele.
@@ -462,31 +462,23 @@ export function descansoCorreto(
   return base;
 }
 
-/**
- * O descanso como ele era ANTES de G2 — e por que ele ainda existe.
- *
- * ── Isto não é código morto: é a garantia de não reescrever produção ─────
- *
- * `normalizar()` roda a cada abertura do banco e `corrigirDescansos` só SOBE o
- * intervalo. Com a regra nova aplicada a uma rotina anterior à v16 (papel
- * NULL), o fallback trata todo multiarticular como principal — o que é falso a
- * partir do segundo exercício do grupo — e o plano que já está no aparelho
- * ganha minutos sozinho: medido num banco v15 com rotina real, **4 de 5 linhas
- * mudaram e a sessão cresceu 7 minutos**, passando a estourar o tempo para o
- * qual ela foi dimensionada.
- *
- * Mudar comportamento que funciona em produção é decisão do dono, não da
- * auditoria. Então a regra nova vale só onde `papel` existe — rotina gerada de
- * G2 em diante, que já nasce certa. Rotina antiga continua com a regra antiga
- * até o usuário refazer o treino, e aí ela nasce com papel e com o descanso
- * novo, sem ninguém mexer no plano dele por baixo.
- */
-export function descansoLegado(nome: string, repsAlvo = 10, grupo?: string): number {
-  if (grupo === 'cardio') return 0;
-  if (ehPesado(nome)) return repsAlvo <= 8 ? 180 : 150;
-  if (ehComposto(nome)) return 150;
-  return repsAlvo >= 15 ? 60 : 90;
-}
+// `descansoLegado` foi APAGADA daqui.
+//
+// Ela guardava a regra pré-G2 (descanso saindo de "é composto?" + repetições) e
+// existia por um motivo legítimo: rotina anterior à v16 não tinha `papel`, e sem
+// papel a regra nova trata todo multiarticular como principal — falso a partir
+// do segundo exercício do grupo. Aplicar a regra nova assim daria descanso
+// ERRADO, não só diferente.
+//
+// O que mudou é que a rotina antiga passou a TER papel: `preencherPapeis`, em
+// `db/normalizar.ts`, deriva o papel pelo contexto do dia (a mesma
+// `papeisDaRotina` que as telas usam) antes de o descanso ser recalculado. Com
+// o dado presente, o fallback não tem mais o que resolver — e regra velha viva
+// ao lado da nova não é neutra: é a que a próxima pessoa acha primeiro. Foi
+// assim que `descansoSugerido` sobreviveu até A5.
+//
+// Decisão do Leonardo, 03/08: "não tem problema reescrever o plano do meu
+// iPhone se for para melhorar".
 
 /** Explicação curta do descanso, para a tela de execução. */
 export function porqueDescanso(nome: string, segundos: number): string {

@@ -21,7 +21,7 @@ import {
 import { equipamentosDe, foraDoLocal, limitacaoDoLocal } from './local';
 import { REGIOES_DOR } from '@/features/perfil/diagnostico';
 import { PADROES } from './padroes';
-import { CARDIO } from './periodizacao';
+import { ALVO_SERIES, CARDIO, TETO_UTIL } from './periodizacao';
 import { estimarDuracao, emMinutos } from './duracao';
 
 /**
@@ -110,10 +110,18 @@ export type Grupo =
 /** Grupos pequenos: recebem volume indireto de todo composto e pedem menos série direta. */
 const PEQUENOS: Grupo[] = ['biceps', 'triceps', 'panturrilha', 'abdomen', 'trapezio', 'antebraco'];
 
-/** Piso do ACSM 2026. Nenhum grupo fica abaixo disso. */
-export const PISO_SEMANAL = 10;
-/** Acima disso o retorno não paga a recuperação, para grupo sem prioridade. */
-export const TETO_SEMANAL = 20;
+/**
+ * Piso e teto semanais — os MESMOS números da auditoria de volume (M1).
+ *
+ * Eram duas definições do mesmo conceito, em dois arquivos, e ninguém as
+ * comparava: `volume.ts` chamava de "alto" o que passasse de 20 e a tela de
+ * programa carimbava isso sobre o plano que este arquivo tinha acabado de
+ * montar respeitando os tetos DELE. Agora a fonte é uma só, em
+ * `periodizacao.ts`, e o que passa do teto útil por causa da ênfase é
+ * DECLARADO por `avisarTetoUtil` — em vez de virar uma acusação na outra tela.
+ */
+export const PISO_SEMANAL = ALVO_SERIES;
+export const TETO_SEMANAL = TETO_UTIL;
 /**
  * Teto do grupo que a pessoa escolheu priorizar.
  *
@@ -135,6 +143,32 @@ export const TETO_SEMANAL = 20;
  * recuperação deixa de valer para músculo que não é a prioridade da pessoa.
  */
 export const TETO_SEMANAL_FOCO = 28;
+
+/**
+ * Teto semanal do grupo PEQUENO — 14 era baixo, e o custo era medível.
+ *
+ * ── O que 14 fechava ─────────────────────────────────────────────────────
+ *
+ * O tríceps de um dia de "peito e tríceps" chega a ~14 séries fracionadas na
+ * semana quase todas INDIRETAS, vindas dos supinos. Com o teto em 14, nenhum
+ * trabalho DIRETO cabia mais: `preencherTempo` recusava acrescentar série de
+ * tríceps porque o total já estava no teto, e o dia que leva o nome do músculo
+ * ficava com 2+2 em vez do 3+2 que B10 pede. Ou seja, o teto tratava volume
+ * indireto como se ele pagasse o direto — o mesmo erro que o docblock de
+ * `garantirPisoDoPequeno` já nomeia uma tela abaixo.
+ *
+ * 18 é o teto útil (20) menos a margem que o grupo pequeno merece por já
+ * receber meia série de todo composto do dia. Não é "mais volume": é espaço
+ * para que o volume que já existe possa ser DIRETO em vez de só sobra de
+ * composto. O que impede o abuso continua sendo `alvoSemanal` (a mira),
+ * `aparExcesso` (o aparo) e os tetos de sessão e de padrão, que não mudaram.
+ *
+ * Efeito medido na grade de 1.350 perfis, antes e depois, na seção de medição
+ * do relatório desta fase.
+ */
+const TETO_SEMANAL_PEQUENO = 18;
+export { TETO_SEMANAL_PEQUENO };
+
 /**
  * Teto de séries do mesmo grupo numa sessão.
  *
@@ -757,7 +791,7 @@ function alvoSemanal(grupo: Grupo, p: PerfilDoTreino): number {
  */
 function tetoDe(grupo: Grupo, p: PerfilDoTreino): number {
   const pequeno = PEQUENOS.includes(grupo);
-  if (pequeno) return grupo === 'abdomen' ? 12 : 14;
+  if (pequeno) return grupo === 'abdomen' ? 12 : TETO_SEMANAL_PEQUENO;
   return pesosDaEnfase(p.focos).alvos.has(grupo) ? TETO_SEMANAL_FOCO : TETO_SEMANAL;
 }
 
@@ -937,18 +971,32 @@ function cabeNoPadrao(
  * livre → qualquer livre → tudo) existe para ela nunca APAGAR um grupo: o
  * objetivo é redirecionar o trabalho direto, não retirá-lo.
  */
+/**
+ * Padrões de um grupo que o volume INDIRETO da sessão já saturou.
+ *
+ * Metade do teto de séries daquele padrão já entregue de graça (B4: 8 para
+ * grupo grande, 6 para pequeno). Daí para cima, série direta no mesmo padrão é
+ * a 13ª repetição do mesmo estímulo, e a vaga rende mais em outro lugar.
+ *
+ * Extraído porque agora TRÊS lugares precisam da mesma resposta: a seleção
+ * (`restringirPorCobertura`), a troca final da sessão (`trocarPorCoberturaFinal`)
+ * e — a novidade de G2.1 — a troca da SEMANA. Enquanto a semana não sabia disso,
+ * ela trocava para um padrão que a sessão logo em seguida desfazia, e o
+ * invariante semanal ficava aberto em 168 de 1.350 perfis.
+ */
+export function padroesSaturados(grupo: string, jaNoDia: ExercicioGerado[]): Set<string> {
+  const limiar = tetoDoPadrao(grupo) / 2;
+  return new Set(
+    [...indiretoPorPadrao(grupo, jaNoDia)].filter(([, v]) => v >= limiar).map(([k]) => k)
+  );
+}
+
 function restringirPorCobertura(
   cands: ExercicioCat[],
   grupo: string,
   jaNoDia: ExercicioGerado[]
 ): ExercicioCat[] {
-  // Metade do teto de séries daquele padrão já entregue de graça (B4: 8 para
-  // grupo grande, 6 para pequeno). Daí para cima, série direta no mesmo padrão
-  // é a 13ª repetição do mesmo estímulo, e a vaga rende mais em outro lugar.
-  const limiar = tetoDoPadrao(grupo) / 2;
-  const saturados = new Set(
-    [...indiretoPorPadrao(grupo, jaNoDia)].filter(([, v]) => v >= limiar).map(([k]) => k)
-  );
+  const saturados = padroesSaturados(grupo, jaNoDia);
   if (!saturados.size) return cands;
   const livres = cands.filter((e) => !saturados.has(padraoDe(e.nome, grupo)));
   // Mono primeiro: o que falta num grupo já saturado de indireto é trabalho
@@ -1020,8 +1068,26 @@ function prescreverCardio(
   cardio: ExercicioCat[],
   equipamentos: Set<string>
 ) {
+  // ── M2: quem tem dose na constante RECEBE dose ──────────────────────────
+  //
+  // A porta era `emagrecimento || recomposicao`, e isso deixava metade do A10
+  // por corrigir: `hipertrofia` (2 × 20 min, "Zona 2 leve, só para saúde
+  // cardiovascular") e `manutencao` (3 × 25 min) têm dose escrita em
+  // `CARDIO.porObjetivo` e recebiam ZERO. Constante que o produto declara e o
+  // produto não cumpre é pior que constante que não existe: ela documenta uma
+  // regra que ninguém aplica, e a próxima pessoa acredita nela.
+  //
+  // A escolha aqui foi PRESCREVER, não apagar da constante, por três razões:
+  // (1) em hipertrofia a justificativa da dose é cardiovascular, não estética —
+  // apagá-la seria remover orientação de saúde que o app já assume; (2)
+  // Lundberg 2022 (15 estudos, n=300) achou o efeito de interferência pequeno e
+  // ausente especificamente quando o aeróbio é pedalado, e a ordem de
+  // modalidade daqui já prefere bicicleta; (3) o cardio fica FORA de
+  // `estimarDuracao` e é a primeira coisa que `cortarParaCaber` remove quando o
+  // tempo aperta, então ele não consegue roubar série de musculação — o pior
+  // caso é ele não caber, e agora isso é declarado na escala da semana.
   const conf = CARDIO.porObjetivo[p.objetivo];
-  if (!conf || (p.objetivo !== 'emagrecimento' && p.objetivo !== 'recomposicao')) return;
+  if (!conf) return;
 
   const disponiveis = cardio.filter((x) => !x.equipamento || equipamentos.has(x.equipamento));
   if (!disponiveis.length) return;
@@ -1365,13 +1431,22 @@ export async function montarPlano(
 
   // Com os volumes já finais, A9 é reavaliada: o que a seleção liberou porque o
   // peito ainda tinha 7 séries pode não valer mais agora que ele tem 11.
-  // Os invariantes que só a SEMANA enxerga vêm ANTES da cobertura: eles trocam
-  // exercício, e a troca pode cair num padrão que o resto da sessão já cobriu —
-  // foi assim que um desenvolvimento militar reapareceu em 62 dias de empurrar
-  // pela porta dos fundos. Quem tem a última palavra sobre a SESSÃO roda por
-  // último.
-  diversificarNaSemana(dias, disponiveis, p.preferenciaEquipamento, equipDe);
   trocarPorCoberturaFinal(dias, disponiveis, p.preferenciaEquipamento, equipDe);
+  // ── E a SEMANA agora fala por último, sem desfazer a sessão ─────────────
+  //
+  // Em G2 esta chamada vinha ANTES da cobertura, porque a troca semanal não
+  // sabia o que a sessão já treinava de graça e podia devolver ao dia de
+  // empurrar o padrão que a cobertura tinha acabado de tirar. O preço era o
+  // simétrico: a cobertura desfazia a variedade da semana, e o invariante
+  // semanal ficava aberto em 168 de 1.350 perfis — sempre o mesmo formato, um
+  // grupo com UM exercício por dia repetindo o mesmo movimento em dois dias.
+  //
+  // Agora `diversificarNaSemana` consulta `padroesSaturados` do próprio dia:
+  // ela só escolhe o que a sessão também aceitaria. Com as duas escalas
+  // querendo a mesma coisa, a ordem deixa de ser um empate a decidir e a
+  // semana pode rodar depois — que é o único ponto em que a variedade
+  // sobrevive.
+  diversificarNaSemana(dias, disponiveis, p.preferenciaEquipamento, equipDe);
 
   // ── A ÚLTIMA palavra é da sessão, não da agenda ─────────────────────────
   //
@@ -1409,6 +1484,7 @@ export async function montarPlano(
   // Depois do aparo, não antes: os avisos precisam descrever o plano ENTREGUE.
   avisarSobraDeTempo(dias, p, avisos);
   avisarExcessoIndireto(dias, p, avisos);
+  avisarTetoUtil(dias, p, avisos);
   avisarGrupoApagado(dias, previstos, avisos);
 
   // Avisa só das substituições que APARECERAM no plano.
@@ -1659,6 +1735,22 @@ function aparExcesso(dias: DiaGerado[], p: PerfilDoTreino) {
     for (const d of dias)
       for (const e of d.exercicios) direto[e.grupo] = (direto[e.grupo] ?? 0) + e.series;
 
+    // ── Por que o grupo PEQUENO continua medido pelo FRACIONADO ────────────
+    //
+    // A troca parecia óbvia e foi testada: `alvoSemanal` diz no próprio
+    // comentário que o alvo do pequeno é menor porque ele já recebe indireto,
+    // ou seja aquele 6 é alvo de trabalho DIRETO — e compará-lo com o total
+    // fracionado é a mesma troca de unidade que M1 achou entre os dois tetos.
+    // É o que segura B10 em 2+2 de tríceps no dia A: a montagem produz 3+2 e o
+    // aparador devolve 2+2, porque vê 16 fracionadas contra um alvo de 6.
+    //
+    // Medido com `porDireto = emFoco || PEQUENOS`: o dia A perdeu a elevação
+    // lateral (7 exercícios viraram 6), o tríceps continuou 2+2 — e o
+    // invariante (b) quebrou, com desenvolvimento militar voltando a um dia de
+    // empurrar. O volume que o pequeno passa a guardar desloca o corte por
+    // tempo, e o corte por tempo é quem escolhe o ombro do dia. Não é uma
+    // troca local: é o achado 22 do roadmap, um nível acima, e precisa da
+    // própria rodada medida. Fica registrado com o mecanismo já isolado.
     const estourados = Object.entries(vol)
       .map(([g, v]) => ({
         g,
@@ -1962,10 +2054,7 @@ function trocarPorCoberturaFinal(
 ) {
   for (const d of dias) {
     for (const grupo of new Set(d.exercicios.filter((e) => e.grupo !== 'cardio').map((e) => e.grupo))) {
-      const limiar = tetoDoPadrao(grupo) / 2;
-      const saturados = new Set(
-        [...indiretoPorPadrao(grupo, d.exercicios)].filter(([, v]) => v >= limiar).map(([k]) => k)
-      );
+      const saturados = padroesSaturados(grupo, d.exercicios);
       if (!saturados.size) continue;
 
       for (const alvo of d.exercicios.filter((e) => e.grupo === grupo)) {
@@ -2033,13 +2122,28 @@ function diversificarNaSemana(
   ): boolean => {
     const noDia = new Set(d.exercicios.map((e) => e.nome));
     const outros = d.exercicios.filter((e) => e.grupo === alvo.grupo && e !== alvo);
+    // ── A SESSÃO entra na troca da SEMANA, e é isto que fecha os 168 ────────
+    //
+    // A troca semanal escolhia por variedade e ignorava o que o resto do dia já
+    // treinava de graça. Duas consequências, e as duas apareceram medidas: ela
+    // podia devolver ao dia de empurrar justamente o padrão que a cobertura
+    // acabara de tirar dali (o desenvolvimento militar voltando pela porta dos
+    // fundos), e — por isso — ela tinha de rodar ANTES da cobertura, que então
+    // a desfazia. Com o padrão saturado fora da lista, a troca da semana pode
+    // rodar por ÚLTIMO sem brigar com a da sessão: as duas escalas passam a
+    // querer a mesma coisa em vez de se revezarem.
+    //
+    // `indiretoPorPadrao` já ignora exercício do próprio grupo, então o alvo da
+    // troca não conta a favor da própria saturação.
+    const saturados = padroesSaturados(alvo.grupo, d.exercicios);
     const cands = ordenar(
       disponiveis.filter(
         (e) => e.grupo_primario === alvo.grupo && !noDia.has(e.nome) && !proibidos(e)
       ),
       preferencia
     );
-    const novo = cands.find((e) => cabeNoPadrao(outros, e, alvo.grupo, equip));
+    const cabe = (e: ExercicioCat) => cabeNoPadrao(outros, e, alvo.grupo, equip);
+    const novo = cands.find((e) => cabe(e) && !saturados.has(padraoDe(e.nome, alvo.grupo)));
     if (!novo) return false;
     d.exercicios[d.exercicios.indexOf(alvo)] = novoExercicio(novo, alvo.grupo, alvo.series);
     return true;
@@ -2084,10 +2188,7 @@ function diversificarNaSemana(
     const faltaEssencial = essenciais && !essenciais.some((p) => padroes.has(p));
     if (padroes.size >= 2 && !faltaEssencial) continue;
 
-    // Troca a ÚLTIMA aparição: a primeira é a âncora do bloco, e mexer nela
-    // quebraria a comparabilidade de carga que o gráfico usa.
-    const ultima = linhas[linhas.length - 1];
-    trocar(ultima.d, ultima.e, (c) => {
+    const proibidos = (c: ExercicioCat) => {
       const p = padraoDe(c.nome, grupo);
       // Proibido é o que JÁ está coberto — e, quando o grupo tem padrão
       // essencial faltando, também tudo que não seja esse essencial. Sem a
@@ -2095,7 +2196,23 @@ function diversificarNaSemana(
       // semana continuava com um padrão só.
       if (padroes.has(p)) return true;
       return essenciais ? !essenciais.includes(p) : false;
-    });
+    };
+
+    // ── Da última para a primeira, e não só a última ────────────────────────
+    //
+    // A regra anterior tentava UMA aparição, a última, "porque a primeira é a
+    // âncora do bloco". Com a cobertura da sessão entrando na conta, isso passou
+    // a desistir cedo demais: no perfil de 5 dias × 45 min, o ombro aparecia no
+    // dia A (com um supino só, nada saturado) e no dia C (com 10 séries de
+    // peito, `desenvolvimento` e `frontal` saturados). A única aparição
+    // trocável era a PRIMEIRA, e o código nem olhava para ela.
+    //
+    // O que continua protegido é o que a comparabilidade de carga realmente
+    // precisa: a primeira aparição da semana só é trocada quando ela NÃO é um
+    // composto pesado. É a carga do pesado que alimenta o gráfico e o e1RM;
+    // trocar um crucifixo inverso de 2 séries não custa curva nenhuma.
+    const ordem = [...linhas.slice(1).reverse(), ...(ehPesado(linhas[0].e.nome) ? [] : [linhas[0]])];
+    for (const alvo of ordem) if (trocar(alvo.d, alvo.e, proibidos)) break;
   }
 }
 
@@ -2283,18 +2400,41 @@ function aplicarPrescricao(dias: DiaGerado[]) {
  * declarar, não esconder: o número do cardio aparece somado, com o nome dele.
  */
 function avisarCardioForaDoOrcamento(dias: DiaGerado[], p: PerfilDoTreino, avisos: string[]) {
-  const comCardio = dias.filter((d) => d.minutosCardio > 0);
-  if (!comCardio.length) return;
-
   const conf = CARDIO.porObjetivo[p.objetivo];
-  const nome = comCardio[0].exercicios.find((e) => e.grupo === 'cardio')?.nome ?? 'cardio';
-  const min = comCardio[0].minutosCardio;
+  const comCardio = dias.filter((d) => d.minutosCardio > 0);
+
+  if (comCardio.length) {
+    const nome = comCardio[0].exercicios.find((e) => e.grupo === 'cardio')?.nome ?? 'cardio';
+    const min = comCardio[0].minutosCardio;
+    avisos.push(
+      `Cardio: ${comCardio.length} sessõe${comCardio.length > 1 ? 's' : ''} de ${min} min na semana ` +
+        `(${nome.toLowerCase()}, Zona 2 — dá para conversar). Esses minutos NÃO estão no tempo estimado ` +
+        `de cada treino: a estimativa mede a musculação, que é o que você respondeu no questionário. ` +
+        `Some ${min} min ao dia em que o cardio aparece, ou faça em outro horário — ` +
+        `${conf?.tipo ? conf.tipo.toLowerCase() : 'Zona 2'} rende igual separado da musculação.`
+    );
+  }
+
+  // ── A dose que NÃO coube, contada na semana (M2) ────────────────────────
+  //
+  // O aviso de cardio existia por DIA ("o cardio saiu da sessão para o treino
+  // caber em 45 min") e nunca somava. Com 45 minutos ele saía de TODOS os dias,
+  // a semana terminava com zero sessão de Zona 2 num plano de recomposição, e
+  // em lugar nenhum estava escrito quantas sessões da dose ficaram faltando.
+  // Medido: 994 dos 1.350 perfis da grade entregavam menos que a dose e não
+  // diziam. E `emagrecimento` pede 4 sessões e entrega `min(4, dias)` — quem
+  // treina 3× por semana nunca ia saber que faltava uma.
+  //
+  // A unidade certa é a SEMANA porque a dose é semanal. É a mesma lição de G1
+  // com o grupo apagado pelo relógio: quando não cabe, o plano DIZ.
+  if (!conf || comCardio.length >= conf.sessoes) return;
+  const faltam = conf.sessoes - comCardio.length;
   avisos.push(
-    `Cardio: ${comCardio.length} sessõe${comCardio.length > 1 ? 's' : ''} de ${min} min na semana ` +
-      `(${nome.toLowerCase()}, Zona 2 — dá para conversar). Esses minutos NÃO estão no tempo estimado ` +
-      `de cada treino: a estimativa mede a musculação, que é o que você respondeu no questionário. ` +
-      `Some ${min} min ao dia em que o cardio aparece, ou faça em outro horário — ` +
-      `${conf?.tipo ? conf.tipo.toLowerCase() : 'Zona 2'} rende igual separado da musculação.`
+    `Cardio: das ${conf.sessoes} sessões previstas para o seu objetivo, ${comCardio.length} ` +
+      `couberam nos dias de treino. ${faltam === 1 ? 'A que falta' : `As ${faltam} que faltam`} ` +
+      `${faltam === 1 ? 'você faz' : 'você faz'} num dia SEM musculação — ${conf.minutos} min de ` +
+      `${conf.tipo.toLowerCase()}. Fora do dia de treino ${faltam === 1 ? 'ela rende' : 'elas rendem'} ` +
+      `igual e não disputa${faltam === 1 ? '' : 'm'} tempo com a série de força, que é o que constrói.`
   );
 }
 
@@ -2610,6 +2750,60 @@ const COMO_SE_FALA: Record<string, string> = {
   gluteo: 'glúteo', panturrilha: 'panturrilha', abdomen: 'abdômen',
   trapezio: 'trapézio', antebraco: 'antebraço',
 };
+
+/**
+ * O gerador DECLARA quando passa do teto útil — em vez de a outra tela acusar.
+ *
+ * ── O buraco que isto fecha (M1) ─────────────────────────────────────────
+ *
+ * `TETO_UTIL` (20) é onde o retorno por série deixa de pagar a recuperação.
+ * `TETO_SEMANAL_FOCO` (28) existe porque a meta-regressão de dose-resposta
+ * mostra hipertrofia ainda subindo acima de 20 — logo passar de 20 no grupo
+ * que a pessoa escolheu priorizar é decisão, não acidente. O problema nunca foi
+ * o número: era o SILÊNCIO. O gerador montava 24 de peito e não dizia nada;
+ * a tela de programa, lendo a mesma grandeza pela outra ponta, carimbava
+ * "Acima de 20 séries" sobre o plano que o app tinha acabado de prescrever.
+ * Na grade de 1.350 perfis isso acontecia em **1.203**.
+ *
+ * O tom é o do aviso de frequência, que já existe e funciona: diz o número,
+ * diz de onde ele veio e diz como desfazer. Sem ênfase o aviso é outro — ali o
+ * excesso não foi escolhido por ninguém e a informação útil é diferente.
+ */
+function avisarTetoUtil(dias: DiaGerado[], p: PerfilDoTreino, avisos: string[]) {
+  const total = contarVolume(dias);
+  const emFoco = pesosDaEnfase(p.focos).alvos;
+
+  const escolhidos: string[] = [];
+  const naoEscolhidos: string[] = [];
+  for (const [g, v] of Object.entries(total)) {
+    if (g === 'cardio' || !(v > TETO_UTIL)) continue;
+    // Vírgula, não ponto: é o mesmo número que a tela de volume mostra ao lado
+    // ("21,5 séries"), e vê-lo escrito de dois jeitos na mesma sessão de uso é
+    // exatamente o tipo de costura que faz o usuário desconfiar dos dois.
+    const rotulo = `${COMO_SE_FALA[g] ?? g} (${String(Math.round(v * 10) / 10).replace('.', ',')})`;
+    (emFoco.has(g) ? escolhidos : naoEscolhidos).push(rotulo);
+  }
+
+  if (escolhidos.length) {
+    avisos.push(
+      `${escolhidos.join(', ')} passa${escolhidos.length > 1 ? 'm' : ''} do teto útil de ` +
+        `${TETO_UTIL} séries por semana — e isso é a ênfase que você pediu, contada com as séries ` +
+        `indiretas (as em que o músculo só ajuda valem meia). Até ${TETO_SEMANAL_FOCO} a evidência ` +
+        `ainda mostra ganho, com retorno cada vez menor. A tela de volume vai marcar esse grupo ` +
+        `como "alto": é o mesmo número, visto do outro lado. Para voltar a ${TETO_UTIL}, tire o ` +
+        `foco desse grupo e refaça o treino.`
+    );
+  }
+
+  if (naoEscolhidos.length) {
+    avisos.push(
+      `${naoEscolhidos.join(', ')} passa${naoEscolhidos.length > 1 ? 'm' : ''} do teto útil de ` +
+        `${TETO_UTIL} séries por semana sem você ter pedido ênfase nele${naoEscolhidos.length > 1 ? 's' : ''}. ` +
+        `O que empurra para cima é o volume indireto dos compostos, não série que alguém prescreveu ` +
+        `de propósito — cada série a mais ali rende cada vez menos e cobra recuperação igual.`
+    );
+  }
+}
 
 /**
  * Diz quando um grupo passa muito do alvo por volume INDIRETO.

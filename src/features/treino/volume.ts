@@ -1,4 +1,5 @@
 import { all } from '@/db/client';
+import { ALVO_SERIES, FREQ_MINIMA, TETO_UTIL } from './periodizacao';
 
 /**
  * Auditoria de volume semanal — a resposta para "este treino traz resultado?".
@@ -23,12 +24,16 @@ import { all } from '@/db/client';
  * fracionado foi o que teve evidência mais forte.
  */
 
-/** Piso de séries semanais por grupo. Abaixo disso o estímulo fica curto. */
-export const ALVO_SERIES = 10;
-/** Acima disso o retorno por série cai e a recuperação começa a cobrar. */
-export const TETO_UTIL = 20;
-/** Frequência mínima por grupo na semana. */
-export const FREQ_MINIMA = 2;
+/**
+ * Os três números vêm de `periodizacao.ts` — uma definição só (M1).
+ *
+ * Reexportados aqui porque a tela de programa já os importava deste módulo, e
+ * porque é aqui que eles são CONSUMIDOS para auditar. O que não pode voltar a
+ * existir é uma segunda definição: era ela que fazia a tela carimbar "acima de
+ * 20" sobre o plano que o gerador tinha acabado de montar respeitando o teto
+ * dele, que era outro.
+ */
+export { ALVO_SERIES, FREQ_MINIMA, TETO_UTIL };
 
 export interface VolumeGrupo {
   grupo: string;

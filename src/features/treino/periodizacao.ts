@@ -28,6 +28,35 @@ export const VOLUME_SEMANAL: Record<Experiencia, { min: number; alvo: number; ma
 };
 
 /**
+ * Volume semanal por grupo: os três números que o app inteiro usa (M1).
+ *
+ * ── Por que eles moram AQUI, e não em `volume.ts` ────────────────────────
+ *
+ * Eram dois tetos para a mesma pergunta. `volume.ts` dizia `TETO_UTIL = 20` e
+ * chamava de "alto" o que passasse disso; o gerador tinha o próprio 20 para
+ * grupo grande e **14 para grupo pequeno**. Resultado medido na grade de 1.350
+ * perfis: em **1.203 deles** algum grupo passava de 20 e a tela de programa
+ * carimbava "acima de 20 séries" sobre um plano que o próprio gerador acabara
+ * de montar dentro das regras dele — sem uma linha do gerador reconhecendo isso.
+ * Duas contas para a mesma grandeza é como o app começa a discordar de si mesmo.
+ *
+ * `volume.ts` não pode ser a casa da constante porque ele importa `@/db/client`
+ * no topo: quem importasse de lá arrastaria `expo-sqlite` e o gerador deixaria
+ * de rodar fora do app — que é justamente o que permite testá-lo. Este arquivo
+ * é puro e já é a fonte das outras constantes de prescrição.
+ *
+ * Medidos em contagem FRACIONADA (série indireta vale 0,5), que é a unidade
+ * das duas pontas.
+ */
+
+/** Piso de séries semanais por grupo. Abaixo disso o estímulo fica curto. */
+export const ALVO_SERIES = 10;
+/** Acima disso o retorno por série cai e a recuperação começa a cobrar. */
+export const TETO_UTIL = 20;
+/** Frequência mínima por grupo na semana. */
+export const FREQ_MINIMA = 2;
+
+/**
  * Descanso entre séries, em segundos.
  *
  * Schoenfeld 2016 comparou 1 min contra 3 min por 8 semanas: o grupo de 3
@@ -56,34 +85,78 @@ export const DESCANSO = {
 // primeiro.
 
 /**
- * RIR alvo (repetições em reserva) por fase.
+ * RIR por fase — **direção, não número** (M3-texto).
  *
  * Treinar até a falha em toda série não rende mais hipertrofia e atrasa a
  * recuperação. Parar com 1–3 repetições na reserva entrega praticamente o
  * mesmo estímulo com muito menos desgaste.
+ *
+ * ── Por que o texto deixou de imprimir número ────────────────────────────
+ *
+ * A fase não tem um RIR. Quem tem RIR é o EXERCÍCIO, pelo papel dele
+ * (`rirNaFase`, em `papel.ts`) — e na mesma sessão de deload o principal de
+ * barra pede 3-4 enquanto o isolador pede 2. O card da fase dizia "4 a 5" e as
+ * linhas logo abaixo diziam "RIR 2": duas fontes de RIR na mesma tela, que é
+ * exatamente como o crossover virou composto numa função e abertura em outra.
+ *
+ * Não existe número certo para pôr ali. O que existe é a DIREÇÃO: a fase
+ * afrouxa (ou não) o alvo de cada exercício, e é isso que `ajuste` declara e o
+ * card imprime. O número continua saindo de `rirNaFase`, uma linha por vez.
+ *
+ * `min`/`max` continuam aqui porque descrevem a fase em termos genéricos (é o
+ * que o plano de retorno usa para explicar a semana), mas nenhuma tela deve
+ * imprimi-los ao lado de uma prescrição por exercício.
  */
-export const RIR_POR_FASE: Record<Fase, { min: number; max: number; texto: string }> = {
+export const RIR_POR_FASE: Record<
+  Fase,
+  {
+    min: number;
+    max: number;
+    /** Quantas repetições AFROUXAR sobre o alvo de cada exercício. [0,0] = nenhuma. */
+    ajuste: [number, number];
+    texto: string;
+  }
+> = {
   readaptacao: {
     min: 3,
     max: 4,
-    texto: 'Deixe 3 a 4 repetições na reserva. A meta destas semanas é o tendão e a técnica voltarem, não o recorde.',
+    ajuste: [1, 2],
+    texto:
+      'Afrouxe 1 a 2 repetições em relação ao alvo de cada exercício — o número da linha já vem ' +
+      'ajustado. A meta destas semanas é o tendão e a técnica voltarem, não o recorde.',
   },
   acumulo: {
     min: 2,
     max: 3,
-    texto: 'Deixe 2 a 3 repetições na reserva. Dá para acumular volume sem destruir a recuperação.',
+    ajuste: [0, 0],
+    texto:
+      'Siga o alvo de esforço de cada exercício, que aparece na linha dele. Dá para acumular ' +
+      'volume sem destruir a recuperação.',
   },
   intensificacao: {
     min: 0,
     max: 2,
-    texto: 'Chegue a 0 a 2 repetições da falha nas últimas séries. É aqui que se busca recorde.',
+    ajuste: [0, 0],
+    texto:
+      'Nas últimas séries, encoste no limite inferior do alvo de cada exercício — o menor número ' +
+      'da faixa que aparece na linha. É aqui que se busca recorde.',
   },
   deload: {
     min: 4,
     max: 5,
-    texto: 'Semana leve. Metade do volume, longe da falha. O ganho acontece na recuperação.',
+    ajuste: [1, 2],
+    texto:
+      'Semana leve: metade do volume e 1 a 2 repetições a mais na reserva sobre o alvo de cada ' +
+      'exercício. O ganho acontece na recuperação.',
   },
 };
+
+/** "afrouxe 1 a 2 reps" / "" quando a fase não afrouxa nada. Para chip curto. */
+export function textoAjusteDaFase(fase: Fase): string {
+  const [a, b] = RIR_POR_FASE[fase].ajuste;
+  if (!b) return '';
+  return a === b ? `afrouxe ${a} rep` : `afrouxe ${a} a ${b} reps`;
+}
 
 export interface PlanoRetorno {
   semanas: { semana: number; fase: Fase; volumePct: number; cargaPct: number; nota: string }[];

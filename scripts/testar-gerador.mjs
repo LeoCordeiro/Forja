@@ -10,11 +10,25 @@
  */
 import { EXERCICIOS } from '../src/db/seed/exercicios.ts';
 import { montarPlano, REGIOES } from '../src/features/treino/gerador.ts';
+import { indiretoPorPadrao } from '../src/features/treino/papel.ts';
 import { FORCA_RELATIVA, padraoDe, ehComposto, ehPesado } from '../src/features/treino/classificacao.ts';
 import { LOCAIS } from '../src/features/treino/local.ts';
-import { CARDIO } from '../src/features/treino/periodizacao.ts';
+import { REGIOES_DOR } from '../src/features/perfil/diagnostico.ts';
+import { CARDIO, RIR_POR_FASE } from '../src/features/treino/periodizacao.ts';
 import { aquecimento } from '../src/features/treino/anilhas.ts';
 import { hidratarSeries, inserirAproximacoes, numeroValendo } from '../src/features/treino/series.ts';
+import { PAPEIS, rirNaFase } from '../src/features/treino/papel.ts';
+import { resolverFase } from '../src/features/treino/fase.ts';
+
+// ── Namespace, e não `import { X }`, de propósito ───────────────────────────
+//
+// Estes símbolos NASCEM nesta fase. Com import nomeado, rodar o arquivo contra
+// o código anterior não daria falha: daria SyntaxError de link e o processo
+// morreria antes da primeira asserção — ou seja, o gate não poderia ser
+// cumprido. Com namespace, ausente vale `undefined` e a asserção FALHA, que é
+// o que o gate pede.
+import * as PERIODIZACAO from '../src/features/treino/periodizacao.ts';
+import * as GERADOR from '../src/features/treino/gerador.ts';
 
 // O seed vira o mesmo formato que o gerador recebe do banco.
 const TODOS = EXERCICIOS.map(([nome, grupo, sec, equip, carga], i) => ({
@@ -348,13 +362,25 @@ const diaLevaONome = (nomeDoDia, grupo) => semAcento(nomeDoDia).includes(semAcen
 /** Equipamentos do local, com o mesmo fallback de `equipamentosDe`. */
 const perfilLocal = (p) => new Set((LOCAIS.find((l) => l.chave === p.local) ?? LOCAIS[0]).equipamentos);
 
-/** Padrões que o catálogo oferece para um grupo NAQUELE local. */
+/** Padrões que o catálogo oferece para um grupo NAQUELE perfil. */
 function padroesDoLocal(grupo, p) {
   const equip = perfilLocal(p);
+  // Mesma exclusão por dor que o gerador aplica (`evitarPorDor`). Sem ela, a
+  // asserção de variedade semanal cobrava o impossível e o número saía errado:
+  // com dor no ombro saem `Elevação lateral` (o ÚNICO exercício do padrão
+  // `lateral` no catálogo) e `Remada alta` (o único do `alta`), e num dia de
+  // superior os padrões `desenvolvimento` e `frontal` já estão saturados pelo
+  // indireto dos supinos. Sobra UM padrão de ombro possível — e cobrar dois ali
+  // é cobrar do gerador algo que o catálogo não tem. É o mesmo motivo do filtro
+  // de força relativa logo abaixo, que já era precedente aceito.
+  const proibidos = new Set(
+    (p.dores ?? []).flatMap((d) => REGIOES_DOR.find((x) => x.chave === d)?.evitar ?? [])
+  );
   const out = new Set();
   for (const e of fonte.catalogo) {
     if (e.grupo_primario !== grupo) continue;
     if (e.equipamento && !equip.has(e.equipamento)) continue;
+    if (proibidos.has(e.nome)) continue;
     // Mesmo filtro de força relativa que o gerador aplica: mergulho no
     // paralelo é o segundo padrão de peito em casa, e ele não existe para quem
     // ainda não sustenta o próprio peso. Contar padrão que o gerador nunca
@@ -366,27 +392,79 @@ function padroesDoLocal(grupo, p) {
   return out;
 }
 
+/**
+ * Existia, em ALGUM dos dias em que o grupo aparece, um segundo padrão que o
+ * gerador poderia ter escolhido sem quebrar A9?
+ *
+ * A régua da variedade semanal precisa desta pergunta porque "o catálogo tem
+ * cinco padrões de ombro" não significa que cinco estavam disponíveis: num dia
+ * de superior, `desenvolvimento` e `frontal` já vêm saturados de graça pelo
+ * indireto dos supinos, e A9 manda o trabalho direto ir para o que ainda não
+ * foi tocado. Medir sem isso conta como defeito o cumprimento da regra.
+ *
+ * `padroesSaturados` é a função do PRÓPRIO gerador — usada, não reescrita:
+ * régua duplicada é como as duas contas de volume passaram meses discordando.
+ * O `??` abaixo é só a compatibilidade que o GATE exige: para rodar este mesmo
+ * arquivo contra o código anterior (onde a função ainda não era exportada) e
+ * comparar os dois lados com a MESMA régua. No caminho vivo ele nunca é usado.
+ */
+const saturadosDe =
+  GERADOR.padroesSaturados ??
+  ((grupo, exs) => {
+    const limiar = (PEQUENOS_T.includes(grupo) ? 6 : 8) / 2;
+    return new Set(
+      [...indiretoPorPadrao(grupo, exs)].filter(([, v]) => v >= limiar).map(([k]) => k)
+    );
+  });
+
+function alcancaSegundoPadrao(grupo, p, plano) {
+  const noPerfil = padroesDoLocal(grupo, p);
+  if (noPerfil.size < 2) return false;
+  for (const d of plano.dias) {
+    if (!d.exercicios.some((e) => e.grupo === grupo)) continue;
+    const saturados = saturadosDe(grupo, d.exercicios);
+    const livres = [...noPerfil].filter((x) => !saturados.has(x));
+    if (livres.length >= 2) return true;
+  }
+  return false;
+}
+
 const ORDEM_CARDIO = ['Bicicleta ergométrica', 'Elíptico', 'Remo ergômetro', 'Esteira'];
+
+/** Marcador estável do aviso SEMANAL de dose incompleta (M2). */
+const MARCA_DOSE = 'sessões previstas';
+
 function conferirCardio(plano, p, fonteCat) {
   const comCardio = plano.dias.filter((d) => d.exercicios.some((e) => e.grupo === 'cardio'));
-  const pedeCardio = p.objetivo === 'emagrecimento' || p.objetivo === 'recomposicao';
-  if (!pedeCardio) return comCardio.length ? `cardio em ${comCardio.length} dias sem objetivo que peça` : '';
 
+  // ── M2: o objetivo tem dose na constante? Então ele RECEBE cardio ────────
+  //
+  // A régua anterior era `emagrecimento || recomposicao`, que é a metade do
+  // A10 que G2 corrigiu. `hipertrofia` (2 × 20 min) e `manutencao` (3 × 25 min)
+  // têm dose escrita em `CARDIO.porObjetivo` e não recebiam nada: ou o app
+  // prescreve o que a própria constante diz, ou a constante não devia dizer.
   const conf = CARDIO.porObjetivo[p.objetivo];
+  if (!conf) return comCardio.length ? `cardio em ${comCardio.length} dias sem dose na constante` : '';
+
   // Mesmo fallback de `equipamentosDe`: local desconhecido cai em academia.
   const equip = new Set((LOCAIS.find((l) => l.chave === p.local) ?? LOCAIS[0]).equipamentos);
   const disponiveis = fonteCat.cardio.filter((e) => !e.equipamento || equip.has(e.equipamento));
   if (!disponiveis.length) return comCardio.length ? 'cardio prescrito sem modalidade disponível no local' : '';
 
   const esperadoDias = Math.min(conf.sessoes, plano.dias.length);
-  // Sessão que não coube no tempo pode ter perdido o cardio — o plano avisa, e
-  // isso não é o defeito que este teste persegue. Cardio a MAIS nunca tem
-  // desculpa: era o defeito original (todo dia).
-  const cortou = plano.avisos.some(
-    (a) => a.includes('o cardio saiu da sessão') || a.includes('a menos para caber em')
-  );
-  if (comCardio.length > esperadoDias || (!cortou && comCardio.length !== esperadoDias))
+  // Sessão que não coube no tempo pode ter perdido o cardio. Isso deixou de ser
+  // desculpa muda: se o plano entrega MENOS sessões do que a dose pede — porque
+  // não há dias, porque o relógio cortou, tanto faz — ele precisa dizer isso na
+  // escala da SEMANA. O aviso por dia existia e nunca somava: com 45 min o
+  // cardio sumia da semana inteira e o usuário só via "o cardio saiu da sessão"
+  // repetido, nunca "das 3 sessões previstas, 0 couberam".
+  const declarouDose = plano.avisos.some((a) => a.includes(MARCA_DOSE));
+  if (comCardio.length > esperadoDias)
     return `cardio em ${comCardio.length} dias, esperado ${esperadoDias}`;
+  if (comCardio.length < conf.sessoes && !declarouDose)
+    return `${comCardio.length} de ${conf.sessoes} sessões e nenhum aviso semanal de dose`;
+  if (comCardio.length < esperadoDias && !declarouDose)
+    return `cardio em ${comCardio.length} dias, esperado ${esperadoDias}, sem aviso`;
 
   const preferida = ORDEM_CARDIO.find((n) => disponiveis.some((e) => e.nome === n)) ?? disponiveis[0].nome;
   for (const d of comCardio) {
@@ -405,6 +483,7 @@ const COMO_SE_FALA_T = {
   peito: 'peito', costas: 'costas', ombro: 'ombro', biceps: 'bíceps',
   triceps: 'tríceps', quadriceps: 'quadríceps', posterior: 'posterior de coxa',
   gluteo: 'glúteo', panturrilha: 'panturrilha', abdomen: 'abdômen',
+  trapezio: 'trapézio', antebraco: 'antebraço',
 };
 
 /** Cenários que cobrem experiência, dias, local, foco e preferência. */
@@ -796,10 +875,12 @@ console.log('\n16. Invariantes de sessão numa grade de perfis');
   let semPrincipal = 0, semRir = 0, pisoPequeno = 0, pressNoEmpurrar = 0;
   let faixaUnica = 0, cardioErrado = 0, descansoErrado = 0, aproxSemCarga = 0;
   let pesadoDemais = 0, padraoUnicoSemana = 0;
+  // G2.1 — os dois invariantes novos de SEMANA.
+  let tetoNaoDeclarado = 0, padraoUnicoGenerico = 0;
   const amostra = {
     empilhado: '', teto: '', padrao: '', sumiu: '',
     principal: '', rir: '', piso: '', press: '', faixa: '', cardio: '', descanso: '', aprox: '',
-    pesado: '', semana: '',
+    pesado: '', semana: '', tetoUtil: '', semanaGen: '',
   };
 
   for (const p of grade) {
@@ -999,6 +1080,23 @@ console.log('\n16. Invariantes de sessão numa grade de perfis');
       // candidato no roadmap (168 perfis com um padrão só), porque fechar isso
       // exige a seleção conversar com a cobertura indireta em duas escalas ao
       // mesmo tempo, e não cabia nesta rodada.
+      // (l) UNIDADE: grupo grande × SEMANA — a régua GENÉRICA, que G2 deixou
+      // aberta em 168 de 1.350 perfis. Um grupo que aparece dois dias na semana
+      // e faz o mesmo padrão nos dois é uma semana com um estímulo só, e o
+      // segundo dia paga preço de sessão sem comprar amplitude nova.
+      //
+      // Só cobra onde um segundo padrão era ALCANÇÁVEL — e "alcançável" tem
+      // três filtros, não um: o local precisa ter o exercício, a dor não pode
+      // tê-lo proibido (`padroesDoLocal` cobre os dois) e a cobertura indireta
+      // do próprio dia não pode tê-lo saturado. O terceiro é A9, que é regra
+      // do projeto e não acidente: num dia de superior com dor no ombro, saem
+      // `Elevação lateral` e `Remada alta` por dor e `desenvolvimento`/`frontal`
+      // por saturação dos supinos — sobra `posterior`, e UM padrão ali é o teto
+      // do que a regra permite. Cobrar dois seria cobrar que A9 fosse violada.
+      if (ps.size < 2 && alcancaSegundoPadrao(g, p, plano)) {
+        padraoUnicoGenerico++;
+        amostra.semanaGen ||= `${rot} | ${g}: só ${[...ps].join(', ')}`;
+      }
       if (g !== 'costas') continue;
       const faltaPuxar = !['vertical', 'horizontal', 'extensao_ombro'].some((x) => ps.has(x));
       if (!faltaPuxar) continue;
@@ -1006,6 +1104,35 @@ console.log('\n16. Invariantes de sessão numa grade de perfis');
       if (padroesDoLocal(g, p).size < 2) continue;
       padraoUnicoSemana++;
       amostra.semana ||= `${rot} | ${g}: ${[...ps].join(', ')}`;
+    }
+
+    // ── (k) UNIDADE: grupo × SEMANA — um teto só, e o que passa dele é dito ──
+    //
+    // O gerador deixa grupo em foco chegar a 28 fracionadas; `volume.ts` chama
+    // de "alto" acima de 20 e a tela de programa carimba isso sobre o plano que
+    // o próprio gerador acabou de montar. Dois tetos para a mesma pergunta, e
+    // nenhum dos dois avisa o outro. A régua: passar do teto útil é legítimo
+    // quando é ênfase — desde que o plano DECLARE, no mesmo tom do aviso de
+    // frequência que já existe e funciona.
+    // Enquanto a constante única não existe, a régua é o número que `volume.ts`
+    // já usava — senão a asserção passaria VAZIA contra o código anterior
+    // (`v > undefined` é sempre falso), que é exatamente o modo de falhar que o
+    // cross-review de G1 pegou.
+    const tetoUtil = Number.isFinite(PERIODIZACAO.TETO_UTIL) ? PERIODIZACAO.TETO_UTIL : 20;
+    const semanal = {};
+    for (const d of plano.dias)
+      for (const e of d.exercicios) {
+        if (e.grupo === 'cardio') continue;
+        semanal[e.grupo] = (semanal[e.grupo] ?? 0) + e.series;
+        for (const s of e.secundarios) semanal[s] = (semanal[s] ?? 0) + e.series * 0.5;
+      }
+    for (const [g, v] of Object.entries(semanal)) {
+      if (!(v > tetoUtil)) continue;
+      const nome = COMO_SE_FALA_T[g] ?? g;
+      const declarado = plano.avisos.some((a) => a.includes('teto útil') && a.includes(nome));
+      if (declarado) continue;
+      tetoNaoDeclarado++;
+      amostra.tetoUtil ||= `${rot} | ${g}=${Math.round(v * 10) / 10} > ${tetoUtil}`;
     }
 
     // (f) cardio na dose e na modalidade da constante do próprio app.
@@ -1048,6 +1175,125 @@ console.log('\n16. Invariantes de sessão numa grade de perfis');
   ok('(h) aproximação só onde existe carga externa', aproxSemCarga === 0, `${aproxSemCarga} — ${amostra.aprox}`);
   ok('(i) mesmo pesado no máximo 2× na semana', pesadoDemais === 0, `${pesadoDemais} — ${amostra.pesado}`);
   ok('(j) semana de costas sempre com uma puxada', padraoUnicoSemana === 0, `${padraoUnicoSemana} — ${amostra.semana}`);
+  // UNIDADE: grupo × semana — os dois de G2.1.
+  ok('(k) volume acima do teto útil sempre declarado', tetoNaoDeclarado === 0, `${tetoNaoDeclarado} — ${amostra.tetoUtil}`);
+  ok('(l) todo grupo grande com 2+ padrões na semana', padraoUnicoGenerico === 0, `${padraoUnicoGenerico} — ${amostra.semanaGen}`);
+}
+
+// ── 20. Um teto só para a mesma pergunta (M1) ──────────────────────────────
+//
+// UNIDADE: a CONSTANTE. Não é uma medida de plano — é a pergunta "quantos
+// números diferentes o app usa para responder 'este grupo passou do volume
+// útil?'". A resposta certa é um. `volume.ts` dizia 20 e o gerador dizia 20
+// para grande e 14 para pequeno; a tela de programa carimbava "acima de 20"
+// sobre o plano que o gerador tinha acabado de montar dentro das próprias
+// regras dele.
+console.log('\n20. O teto útil é UM número, consumido pelas duas pontas');
+{
+  const tetoUtil = PERIODIZACAO.TETO_UTIL;
+  const tetoGerador = GERADOR.TETO_SEMANAL;
+  const tetoPequenoSemanal = GERADOR.TETO_SEMANAL_PEQUENO;
+  ok('o teto útil é exportado de uma fonte só', Number.isFinite(tetoUtil), String(tetoUtil));
+  ok('gerador e auditoria de volume usam o MESMO número',
+     Number.isFinite(tetoUtil) && tetoGerador === tetoUtil, `gerador ${tetoGerador} x volume ${tetoUtil}`);
+  ok('o piso semanal também é um número só',
+     Number.isFinite(PERIODIZACAO.ALVO_SERIES) && GERADOR.PISO_SEMANAL === PERIODIZACAO.ALVO_SERIES,
+     `gerador ${GERADOR.PISO_SEMANAL} x volume ${PERIODIZACAO.ALVO_SERIES}`);
+  // 14 era o teto do grupo pequeno, e ele fechava a porta para o segundo
+  // exercício de tríceps que A7 exige: o total fracionado do tríceps chega a 14
+  // quase todo por indireto dos supinos, e aí não cabia mais nada DIRETO.
+  ok('teto do grupo pequeno subiu para 18-20 fracionadas',
+     tetoPequenoSemanal >= 18 && tetoPequenoSemanal <= 20, String(tetoPequenoSemanal));
+}
+
+// ── 21. Cardio: dose completa em TODO objetivo que tem dose (M2) ───────────
+//
+// UNIDADE: a SEMANA. O aviso de cardio existia por DIA ("o cardio saiu da
+// sessão") e nunca somava: com 45 min ele sumia da semana inteira e o plano
+// nunca dizia quantas sessões da dose sobraram. E dois dos quatro objetivos
+// tinham dose escrita na constante e recebiam ZERO.
+console.log('\n21. Cardio na dose da constante, ou dose declarada na semana');
+for (const objetivo of ['recomposicao', 'emagrecimento', 'hipertrofia', 'manutencao']) {
+  const conf = CARDIO.porObjetivo[objetivo];
+  for (const [rotulo, extra] of [
+    ['4 dias 90 min', { dias: 4, diasDisponiveis: [1, 2, 4, 5], minutosPorDia: Array(7).fill(90) }],
+    ['3 dias 60 min', { dias: 3, diasDisponiveis: [1, 3, 5], minutosPorDia: Array(7).fill(60) }],
+    ['4 dias 45 min', { dias: 4, diasDisponiveis: [1, 2, 4, 5], minutosPorDia: Array(7).fill(45) }],
+  ]) {
+    const p = { ...base, ...extra, objetivo };
+    const plano = await montarPlano(p, fonte);
+    const erro = conferirCardio(plano, p, fonte);
+    const sessoes = plano.dias.filter((d) => d.exercicios.some((e) => e.grupo === 'cardio')).length;
+    ok(`${objetivo} ${rotulo}: ${conf.sessoes}× ${conf.minutos} min entregues ou declarados`,
+       !erro, erro || `${sessoes} sessões`);
+  }
+}
+
+// ── 22. O card da fase imprime DIREÇÃO, não número (M3-texto) ──────────────
+//
+// UNIDADE: a SEMANA, no texto. `RIR_POR_FASE.deload` diz 4-5 e `rirNaFase`
+// devolve 2 no isolador: na semana de deload o cabeçalho da sessão dizia
+// "RIR 4-5" e as linhas logo abaixo diziam "RIR 2". Duas fontes de RIR na mesma
+// tela é como o app começa a discordar de si mesmo.
+//
+// A régua não é "o número está errado" — é que NÃO EXISTE número certo ali: o
+// afrouxamento da fase é relativo ao alvo de cada exercício, e o alvo muda com
+// o papel. Então o card diz a direção e o número fica na linha.
+console.log('\n22. A fase afrouxa em direção; o número vem de rirNaFase');
+{
+  const AMOSTRA_EXS = [
+    ['Supino reto com barra', 'peito', 'barra', 'peso_reps'],
+    ['Elevação lateral com halteres', 'ombro', 'halter', 'peso_reps'],
+    ['Tríceps na polia com corda', 'triceps', 'polia', 'peso_reps'],
+  ];
+  for (const fase of ['readaptacao', 'deload']) {
+    const valores = new Set();
+    for (const papel of PAPEIS)
+      for (const [nome, grupo, equip, carga] of AMOSTRA_EXS)
+        valores.add(JSON.stringify(rirNaFase(papel, nome, grupo, equip, fase, carga)));
+    ok(`${fase}: rirNaFase devolve valores diferentes por papel`, valores.size > 1,
+       `${valores.size} valores distintos`);
+
+    // Com mais de um valor possível, qualquer número ABSOLUTO no texto da fase
+    // está errado para alguém. Número RELATIVO ("afrouxe 1 a 2 sobre o alvo de
+    // cada exercício") é o contrário disso: ele é certo para todo mundo, porque
+    // fala do alvo da linha em vez de substituí-lo. A régua distingue os dois —
+    // um regex que proibisse todo dígito proibiria também a correção pedida.
+    const texto = RIR_POR_FASE[fase].texto;
+    const RELATIVIZA = /(em relação ao alvo|sobre o alvo|a mais|a menos|do alvo de cada)/i;
+    const numeroAbsoluto =
+      /RIR\s*\d/i.test(texto) ||
+      /\b(deixe|chegue a|pare a|fique a)\s+\d/i.test(texto) ||
+      (/\d+\s*(a|à|-)?\s*\d*\s*repeti/i.test(texto) && !RELATIVIZA.test(texto));
+    ok(`${fase}: o texto da fase não imprime RIR absoluto`, !numeroAbsoluto, texto);
+
+    // E existe a direção, escrita, para o card imprimir no lugar.
+    const ajuste = RIR_POR_FASE[fase].ajuste;
+    ok(`${fase}: a fase declara o AJUSTE (quanto afrouxar)`,
+       Array.isArray(ajuste) && ajuste.length === 2 && ajuste[1] >= ajuste[0] && ajuste[1] > 0,
+       JSON.stringify(ajuste));
+  }
+  // Acúmulo e intensificação não afrouxam nada: `rirNaFase` devolve o RIR do
+  // plano. Ajuste zero é resposta, não buraco.
+  for (const fase of ['acumulo', 'intensificacao']) {
+    const ajuste = RIR_POR_FASE[fase].ajuste;
+    ok(`${fase}: ajuste declarado e neutro`, Array.isArray(ajuste) && ajuste[0] === 0 && ajuste[1] === 0,
+       JSON.stringify(ajuste));
+  }
+
+  // E o CHIP do cabeçalho do executor, que é onde o "RIR 4-5" aparecia de
+  // verdade — `RIR_POR_FASE.deload.min/max` viajando por `resolverFase`.
+  // 2 meses parado → 3 semanas de readaptação, 4 de acúmulo, a 8ª é o deload.
+  for (const [rotulo, semana] of [['readaptação', 1], ['deload', 8]]) {
+    const f = resolverFase({
+      retomouEm: '2026-06-01', mesesParado: 2, rotinaCriadaEmIso: null,
+      hojeIso: '2026-08-03', semanaPlanoGravada: semana,
+    });
+    ok(`${rotulo}: a fase resolve`, !!f, f?.fase ?? 'null');
+    ok(`${rotulo}: o chip do executor não imprime RIR absoluto`,
+       !!f && !/RIR\s*\d/i.test(f.rirTexto), f?.rirTexto ?? '');
+    ok(`${rotulo}: e o chip diz a direção`, !!f && f.rirTexto.length > 0, f?.rirTexto ?? '(vazio)');
+  }
 }
 
 // ── 17. A prescrição não sai da EXPERIÊNCIA (A6) ───────────────────────────

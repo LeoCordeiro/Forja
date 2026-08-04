@@ -18,10 +18,12 @@ import {
   BLOCO,
   diasRestantes,
   faseAtual,
+  faseDaSemanaDoBloco,
   objetivoDoBloco,
   SEMANAS_DO_BLOCO,
   semanaDoBloco,
 } from '@/features/treino/programa';
+import { textoAjusteDaFase } from '@/features/treino/periodizacao';
 import {
   AVISO_EQUIPAMENTO,
   OPCOES_EQUIPAMENTO,
@@ -136,7 +138,21 @@ export default function Programa() {
           </Txt>
           <View style={s.tags}>
             <Tag icone="repeat" texto={`volume ${fase.volumePct}%`} />
-            <Tag icone="flame-outline" texto={`parar a ${fase.rir} da falha`} />
+            {/* ── Direção, não número (M3-texto) ────────────────────────────
+                Era `parar a ${fase.rir} da falha`, e `fase.rir` é o campo cru
+                da semana do bloco: "3" na semana 1, "4" na semana 8. Ao lado,
+                cada linha do treino mostra o RIR do PAPEL dela — 1-2 no
+                principal, 0-2 no isolador, 0-1 no finalizador. O card afirmava
+                um número que nenhuma linha da tela seguinte confirmava.
+                Não existe número certo aqui: o que a fase faz é afrouxar (ou
+                não) o alvo de cada exercício. Nas semanas que não afrouxam
+                nada, a tag some — repetir o alvo da linha no topo é ruído. */}
+            {textoAjusteDaFase(faseDaSemanaDoBloco(fase, semana)) ? (
+              <Tag
+                icone="flame-outline"
+                texto={textoAjusteDaFase(faseDaSemanaDoBloco(fase, semana))}
+              />
+            ) : null}
           </View>
 
           {restam <= 0 ? (

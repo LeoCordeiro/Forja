@@ -22,6 +22,7 @@ Prescrição-alvo (o que devia sair): `prescricao-alvo.md` na mesma pasta.
 | 2 | Motor de treino | F2 F3 F4 F6 | **feita** — commit `890ec16`. Cross-review duplo (qa reprovou a 1ª rodada com 1 ALTO, corrigido e re-aprovado; fitness-scientist aprovou os 4 com ressalvas → candidatos abaixo). Ver "Validação da fase 2" |
 | **G1** | **Estrutura e seleção** | A2, A1+A11, A4, A3, A8 | **feita e no ar** — commits `ee543d2` + `8c68ef1` (correção do cross-review), build `1e725e2c2d8d`. Gate reverificado pelo Claude 2×: 32 falhas contra o código pré-G1, 9 contra o `ee543d2`, 0 depois. Ver "Validação de G1" |
 | G2 | Prescrição com papel | A5 A6 A7 A9 A10 + F8 | **feita e no ar** — commit `5374f1e`, build `f11ddcbac48c`. Reprovada por qa (3 ALTOs) E fitness-scientist (2 CRÍTICOS + 5 ALTOs) na 1ª entrega; corrigida e reverificada. Gate final conferido pelo Claude: **27 falhas contra o código em produção, 0 depois**. Ver "Validação de G2" |
+| G2.1 | Sobras do G2 | ALTO-3 (backfill de papel) + M1 M2 M3-texto + variedade semanal | **feita, não commitada** — gate: **23 falhas no gerador + 5 na migração contra `63c716b`, 0 depois**. Ver "Validação de G2.1" |
 | G3 | Treinador que explica e varia | execução detalhada, técnicas de intensidade, objetivo do exercício, variação entre ciclos | pendente |
 | 4 | Série em 1 toque | U1 U2 U5 U6 U7 | pendente — validar no celular, não só navegador |
 | 5 | Segurança e nutrição | F5 N3 N6 N8 U8 | pendente |
@@ -135,6 +136,156 @@ estão no código (`ACSM 2026` em volume.ts, Baz-Valle/Coleman em programa.ts,
 Refalo/Nuzzo/Haugen em gerador.ts) NÃO foram verificadas — não tratar como
 evidência nem reaproveitar em texto de produto sem WebFetch antes. As 5 fontes
 verificadas estão no cabeçalho do fitness.md.
+
+## Validação de G2.1 (03/08/2026)
+
+Working tree, sem commit. `tsc --noEmit` limpo. `testar:gerador` e
+`testar:migracao` 100%. **Sem mudança de schema** — o backfill escreve em
+colunas que a v16 já criou.
+
+**O gate, com a unidade declarada em cada invariante.** Os invariantes novos
+foram escritos primeiro e rodados contra `63c716b` num worktree com o MESMO
+arquivo de teste: **23 falhas no `testar:gerador` e 5 no `testar:migracao`**.
+Nenhuma asserção pré-existente de G1 ou G2 quebrou dos dois lados. Depois da
+correção: **0**.
+
+| Invariante | UNIDADE | contra `63c716b` | depois |
+|---|---|---|---|
+| (f) cardio na dose da constante, ou dose declarada | semana | 994 de 1.350 | 0 |
+| (k) volume acima do teto útil sempre declarado | grupo × semana | 1.203 de 1.350 | 0 |
+| (l) todo grupo grande com 2+ padrões na semana | grupo × semana | 114 de 1.350 | 0 |
+| 20. o teto útil é UM número nas duas pontas | constante | 4 | 0 |
+| 21. cardio nos 4 objetivos × 3 agendas | semana | 9 de 12 | 0 |
+| 22. a fase imprime direção, não RIR absoluto | semana (texto) | 7 | 0 |
+| 8. backfill de papel/RIR em rotina pré-v16 | linha × dia | 5 | 0 |
+
+**Onde a cobertura ainda é mais fina.** A unidade de **semana** deixou de ser a
+mais fraca: G2.1 acrescentou 4 invariantes semanais (cardio, teto útil,
+variedade de padrão, dose declarada) aos 2 que existiam. A mais fina agora é o
+**bloco** — 8 semanas: nenhum invariante mede o que acontece ENTRE semanas
+(progressão de carga, deload chegando, âncora que não muda). É a unidade de B8
+e de G3, e é onde o próximo defeito de unidade errada deve aparecer.
+
+**1. ALTO-3 revertido do jeito certo — backfill de `papel`, não solta o fallback.**
+Leonardo autorizou reescrever o plano do iPhone. A correção NÃO foi deixar
+`corrigirDescansos` usar a regra nova com `papel` NULL: com papel nulo o
+fallback trata todo multiarticular como principal, e isso daria descanso
+**errado**, não só diferente. `preencherPapeis` (em `src/db/normalizar.ts`)
+deriva o papel por **dia da rotina, na ordem dos exercícios**, com a mesma
+`papeisDaRotina` que as telas usam, grava `papel`/`rir_min`/`rir_max` só onde
+`papel IS NULL`, e só então `corrigirDescansos` roda com uma regra só para todo
+mundo. `descansoLegado` foi apagado de `papel.ts`.
+
+*E quem já está com o banco estragado?* Atendido na primeira abertura do app.
+O passo roda dentro de `normalizar`, é idempotente (a segunda passada não acha
+mais NULL) e escreve em UMA tabela: `routine_exercises`. `set_logs`,
+`personal_records`, `point_events` e `workout_sessions` não aparecem em cláusula
+nenhuma. A flag subiu para `descansos_v4` de propósito — quem já tinha
+`descansos_v3` nunca mais rodaria o passo, e é justamente essa pessoa que a
+decisão do Leonardo mandou atender.
+
+Validado no navegador, no banco REAL da sessão de G2: rotina ativa com
+`papel`/RIR zerados e descanso na regra antiga, mais `set_logs`,
+`personal_records`, `point_events` e `workout_sessions` inseridos. Após um
+reload: 7 linhas de força com papel (Supino máquina → principal, **Supino
+inclinado máquina → complementar** — o caso que o fallback errava), cardio
+seguindo sem papel, RIR em todas, 3 descansos subindo, e histórico intacto
+(1 série 72,5 × 9, 1 PR, 40 XP, 2 sessões, 127 linhas de rotina — nenhuma criada
+nem apagada). O log agora diz o que aconteceu: *"descanso corrigido em 3 de 127
+exercício(s) das suas rotinas, agora pelo papel de cada um — ex.: Supino reto
+com barra 150→180s"*. `aquecimento_series` fica em 0: aproximação é prescrição
+nova, não dado ausente.
+
+**2. M1 — uma constante só, e o gerador declara quando passa.**
+`ALVO_SERIES`/`TETO_UTIL`/`FREQ_MINIMA` passaram a morar em `periodizacao.ts`
+(puro, sem `@/db/client`); `volume.ts` reexporta e o gerador importa. O teto do
+grupo pequeno subiu de **14 para 18** fracionadas. O gerador ganhou
+`avisarTetoUtil`, com dois textos diferentes: ênfase pedida (até 28, e a tela de
+volume vai marcar "alto" — é o mesmo número visto do outro lado) e excesso
+indireto não pedido.
+
+*Efeito medido na grade de 1.350 perfis, antes → depois:*
+
+| | antes | depois |
+|---|---|---|
+| séries de força por perfil | 68,84 | 69,73 (+1,3%) |
+| minutos de musculação por semana | 191,0 | 192,9 |
+| bíceps, séries DIRETAS | 4,01 | **4,49 (+12%)** |
+| tríceps, séries DIRETAS | 3,82 | **4,11 (+7,6%)** |
+| panturrilha, séries DIRETAS | 3,53 | 3,71 (+5%) |
+| peito / costas / ombro / quadríceps / posterior / glúteo | — | inalterados (±0,04) |
+
+Ou seja: o teto moveu volume exatamente onde devia — trabalho **direto** de
+grupo pequeno — e não tocou em grupo grande.
+
+**O 3+2 de tríceps de B10 NÃO veio, e o motivo está medido.** O dia A continua
+2+2. O bloqueio não é `tetoDe`: é `aparExcesso`, que mede o excesso do grupo
+pequeno pelo total **fracionado** (~16 no tríceps, quase todo indireto dos
+supinos) contra um alvo que significa trabalho **direto** (6). A montagem
+produz 3+2 e o aparador devolve 2+2. É a mesma troca de unidade que M1 achou
+entre os dois tetos, um nível acima — o achado 22. Testado nesta rodada
+(`porDireto = emFoco || PEQUENOS`): o dia A **perdeu a elevação lateral** (7
+exercícios viraram 6), o tríceps continuou 2+2 e o invariante (b) quebrou, com
+desenvolvimento militar voltando a um dia de empurrar. Revertido; o mecanismo
+ficou isolado no comentário da função.
+
+**3. M2 — cardio nos 4 objetivos, e a dose declarada na semana.**
+A porta era `emagrecimento || recomposicao`. Passou a ser "tem dose na
+constante": `hipertrofia` (2 × 20 min) e `manutencao` (3 × 25 min) recebem.
+**Escolha: prescrever, não apagar da constante** — em hipertrofia a dose é
+cardiovascular, não estética; Lundberg 2022 (já citado no arquivo) achou o
+efeito de interferência pequeno e ausente quando o aeróbio é pedalado, e a
+ordem de modalidade já prefere bicicleta; e o cardio fica fora de
+`estimarDuracao` e é a primeira coisa que `cortarParaCaber` remove, então ele
+não consegue roubar série de força.
+
+O aviso de cardio existia só por DIA e nunca somava. Agora existe o semanal:
+*"das 3 sessões previstas para o seu objetivo, 0 couberam nos dias de treino.
+As 3 que faltam você faz num dia SEM musculação"*. Sessões de cardio por perfil
+na grade: **1,35 → 1,71**. Validado no navegador com 3 dias × 50 min, que é
+exatamente o perfil que terminava em 0 sessões calado.
+
+**4. Variedade semanal genérica — 114 → 0, e a régua estava errada antes.**
+O relatório de G2 dizia 168. Com a régua corrigida — que desconta o que a **dor**
+proíbe e o que a **cobertura indireta** satura (A9) — o número honesto contra
+`63c716b` é **114**, e são 0 agora. Os 54 de diferença nunca foram alcançáveis:
+com dor no ombro saem `Elevação lateral` (único exercício do padrão `lateral`) e
+`Remada alta` (único do `alta`), e num dia de superior `desenvolvimento` e
+`frontal` já vêm saturados pelos supinos — sobra UM padrão, que é o teto do que
+A9 permite. Cobrar dois ali seria cobrar que A9 fosse violada.
+
+A correção é a que o próprio relatório previu: a troca da SEMANA passou a
+consultar `padroesSaturados` do dia (a função da própria sessão, extraída e
+compartilhada pelos três consumidores). Com as duas escalas querendo a mesma
+coisa, a ordem deixou de ser um empate a decidir e `diversificarNaSemana` pôde
+rodar **depois** de `trocarPorCoberturaFinal` — antes ela rodava antes e era
+desfeita. Segunda metade: a troca deixou de tentar só a ÚLTIMA aparição e passa
+da última para a primeira, protegendo a primeira só quando ela é composto
+**pesado** (é a carga do pesado que alimenta o gráfico).
+
+**5. M3-texto — a fase imprime DIREÇÃO, o número é da linha.**
+`RIR_POR_FASE` ganhou `ajuste: [number, number]` e os quatro textos viraram
+relativos. O chip do executor (`fase.rirTexto`) mostrava **"RIR 3-4"** na
+readaptação e **"RIR 4-5"** no deload, vindos de `RIR_POR_FASE`, sobre linhas
+que diziam RIR 2 — agora mostra "afrouxe 1 a 2 reps" e some nas fases que não
+afrouxam nada. Achado a mais durante a validação: `app/programa.tsx` imprimia
+**"parar a 3 da falha"** a partir do campo cru da semana do bloco, o mesmo
+defeito em outra tela; a tag agora usa a mesma direção, via
+`faseDaSemanaDoBloco` (uma definição só, consumida por `fase.ts` e pela tela).
+Confirmado no navegador: a semana 1 não imprime número nenhum.
+
+**Validado no navegador a 390×844** (app real, banco real da sessão anterior):
+rotina pré-v16 reidratada com papel/RIR/descanso coerentes e histórico intacto;
+"Refazer meu treino" com 4 dias × 1h30 (avisos novos de teto útil, com vírgula
+decimal como o resto do app) e com 3 dias × 50 min (aviso semanal de dose de
+cardio); tela do dia mostrando papel + RIR em cada linha; tela do programa sem o
+número de RIR conflitante. Zero erro de console.
+
+**Não validado no navegador:** a semana de **deload** nas telas — ela é
+dependente de data (semana 8 do bloco ou do plano de retorno) e o banco de teste
+está na semana 1. Coberta pela seção 22 do harness, que resolve as duas fases
+via `resolverFase` e confere o chip. **Conferir no celular quando a semana 8
+chegar.**
 
 ## Validação de G2 (03/08/2026)
 
@@ -407,29 +558,21 @@ De G1 (03/08 — achados encontrados durante a implementação, nenhum virou có
 
 Dos DOIS cross-reviews de G2 (03/08 — o que ficou fora, com número):
 
-27. **Variedade semanal de padrão só é garantida nas COSTAS.** O invariante
-    genérico ("todo grupo grande com 2+ padrões na semana") ainda falha em
-    **168 de 1.350 perfis** depois da correção (era 614). Fechar exige a
-    seleção conversar com a cobertura indireta em duas escalas ao mesmo tempo
-    — a da sessão e a da semana — e a troca semanal precisa rodar depois da
-    cobertura sem desfazê-la. O que ficou garantido e testado é o caso concreto
-    que a auditoria mediu: nenhuma semana de costas sem uma puxada de verdade
-    (era 182 perfis, agora 0).
-28. **M1 — dois tetos para a mesma pergunta, ainda.** `volume.ts` usa
-    `TETO_UTIL = 20` e o gerador limita grupo pequeno a 14 fracionadas; a tela
-    de programa vai carimbar "acima de 20" sobre o plano que o próprio gerador
-    montou. Uma constante só, consumida pelos dois, e o teto do pequeno subindo
-    para 18-20 (o que libera o 3+2 de tríceps que B10 pedia). Não entrou porque
-    mexer no teto do grupo pequeno move volume em todos os perfis e não sobrou
-    rodada para medir o efeito.
-29. **M2 — cardio incompleto em 3 dos 4 objetivos.** `emagrecimento` pede 4
-    sessões e entrega `min(4, dias)` sem dizer que falta uma; `hipertrofia` e
-    `manutencao` têm dose na constante e não recebem nada. 75 de 420 perfis
-    fora da dose. É o mesmo A10, corrigido em 2 dos 4 objetivos.
-30. **M3 — o card do deload ainda imprime número, não direção.**
-    `RIR_POR_FASE.deload` diz 4-5 no card enquanto `rirNaFase` devolve 2 no
-    isolador: duas fontes de RIR na mesma tela. `modularSeries` foi corrigida
-    (piso de 2 e −1 série na readaptação, B11); o texto do card não.
+27. ~~**Variedade semanal de padrão só é garantida nas COSTAS.**~~ — **feita em
+    G2.1**: 114 → 0 na régua corrigida (a de G2 contava 168 porque não
+    descontava dor nem saturação de A9). A troca da semana passou a consultar
+    `padroesSaturados` do dia e por isso pôde rodar depois da cobertura.
+28. ~~**M1 — dois tetos para a mesma pergunta.**~~ — **feita em G2.1**: uma
+    constante em `periodizacao.ts`, teto do pequeno 14 → 18, e o gerador
+    declara quando passa. Efeito medido na grade. **O 3+2 de tríceps NÃO veio**
+    — o bloqueio é `aparExcesso` (achado 22), não o teto.
+29. ~~**M2 — cardio incompleto em 3 dos 4 objetivos.**~~ — **feita em G2.1**:
+    os 4 objetivos recebem a dose da constante e o que não cabe é declarado na
+    semana. Sessões de cardio por perfil na grade: 1,35 → 1,71.
+30. ~~**M3 — o card do deload ainda imprime número, não direção.**~~ — **feita
+    em G2.1**, e em duas telas: o chip do executor (`RIR 3-4` / `RIR 4-5`) e a
+    tag da tela do programa (`parar a 3 da falha`), que era o mesmo defeito
+    ainda não catalogado.
 31. **Regra por PADRÃO para dor, em vez de lista nominal** (F5). `Remada alta`
     entrou na lista de dor no ombro como correção mínima; a correção boa é
     derivar de padrão + atributos, e isso é fase 5.
@@ -444,11 +587,26 @@ De G2 (03/08 — achados durante a implementação, nenhum virou código):
     com peso corporal) e em sessões de 30 min. Resolver de verdade exige mexer
     no teto do grupo pequeno ou no volume de peito da sessão — nenhum dos dois
     cabia aqui.
-22. **B10 pede 5 séries diretas de tríceps no dia A; G2 entrega 4.** O piso
-    monta 3+2, `aparExcesso` corta para 2+2 porque o total fracionado semanal
-    do tríceps (14) estoura o alvo (6, com o desconto de quem não é foco). O
-    alvo semanal de grupo pequeno medido em fracionado é o próximo gargalo —
-    mesma discussão do achado 21, um nível acima.
+22. **B10 pede 5 séries diretas de tríceps no dia A; G2 entrega 4** — e G2.1
+    também, com o mecanismo agora isolado. O piso monta 3+2 e `aparExcesso`
+    corta para 2+2 porque compara o total **fracionado** do tríceps (~16, quase
+    todo indireto dos supinos) com um alvo que significa trabalho **direto**
+    (6). Subir o teto do pequeno para 18 (M1) não resolve: o teto governa
+    `preencherTempo`, o aparador roda antes. **Testado em G2.1** medindo
+    `porDireto = emFoco || PEQUENOS`: o dia A perdeu a elevação lateral (7
+    exercícios → 6), o tríceps continuou 2+2 e o invariante (b) quebrou, com
+    desenvolvimento militar voltando a um dia de empurrar — porque o volume que
+    o pequeno passa a guardar desloca o corte por tempo, e é o corte por tempo
+    que escolhe o ombro do dia. Revertido. Precisa de rodada própria, medida.
+32. **Duas telas ainda dizem número de RIR em prosa.** `BLOCO[0].o_que_fazer`
+    ("umas 3 repetições ainda no tanque") e `BLOCO[5]` ("chegar a 1 repetição da
+    falha"). A tag estruturada foi corrigida em G2.1; a prosa ficou porque na
+    semana 1 ela é instrução de CALIBRAÇÃO (achar a carga), não prescrição por
+    exercício. Vale reescrever quando G3 tocar no texto do bloco.
+33. **O log de `normalizar` só aparece no console.** "papel e esforço (RIR)
+    preenchidos em N exercício(s)" e "descanso corrigido em N de M" são
+    `console.log` — ninguém no celular vê. Quando um backfill mexer em algo que
+    o usuário reconheça na tela, ele precisa de aviso visível, não de log.
 23. **Peito fecha em 12 diretas no dia A, contra 10 de B10.** Não é defeito: é
     o teto de sessão (12) sendo usado inteiro porque sobra tempo. B10 chegou a
     10 porque também gastava tempo com o 4º e 5º exercício que G2 não tem.

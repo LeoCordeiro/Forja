@@ -326,5 +326,169 @@ conferir(
     preV16.prepare('SELECT COUNT(*) AS n FROM routine_exercises').get().n === 1
 );
 
+// ── 8. Backfill: a rotina PRÉ-v16 ganha papel, RIR e o descanso novo ───────
+//
+// UNIDADE: a LINHA da rotina, dentro do DIA — porque papel é propriedade da
+// sessão e não do exercício. É o que faz este backfill diferente de um UPDATE
+// por linha: o mesmo supino é principal num dia e complementar noutro, e ler a
+// linha isolada dá a resposta errada a partir do SEGUNDO exercício do grupo.
+//
+// G2 deixou a rotina anterior à v16 com `papel` NULL e o descanso na regra
+// velha, de propósito: com papel NULL, o fallback trata TODO multiarticular
+// como principal, e aplicar a regra nova assim daria descanso errado, não só
+// diferente. Leonardo autorizou reescrever o plano dele. A forma certa de fazer
+// isso não é soltar o fallback — é PREENCHER o papel pelo contexto do dia e só
+// então deixar a regra nova rodar sobre um dado que existe.
+//
+// E quem já está com o banco estragado? Todo mundo que abrir o app: este passo
+// roda em `normalizar`, a cada abertura, e é idempotente (só escreve onde
+// `papel IS NULL`). Ele NÃO toca `set_logs`, `personal_records`, `point_events`
+// nem `workout_sessions` — o histórico, os recordes e o XP saem de lá, e este
+// backfill escreve só em `routine_exercises`. É o teste abaixo que prova isso.
+console.log('\n8. Backfill de papel e RIR em rotina pré-v16');
+const preenche = new DatabaseSync(':memory:');
+preenche.exec(DDL);
+await aplicarMigracoes(adaptar(preenche));
+
+// Catálogo real, para o papel sair dos atributos de verdade.
+const insExs = preenche.prepare(
+  `INSERT INTO exercises (nome, grupo_primario, grupos_secundarios, equipamento, tipo_carga)
+   VALUES (?,?,?,?,?)`
+);
+for (const [nome, grupo, sec, equip, carga] of EXERCICIOS)
+  insExs.run(nome, grupo, sec, equip, carga);
+const idDe = (n) => preenche.prepare('SELECT id FROM exercises WHERE nome = ?').get(n).id;
+
+preenche.prepare(`INSERT INTO routines (nome, ativa, criado_em) VALUES ('Meu treino',1,0)`).run();
+preenche.prepare(`INSERT INTO routine_days (routine_id, nome, ordem) VALUES (1,'A — Peito e tríceps',0)`).run();
+preenche.prepare(`INSERT INTO routine_days (routine_id, nome, ordem) VALUES (1,'B — Costas e bíceps',1)`).run();
+
+// O dia A na ordem em que o app o mostra. Dois supinos no mesmo grupo é o caso
+// que o fallback errava: o segundo NÃO é principal.
+const insRe = preenche.prepare(
+  `INSERT INTO routine_exercises (routine_day_id, exercise_id, ordem, series_alvo, reps_min, reps_max, descanso_seg)
+   VALUES (?,?,?,?,?,?,?)`
+);
+const DIA_A = [
+  ['Supino reto com barra', 4, 8, 12, 150],
+  ['Supino inclinado com halteres', 3, 8, 12, 120],
+  ['Crucifixo com halteres', 3, 10, 15, 90],
+  ['Tríceps na polia com corda', 3, 10, 15, 60],
+];
+DIA_A.forEach(([n, s, rmin, rmax, desc], i) => insRe.run(1, idDe(n), i, s, rmin, rmax, desc));
+insRe.run(2, idDe('Puxada frontal na polia'), 0, 4, 8, 12, 150);
+// Cardio na rotina: papel não se aplica, e o backfill não pode inventar um.
+insRe.run(2, idDe('Esteira'), 1, 1, 0, 0, 0);
+
+// Histórico REAL apontando para a rotina — é ele que não pode ser tocado.
+preenche.prepare(`INSERT INTO workout_sessions (nome, iniciado_em) VALUES ('A — Peito e tríceps', 0)`).run();
+preenche
+  .prepare(
+    `INSERT INTO set_logs (session_id, exercise_id, serie_index, peso_kg, reps, registrado_em)
+     VALUES (1,?,1,60,10,0)`
+  )
+  .run(idDe('Supino reto com barra'));
+preenche
+  .prepare(`INSERT INTO personal_records (exercise_id, tipo, valor, atingido_em) VALUES (?,'carga_max',60,0)`)
+  .run(idDe('Supino reto com barra'));
+preenche.prepare(`INSERT INTO point_events (pontos, origem, criado_em) VALUES (10,'treino',0)`).run();
+
+const antesDoBackfill = preenche
+  .prepare(`SELECT id, papel, rir_min, descanso_seg FROM routine_exercises ORDER BY id`)
+  .all();
+conferir(
+  'antes: nenhuma linha tem papel',
+  antesDoBackfill.every((l) => l.papel === null),
+  antesDoBackfill.map((l) => l.papel).join(',')
+);
+
+await normalizar(adaptar(preenche));
+
+const linhas = preenche
+  .prepare(
+    `SELECT re.id, re.papel, re.rir_min, re.rir_max, re.descanso_seg, e.nome, e.grupo_primario AS grupo
+       FROM routine_exercises re JOIN exercises e ON e.id = re.exercise_id
+      ORDER BY re.routine_day_id, re.ordem`
+  )
+  .all();
+const porNome = Object.fromEntries(linhas.map((l) => [l.nome, l]));
+
+conferir(
+  'toda linha de força ganhou papel',
+  linhas.filter((l) => l.grupo !== 'cardio').every((l) => !!l.papel),
+  linhas.map((l) => `${l.nome}=${l.papel}`).join(' | ')
+);
+conferir(
+  'o cardio continua SEM papel — a pergunta não existe ali',
+  porNome['Esteira'].papel === null,
+  String(porNome['Esteira'].papel)
+);
+// A régua que separa backfill certo de UPDATE por linha: o SEGUNDO supino do
+// mesmo grupo não pode sair como principal. Era o erro do fallback.
+conferir(
+  'o 1º do grupo é principal e o 2º é complementar',
+  porNome['Supino reto com barra'].papel === 'principal' &&
+    porNome['Supino inclinado com halteres'].papel === 'complementar',
+  `${porNome['Supino reto com barra'].papel} / ${porNome['Supino inclinado com halteres'].papel}`
+);
+conferir(
+  'monoarticular vira isolador, e o último de estabilização baixa, finalizador',
+  porNome['Crucifixo com halteres'].papel === 'isolador' &&
+    porNome['Tríceps na polia com corda'].papel === 'finalizador',
+  `${porNome['Crucifixo com halteres'].papel} / ${porNome['Tríceps na polia com corda'].papel}`
+);
+conferir(
+  'RIR preenchido em toda linha de força',
+  linhas.filter((l) => l.grupo !== 'cardio').every((l) => l.rir_min !== null && l.rir_max !== null),
+  linhas.map((l) => `${l.nome}=${l.rir_min}-${l.rir_max}`).join(' | ')
+);
+// E só AGORA a regra nova de descanso vale, sobre um papel que existe: o
+// principal de barra livre sobe para 180 s, o complementar para 150 s.
+conferir(
+  'o principal de barra livre passou a 180 s',
+  porNome['Supino reto com barra'].descanso_seg === 180,
+  `${porNome['Supino reto com barra'].descanso_seg}s`
+);
+conferir(
+  'o complementar passou a 150 s',
+  porNome['Supino inclinado com halteres'].descanso_seg === 150,
+  `${porNome['Supino inclinado com halteres'].descanso_seg}s`
+);
+conferir(
+  'o descanso do cardio continua 0',
+  porNome['Esteira'].descanso_seg === 0,
+  `${porNome['Esteira'].descanso_seg}s`
+);
+
+// O que NÃO pode ter sido tocado.
+const conta1 = (t) => preenche.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get().n;
+conferir('set_logs intacto', conta1('set_logs') === 1);
+conferir('personal_records intacto', conta1('personal_records') === 1);
+conferir('point_events intacto', conta1('point_events') === 1);
+conferir('workout_sessions intacto', conta1('workout_sessions') === 1);
+const serie = preenche.prepare('SELECT peso_kg, reps FROM set_logs WHERE id = 1').get();
+conferir('a série gravada continua 60 kg × 10', serie.peso_kg === 60 && serie.reps === 10,
+  `${serie.peso_kg}×${serie.reps}`);
+conferir('nenhuma linha de rotina foi criada nem apagada', conta1('routine_exercises') === 6);
+
+// Idempotência: a segunda abertura não muda mais nada.
+const antesDaSegunda = JSON.stringify(
+  preenche.prepare('SELECT id, papel, rir_min, rir_max, descanso_seg FROM routine_exercises ORDER BY id').all()
+);
+await normalizar(adaptar(preenche));
+const depoisDaSegunda = JSON.stringify(
+  preenche.prepare('SELECT id, papel, rir_min, rir_max, descanso_seg FROM routine_exercises ORDER BY id').all()
+);
+conferir('rodar de novo não muda uma vírgula', antesDaSegunda === depoisDaSegunda);
+
+// Papel escolhido À MÃO pelo usuário não é sobrescrito: o backfill preenche o
+// que está vazio, não corrige o que alguém decidiu.
+preenche.prepare(`UPDATE routine_exercises SET papel = 'isolador' WHERE id = 1`).run();
+await normalizar(adaptar(preenche));
+conferir(
+  'papel já gravado é respeitado',
+  preenche.prepare('SELECT papel FROM routine_exercises WHERE id = 1').get().papel === 'isolador'
+);
+
 console.log(falhas ? `\n${falhas} falha(s)\n` : '\nTudo passou\n');
 process.exit(falhas ? 1 : 0);

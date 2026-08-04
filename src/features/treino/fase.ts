@@ -2,9 +2,10 @@ import {
   LABEL_FASE,
   planoRetorno,
   RIR_POR_FASE,
+  textoAjusteDaFase,
   type Fase,
 } from './periodizacao';
-import { BLOCO, SEMANAS_DO_BLOCO } from './programa';
+import { BLOCO, faseDaSemanaDoBloco, SEMANAS_DO_BLOCO } from './programa';
 import { deIso, diasEntre } from '@/shared/utils/date';
 
 /**
@@ -33,7 +34,20 @@ export interface FaseEfetiva {
   /** % da carga anterior a herdar. Null = mantém a carga (deload do bloco: "metade das séries, mesma carga"). */
   cargaPct: number | null;
   rir: { min: number; max: number } | null;
-  /** Curto, pronto para chip: "RIR 3-4". */
+  /**
+   * Chip curto da fase — **direção, nunca número absoluto** (M3-texto).
+   *
+   * Era "RIR 4-5", vindo de `RIR_POR_FASE.deload`, impresso no cabeçalho do
+   * executor. Duas linhas abaixo, cada exercício mostrava o RIR dele vindo de
+   * `rirNaFase` — e no deload o isolador recebe 2. A tela dizia 4-5 no topo e
+   * 2 na linha, sobre o mesmo treino. Não havia número certo a pôr no topo: o
+   * afrouxamento da fase é relativo ao alvo de cada exercício, e o alvo muda
+   * com o papel. Agora o chip diz o que a fase FAZ ("afrouxe 1 a 2 reps") e o
+   * número continua sendo o da linha.
+   *
+   * Vazio quando a fase não afrouxa nada (acúmulo e intensificação): ali o
+   * alvo da linha já é o alvo da semana, e repetir isso no topo seria ruído.
+   */
   rirTexto: string;
   /** Nome que o usuário já conhece das outras telas: "Readaptação", "Aliviar"… */
   titulo: string;
@@ -74,11 +88,6 @@ function parseRir(texto: string): { min: number; max: number } | null {
   return { min: nums[0], max: nums[nums.length - 1] };
 }
 
-function textoRir(rir: { min: number; max: number } | null): string {
-  if (!rir) return '';
-  return rir.min === rir.max ? `RIR ${rir.min}` : `RIR ${rir.min}-${rir.max}`;
-}
-
 /**
  * Resolve a fase efetiva com precedência: retorno em curso > bloco vigente >
  * nada. O plano de retorno manda porque a proteção é tendínea — tendão e
@@ -105,7 +114,7 @@ export function resolverFase(args: ArgsFase): FaseEfetiva | null {
         volumePct: s.volumePct,
         cargaPct: s.cargaPct,
         rir,
-        rirTexto: textoRir(rir),
+        rirTexto: textoAjusteDaFase(s.fase),
         titulo: LABEL_FASE[s.fase],
         descricao: s.nota,
         retomadaEmMs: args.retomouEm ? deIso(args.retomouEm).getTime() : null,
@@ -121,7 +130,7 @@ export function resolverFase(args: ArgsFase): FaseEfetiva | null {
     if (semana > SEMANAS_DO_BLOCO) return null; // bloco vencido → sem modulação
 
     const s = BLOCO[semana - 1];
-    const fase: Fase = s.volumePct < 100 ? 'deload' : semana >= 5 ? 'intensificacao' : 'acumulo';
+    const fase = faseDaSemanaDoBloco(s, semana);
     // O RIR da semana é o textual do bloco; no deload, o RIR_POR_FASE dá o
     // min/max ("4 a 5") que o texto cru da semana ("4") não tem.
     const rir =
@@ -137,7 +146,7 @@ export function resolverFase(args: ArgsFase): FaseEfetiva | null {
       // peso que segura a força enquanto a fadiga sai.
       cargaPct: null,
       rir,
-      rirTexto: textoRir(rir),
+      rirTexto: textoAjusteDaFase(fase),
       titulo: s.titulo,
       descricao: s.o_que_fazer,
       retomadaEmMs: null,
