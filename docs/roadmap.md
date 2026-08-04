@@ -22,7 +22,8 @@ Prescrição-alvo (o que devia sair): `prescricao-alvo.md` na mesma pasta.
 | 2 | Motor de treino | F2 F3 F4 F6 | **feita** — commit `890ec16`. Cross-review duplo (qa reprovou a 1ª rodada com 1 ALTO, corrigido e re-aprovado; fitness-scientist aprovou os 4 com ressalvas → candidatos abaixo). Ver "Validação da fase 2" |
 | **G1** | **Estrutura e seleção** | A2, A1+A11, A4, A3, A8 | **feita e no ar** — commits `ee543d2` + `8c68ef1` (correção do cross-review), build `1e725e2c2d8d`. Gate reverificado pelo Claude 2×: 32 falhas contra o código pré-G1, 9 contra o `ee543d2`, 0 depois. Ver "Validação de G1" |
 | G2 | Prescrição com papel | A5 A6 A7 A9 A10 + F8 | **feita e no ar** — commit `5374f1e`, build `f11ddcbac48c`. Reprovada por qa (3 ALTOs) E fitness-scientist (2 CRÍTICOS + 5 ALTOs) na 1ª entrega; corrigida e reverificada. Gate final conferido pelo Claude: **27 falhas contra o código em produção, 0 depois**. Ver "Validação de G2" |
-| G2.1 | Sobras do G2 | ALTO-3 (backfill de papel) + M1 M2 M3-texto + variedade semanal | **feita, não commitada** — gate: **23 falhas no gerador + 5 na migração contra `63c716b`, 0 depois**. Ver "Validação de G2.1" |
+| G2.1 | Sobras do G2 | ALTO-3 (backfill de papel) + M1 M2 M3-texto + variedade semanal | **no ar** — commit `bb6babf`. Gate: 23 falhas no gerador + 5 na migração contra `63c716b`, 0 depois. **Reprovada no cross-review do qa** (2 ALTOs + 4 MÉDIOS + 4 BAIXOs) — ver "Correção do cross-review de G2.1" |
+| G2.2 | Correção do cross-review de G2.1 | ALTO-1 (chaves de local) ALTO-2 (papel congelado) M1 M2 M3 M4 + 4 BAIXOs | **feita, não commitada** — gate: **10 falhas no gerador + 2 na migração contra `bacf85c`, 0 depois** |
 | G3 | Treinador que explica e varia | execução detalhada, técnicas de intensidade, objetivo do exercício, variação entre ciclos | pendente |
 | 4 | Série em 1 toque | U1 U2 U5 U6 U7 | **feita, não commitada** — gate: **33 falhas contra `bb6babf`, 0 depois**. Ver "Validação da fase 4" |
 | 5 | Segurança e nutrição | F5 N3 N6 N8 U8 | pendente |
@@ -225,6 +226,178 @@ inicial e `getBoundingClientRect` mede o meio da animação — o botão "Contin
 media 40×60 num contêiner de 32 pt. Toda medição desta fase foi feita num Chrome
 headless próprio, com `Emulation.setDeviceMetricsOverride` (o `--window-size=390`
 do Windows renderiza 500×748, como a memória já registrava).
+
+## Correção do cross-review de G2.1 (04/08/2026)
+
+O qa reprovou G2.1 com 2 ALTOs, 4 MÉDIOS e 4 BAIXOs, já em produção (`bb6babf`),
+com a Fase 4 por cima (`bacf85c`). Working tree, sem commit. `tsc --noEmit`
+limpo, `testar:gerador` e `testar:migracao` 100%, sem mudança de schema.
+
+**O gate.** Os invariantes novos rodados contra `bacf85c` num worktree com o
+MESMO arquivo de teste: **10 falhas no gerador + 2 na migração**. Nenhuma
+asserção de G1, G2, G2.1 ou Fase 4 quebrou dos dois lados. Depois: **0**.
+
+| Invariante | UNIDADE | contra `bacf85c` | depois |
+|---|---|---|---|
+| 2b. existe checagem estrita de chave de local | chave de local | 1 | 0 |
+| (f) cardio na dose, medido de verdade | semana | 112 de 1.350 | 0 |
+| (l) todo grupo grande com 2+ padrões na semana | grupo × semana | 3 de 1.350 | 0 |
+| 28. papel recalculado quando a composição muda | linha × composição | 5 | 0 |
+| 29. tela e executor concordam sobre o bloco | **bloco (8 semanas)** | 2 | 0 |
+| 8b. backfill ignora rotina arquivada | rotina | 1 | 0 |
+| 8d. descanso baixado à mão sobrevive ao catálogo | linha × tempo | 1 | 0 |
+
+**A unidade mais fina deixou de ser o bloco.** G2.1 registrou o bloco de 8
+semanas como o buraco de cobertura, e foi exatamente ali que M1 estava. A seção
+29 cobre agora: tela e executor concordando sobre "venceu", a semana continuando
+a contar depois da 8ª, modulação que nunca infla nem cai abaixo de 2, e ajuste
+de esforço declarado em toda semana. A mais fina agora é a **transição entre
+BLOCOS** (o que muda de exercício quando o bloco recomeça) — que é B8, ou seja
+G3.
+
+**ALTO-1 — a grade testava a mesma academia 4×, e o silêncio era a causa.**
+`academia_rede`, `academia_simples` e `casa_halteres` nunca existiram;
+`equipamentosDe` caía mudo em `LOCAIS[0]`. Corrigido nas duas frentes que o qa
+pediu: a grade passou a derivar `LOC` de `LOCAIS` (não de literais),
+`equipamentosDe` ganhou `console.warn` alto mantendo o fallback (perfil
+corrompido não pode impedir o app de abrir), nasceu `localConhecido` para quem
+precisa ser estrito, e o harness ESTOURA com chave inventada em vez de aceitar.
+`padroesDoLocal` também passou a descontar `semEstes` — a Smart Fit tem cabo mas
+não tem glute ham raise.
+
+*Tudo que G2.1 declarou em cima da grade, remedido com as chaves reais*
+(1.350 perfis, `63c716b` → árvore atual):
+
+| | com chaves erradas | com chaves REAIS |
+|---|---|---|
+| (l) variedade semanal, antes | 114 | **3** |
+| bíceps, séries diretas/perfil | 4,01 → 4,49 (+12%) | **3,87 → 4,31 (+11,4%)** |
+| tríceps, séries diretas/perfil | 3,82 → 4,11 (+7,6%) | **3,83 → 4,11 (+7,3%)** |
+| panturrilha, séries diretas/perfil | 3,53 → 3,71 | 3,48 → 3,62 (+4,0%) |
+| sessões de cardio por perfil | — | 1,36 → 1,85 |
+
+Os dois números de M1 sobreviveram à correção. O de variedade **não**: 114 era
+inflado pela academia repetida — o número honesto é 3, e os 3 tinham a mesma
+forma (`casa_equipada` + foco inferior, glúteo só em `ponte`).
+
+**E os 3 fecharam, pela terceira vez o mesmo padrão.** `diversificarNaSemana`
+chegava a ver um dia com TRÊS exercícios de glúteo e três padrões — variedade de
+sobra — e `aplicarTetosDaSessao`, logo depois, aparava os dois últimos por
+estouro do teto fracionado. A diversificação olhava um plano que ainda não
+existia. Agora ela roda por ÚLTIMO, depois de tudo que remove exercício, e a
+troca consulta o teto da sessão antes de escolher: mover a chamada sem essa
+trava reabriu o teto em **12 perfis** (glúteo em 12,5 num teto de 12) e num
+cenário nomeado do qa — o harness pegou, que é para isso que ele existe.
+
+**ALTO-2 — papel gravado virou cache invalidável.** Escolhida a saída (a):
+recalcular sempre que a composição do dia mudar. A saída (b) — não persistir —
+fecharia o buraco e reabriria o motivo do backfill: `corrigirDescansos` precisa
+do papel GRAVADO para saber que aquele supino quer 180 s, e sem coluna volta o
+fallback que trata todo multiarticular como principal. A regra derivada mora em
+`prescricaoDaRotina` (`papel.ts`, sem SQL) e `recalcularPapeisDoDia` (`api.ts`)
+é a casca fina; `removerExercicioDoDia`, `addExercicioNoDia` e
+`reordenarPorPrioridade` chamam. A substituição de sessão NÃO chama — regra nº 1
+do projeto, ela vale só para hoje. O descanso **só sobe**, que é a regra que
+`corrigirDescansos` já usava.
+
+Verificado no app real, no banco real, com as três manifestações:
+
+| | antes | depois |
+|---|---|---|
+| remover a âncora do peito | inclinado seguia `complementar` para sempre | vira **`principal`** |
+| ordem manual → "Reordenar pela ciência" | supino preso em `complementar/RIR 1-2/150s` | volta a **`principal`** |
+| acrescentar exercício | **2 finalizadores** gravados | **1**, e o antigo vira isolador |
+| acrescentar `Agachamento livre` | `Principal · RIR 2-3 · 90 s` | **180 s**, e reps do papel |
+
+**M3 — o invariante de cardio era inatingível, e escondia 112 defeitos.**
+A régua aceitava dose curta sempre que o aviso semanal existisse, e o gerador
+empurra esse aviso incondicionalmente: as duas asserções não podiam falhar. O
+"994 → 0" era construção, não conquista. Reescrita em três réguas que medem —
+dose completa quando há dias e nada foi cortado; nunca menos que a agenda
+permite; e os NÚMEROS do aviso conferidos contra o plano. Resultado imediato:
+**112 falhas** apareceram, todas em `emagrecimento`, e todas o mesmo defeito
+real — o laço genérico de `cortarParaCaber` comia o cardio, contradizendo a
+regra escrita vinte linhas acima ("em emagrecimento o aeróbio fica e a
+musculação é que cede") e anunciando a remoção como "cardio ficou abaixo do
+mínimo semanal". Pior: `estimarDuracao` filtra cardio, então tirar aquela linha
+devolvia **zero segundo** à conta que o laço tentava baixar. Cardio saiu dos
+candidatos do laço; quem tira cardio é o bloco dedicado, que sabe por quê.
+
+**M4 — "grupos grandes inalterados" era média, e o qa está certo.** Remedido em
+5.400 perfis × 4 objetivos (32.400 pares perfil×grupo):
+
+| | pré-G2.1 → G2.1 | pré-G2.1 → árvore atual |
+|---|---|---|
+| perfis com grupo grande mudando volume direto | 306 | 383 |
+| quedas / altas | 289 / 40 | 358 / 73 |
+| quedas / altas em grupo de **FOCO** | 46 / 19 | **83 / 48** |
+| séries em grupo de foco (soma) | −34 | −47 |
+| grupo grande zerado | 0 | **0** |
+| pior queda em grupo de foco | −4 | **−3** (10 casos em 32.400) |
+
+Duas correções entraram por causa disso. `preencherTempo` sortava candidatos só
+por "menos séries primeiro", o que entrega a folga sistematicamente ao grupo
+PEQUENO (nasce com 2 séries) em vez do grupo grande em foco (3-4) — a ênfase
+ganhou o desempate, como ela já ganha em `alvoSemanal`, `priorizarNoDia`,
+`aparExcesso` e `ordenarPorPapelNoDia`; as altas em foco foram de 13 para 48. E
+o piso de `cortarParaCaber` contava CARDIO como exercício, então um dia com
+bicicleta parava o corte com dois exercícios de força em vez de três — visível
+ao consertar M3: um perfil de 2 dias × 30 min perdia o peito da semana inteira
+(8 → 0). Agora o piso conta musculação, e **nenhum grupo grande é zerado**.
+
+O que ficou: a queda de foco é real e bounded em **−3 séries semanais**, em 10
+de 32.400 pares (o pior é `peito 21 → 18`, o caso que o qa citou). É o preço do
+teto do pequeno em 18, que é o próprio pedido de M1, e o número continua muito
+acima do piso de 10.
+
+**Sessões estourando o tempo pedido**, 18.900 sessões:
+
+| | só musculação | musculação + cardio |
+|---|---|---|
+| pré-G2.1 (`63c716b`) | 1.864 | 5.543 |
+| G2.1 em produção | **1.864** | **7.408** |
+| árvore atual | 1.874 | 7.613 |
+
+Ou seja: medido só na musculação, **G2.1 não mexeu nisso** (1.864 → 1.864) — os
+9,9% que estouram são anteriores, e vêm de `cortarParaCaber` parar quando só
+sobram compostos pesados. O que G2.1 de fato criou foi o estouro **com cardio**
+(+1.865 sessões, +34%), consequência direta de M2 prescrever nos quatro
+objetivos. Minhas correções somam 10 sessões na primeira coluna (o preço do piso
+de 3 exercícios de força) e 205 na segunda (emagrecimento agora fica com o
+cardio, como a regra manda).
+
+**M2 — o número do cardio agora aparece no card.** A aba Treino e a tela de
+refazer já mostravam "+ 30 min de cardio"; a tela do DIA não mostrava minuto
+nenhum e ainda contava a bicicleta como exercício ("8 exercícios" num dia de 7 —
+o achado 26, fechado junto). Agora: **"7 exercícios · ~57 min + 30 min de
+cardio"**.
+
+**M1 — uma fonte só para "o bloco venceu".** `semanaDoBloco` grampeava em 8 e
+`resolverFase` não. A função parou de grampear (`faseAtual` continua, porque a
+pergunta dela é outra: qual LINHA do BLOCO descreve a semana), nasceu
+`blocoVencido` com a mesma régua das duas pontas, e a tela do programa passou a
+ter um estado próprio de vencido em vez de repetir "Semana 8 · Aliviar · 55%"
+para sempre.
+
+**BAIXOs, todos fechados.** Rotina arquivada (`ativa = 0`) saiu das duas queries
+do backfill — escrita que ninguém lê. `descansos_v3` é apagada junto com a
+gravação da v4. `completarCatalogo` parou de apagar a flag de descanso: o DELETE
+não tinha função (catálogo novo entra em `exercises`, não em rotina de ninguém)
+e custava a escolha de quem tinha BAIXADO um intervalo. E `addExercicioNoDia`
+deixou de gravar 90 s cegos — a linha nova recebe descanso, RIR e faixa de
+repetição do papel dela.
+
+**Validado no navegador a 390×844** (app real, banco real): plano regerado com 4
+dias × 1h30; tela do dia com o cabeçalho novo; as três manifestações do ALTO-2
+exercitadas de ponta a ponta pela API do app (remover âncora, acrescentar,
+reordenar) com o banco conferido a cada passo; tela do programa sem número de
+RIR conflitante. Zero erro de console.
+
+**Não validado no navegador:** o clique sintético não aciona `Pressable` do
+React Native Web no pane (limitação do harness, já registrada em G2), então
+remover/acrescentar foi feito chamando a mesma função que o botão chama, não
+tocando o botão. E a semana de deload continua dependente de data — coberta
+pelas seções 22 e 29 do harness. **Conferir as duas no celular.**
 
 ## Validação de G2.1 (03/08/2026)
 
@@ -718,20 +891,39 @@ De G2 (03/08 — achados durante a implementação, nenhum virou código):
     preenchidos em N exercício(s)" e "descanso corrigido em N de M" são
     `console.log` — ninguém no celular vê. Quando um backfill mexer em algo que
     o usuário reconheça na tela, ele precisa de aviso visível, não de log.
+34. **Reps de linha acrescentada à mão não são recalculadas depois.** A linha
+    nova recebe a faixa do papel dela no INSERT; se um acréscimo posterior a
+    demover de finalizador para isolador, ela fica com 12-20 e RIR 0-2. Papel,
+    RIR e descanso acompanham; a repetição não, de propósito — ela é editável na
+    tela e sobrescrevê-la a cada recálculo apagaria escolha do usuário. Fechar
+    de verdade exige distinguir "faixa que o app pôs" de "faixa que a pessoa
+    escolheu", que é uma coluna a mais.
+35. **9,9% das sessões estouram o tempo pedido, e isso é anterior a tudo.**
+    1.864 de 18.900 na grade, idêntico em `63c716b` e em `bb6babf` — não é
+    regressão de fase nenhuma. Vem de `cortarParaCaber` parar quando só sobram
+    compostos pesados (o laço pula `ehPesado`) ou quando o piso de 3 exercícios
+    é atingido. Ou o corte aprende a tirar SÉRIE em vez de exercício quando só
+    sobra pesado, ou o plano declara "não cabe em X min" com o número real.
+36. **A queda de −3 séries no grupo de FOCO em 10 perfis.** Preço medido do teto
+    do grupo pequeno em 18 (M1). O foco continua muito acima do piso de 10 e a
+    ênfase já ganha o desempate em `preencherTempo`, mas quem pediu peito e
+    recebe 18 em vez de 21 não sabe por quê. Um aviso nomeando a troca fecharia.
 23. **Peito fecha em 12 diretas no dia A, contra 10 de B10.** Não é defeito: é
     o teto de sessão (12) sendo usado inteiro porque sobra tempo. B10 chegou a
     10 porque também gastava tempo com o 4º e 5º exercício que G2 não tem.
 24. **`quantosExercicios` e o piso de 2 séries continuam sendo convenção.**
     O achado 18 do qa segue aberto: o piso de A7 cria exercício com 2 séries,
     e nada garante que ele não caia para 1 num corte futuro.
-25. **A grade de 1.350 perfis testa 3 locais, não 5.** `academia_rede`,
-    `academia_simples` e `casa_halteres` não existem em `LOCAIS` e caem no
-    fallback de `equipamentosDe` (academia completa). Os locais reais são
-    `academia`, `smart_fit`, `academia_basica`, `casa_equipada`,
-    `casa_simples`. Pré-existente de G1; corrigir amplia a cobertura sem custo.
-26. **O cabeçalho da tela do dia conta o cardio como exercício** ("8
-    exercícios" num dia de 7 + bicicleta). `diasComTempo` já separa; a tela do
-    dia usa `dados.exs.length` direto.
+25. ~~**A grade de 1.350 perfis testa 3 locais, não 5.**~~ — **feito na correção
+    do cross-review de G2.1**, e não era "sem custo": com as chaves reais o
+    invariante de variedade semanal que G2.1 declarou como 0 dava 3, e o número
+    de 114 que ele reportou como baseline era inflado pela academia repetida
+    quatro vezes. `equipamentosDe` deixou de cair calado e o harness ficou
+    estrito. Estava neste arquivo como candidato desde G2 — três fases medindo
+    sobre a mesma academia.
+26. ~~**O cabeçalho da tela do dia conta o cardio como exercício.**~~ — **feito
+    na correção do cross-review de G2.1**, junto com M2: a linha passou a
+    mostrar também o tempo, com o cardio somado e nomeado.
 
 Do cross-review do qa (03/08 — deixados fora da correção de propósito):
 

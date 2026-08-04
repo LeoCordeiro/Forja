@@ -309,6 +309,73 @@ export function papeisDaRotina<
   return out;
 }
 
+/**
+ * A prescrição derivada de um DIA inteiro — **cache invalidável, não verdade eterna**.
+ *
+ * ── O que isto conserta ──────────────────────────────────────────────────
+ *
+ * `preencherPapeis` passou a gravar `papel`/RIR em rotina antiga, e
+ * `papeisDaRotina` prefere sempre o gravado. Sem esta função, o papel virava
+ * o RETRATO da ordem do dia no instante do backfill — e a rotina pré-v16, que
+ * antes se autocorrigia a cada render, passou a carregar um papel congelado.
+ * Três consequências medidas pelo cross-review, todas na população que o
+ * backfill existe para atender (rotina de ordem manual):
+ *
+ * · Remover a âncora do grupo deixava o grupo **sem principal para sempre** —
+ *   o segundo supino continuava "complementar" sendo agora o primeiro.
+ * · "Reordenar pela ciência" prendia papel, RIR e descanso na ordem ANTIGA:
+ *   o supino reto voltava para a posição 1 ainda como complementar, RIR 1-2 e
+ *   150 s, quando a nova ordem pede principal, RIR 2-3 e 180 s.
+ * · Acrescentar exercício produzia **dois finalizadores gravados**, violando a
+ *   regra dura escrita em `papeisDaSessao` ("máximo 1 por sessão, e só na
+ *   última posição").
+ *
+ * ── Por que persistir e recalcular, em vez de voltar a derivar em runtime ──
+ *
+ * As duas saídas fechavam o buraco. A escolhida é esta porque o motivo do
+ * backfill é o descanso: `corrigirDescansos` precisa do papel GRAVADO para
+ * saber que aquele supino quer 180 s, e sem coluna ele volta ao fallback que
+ * trata todo multiarticular como principal — o defeito que G2.1 existia para
+ * matar. Então o gravado fica, e passa a ser o que sempre deveria ter sido:
+ * um cache, invalidado por quem muda a composição do dia.
+ *
+ * Deriva do zero, ignorando o que está gravado: recalcular é isso. Quem quer a
+ * leitura tolerante (gravado > derivado) continua usando `papeisDaRotina`.
+ */
+export interface LinhaPrescrita {
+  papel: Papel;
+  reps: [number, number];
+  rir: [number, number] | null;
+  descansoSeg: number;
+}
+
+export function prescricaoDaRotina<
+  T extends {
+    id: number;
+    nome: string;
+    grupo: string;
+    equipamento?: string | null;
+    tipoCarga?: string | null;
+  },
+>(exs: T[]): Map<number, LinhaPrescrita> {
+  const papeis = papeisDaSessao(exs);
+  const out = new Map<number, LinhaPrescrita>();
+  for (const e of exs) {
+    if (e.grupo === 'cardio') continue;
+    const papel = papeis.get(e) ?? 'isolador';
+    const pres = prescricaoDe(papel, e.nome, e.grupo, e.equipamento, e.tipoCarga);
+    out.set(e.id, {
+      papel,
+      reps: pres.reps,
+      // Série por TEMPO não tem repetição em reserva para contar — é o mesmo
+      // corte que `aplicarPrescricao` faz no gerador.
+      rir: e.tipoCarga === 'tempo' ? null : pres.rir,
+      descansoSeg: descansoCorreto(e.nome, pres.reps[1], e.grupo, papel, e.equipamento, e.tipoCarga),
+    });
+  }
+  return out;
+}
+
 // ── O que cada papel prescreve (B5 e B6) ──────────────────────────────────
 
 export interface Prescricao {

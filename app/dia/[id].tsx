@@ -36,9 +36,37 @@ import {
   type PapelDaLinha,
 } from '@/features/treino/papel';
 import { analisarOrdem } from '@/features/treino/ordem';
+import { emMinutos, estimarDuracao } from '@/features/treino/duracao';
 import { buzz } from '@/shared/utils/haptics';
 import { Ajuda } from '@/shared/ui/Ajuda';
 import { AJUDA } from '@/shared/ajudas';
+
+/**
+ * O cabeçalho do dia — contagem certa e o tempo REAL, cardio incluído.
+ *
+ * Duas coisas erradas na mesma linha. (1) Ela dizia "8 exercícios" num dia de
+ * 7 mais a bicicleta: `diasComTempo` já separa cardio há tempos e esta tela
+ * usava `exs.length` cru, então a Home e a aba Treino diziam 7 e o dia dizia 8.
+ * (2) Ela não dizia MINUTO nenhum — e desde que o cardio passou a ser
+ * prescrito nos quatro objetivos, um dia de 90 min pedidos pode somar 110 reais.
+ * O aviso do plano carrega essa informação; o número, que é o que a pessoa lê
+ * antes de sair de casa, não carregava. `estimarDuracao` continua medindo só
+ * musculação (é o tempo do questionário), então o cardio entra somado e com o
+ * nome dele, como já aparece na aba Treino.
+ */
+function resumoDoDia(exs: RoutineExerciseFull[]): string {
+  const forca = exs.filter((e) => e.grupo_primario !== 'cardio');
+  const minutos = emMinutos(estimarDuracao(exs).totalSeg);
+  const minCardio = Math.round(
+    exs
+      .filter((e) => e.grupo_primario === 'cardio')
+      .reduce((s, e) => s + (e.reps_max ?? 0), 0) / 60
+  );
+  return (
+    `${forca.length} exercício${forca.length === 1 ? '' : 's'} · ~${minutos} min` +
+    (minCardio > 0 ? ` + ${minCardio} min de cardio` : '')
+  );
+}
 
 /** O RIR da linha: o do plano quando existe, o do papel quando não. */
 function rirDaLinha(ex: RoutineExerciseFull, papeis: Map<number, PapelDaLinha>): string {
@@ -157,7 +185,7 @@ export default function DiaDeTreino() {
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <Tela
         titulo={dados?.dia?.nome ?? 'Treino'}
-        subtitulo={dados?.dia ? `${dados.exs.length} exercícios` : undefined}
+        subtitulo={dados?.dia ? resumoDoDia(dados.exs) : undefined}
         onRefresh={recarregar}
         paddingBottom={160}
       >

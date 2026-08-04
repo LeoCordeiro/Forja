@@ -16,6 +16,7 @@ import {
 } from '@/features/treino/volume';
 import {
   BLOCO,
+  blocoVencido,
   diasRestantes,
   faseAtual,
   faseDaSemanaDoBloco,
@@ -78,6 +79,7 @@ export default function Programa() {
   const inicio = rotina.criado_em ? new Date(rotina.criado_em).toISOString().slice(0, 10) : null;
   const semana = semanaDoBloco(inicio, hoje());
   const fase = faseAtual(semana);
+  const vencido = blocoVencido(semana);
   const restam = diasRestantes(inicio, hoje());
 
   return (
@@ -123,21 +125,34 @@ export default function Programa() {
       <Animated.View entering={FadeInDown.delay(60).duration(300)}>
         <Card>
           <View style={s.entre}>
-            <Txt v="label">Semana {semana} de {SEMANAS_DO_BLOCO}</Txt>
+            {/* ── Bloco vencido para de fingir semana 8 (M1) ────────────────
+                `semanaDoBloco` grampeava em 8 e `resolverFase` não: a partir do
+                dia 57 esta tela dizia para sempre "Semana 8 de 8 · Aliviar ·
+                volume 55%" enquanto o executor — do lado certo — já não
+                modulava nada. Uma tela mandava aliviar e a outra treinava
+                normal, sobre o mesmo dia. Agora a semana é a de verdade e o
+                estado "venceu" tem cara própria. */}
+            <Txt v="label">
+              {vencido ? `Semana ${semana} — bloco vencido` : `Semana ${semana} de ${SEMANAS_DO_BLOCO}`}
+            </Txt>
             <Txt v="small" cor={restam > 0 ? colors.textDim : colors.warn} bold>
               {restam > 0 ? `faltam ${restam} dias` : 'bloco fechado'}
             </Txt>
           </View>
-          <Barra valor={semana / SEMANAS_DO_BLOCO} cor={colors.primary} />
+          <Barra valor={Math.min(1, semana / SEMANAS_DO_BLOCO)} cor={colors.primary} />
 
           <Txt v="h3" style={{ marginTop: spacing.md }}>
-            {fase.titulo}
+            {vencido ? 'Sem fase ativa' : fase.titulo}
           </Txt>
           <Txt v="small" style={{ marginTop: 2 }}>
-            {fase.o_que_fazer}
+            {vencido
+              ? 'O bloco de 8 semanas terminou, então o treino roda sem modulação: volume e esforço ' +
+                'cheios, como o plano prescreve em cada linha. Recomeçar o bloco devolve a progressão ' +
+                'semana a semana.'
+              : fase.o_que_fazer}
           </Txt>
           <View style={s.tags}>
-            <Tag icone="repeat" texto={`volume ${fase.volumePct}%`} />
+            {!vencido ? <Tag icone="repeat" texto={`volume ${fase.volumePct}%`} /> : null}
             {/* ── Direção, não número (M3-texto) ────────────────────────────
                 Era `parar a ${fase.rir} da falha`, e `fase.rir` é o campo cru
                 da semana do bloco: "3" na semana 1, "4" na semana 8. Ao lado,
@@ -147,7 +162,7 @@ export default function Programa() {
                 Não existe número certo aqui: o que a fase faz é afrouxar (ou
                 não) o alvo de cada exercício. Nas semanas que não afrouxam
                 nada, a tag some — repetir o alvo da linha no topo é ruído. */}
-            {textoAjusteDaFase(faseDaSemanaDoBloco(fase, semana)) ? (
+            {!vencido && textoAjusteDaFase(faseDaSemanaDoBloco(fase, semana)) ? (
               <Tag
                 icone="flame-outline"
                 texto={textoAjusteDaFase(faseDaSemanaDoBloco(fase, semana))}

@@ -12,13 +12,21 @@ import { EXERCICIOS } from '../src/db/seed/exercicios.ts';
 import { montarPlano, REGIOES } from '../src/features/treino/gerador.ts';
 import { indiretoPorPadrao } from '../src/features/treino/papel.ts';
 import { FORCA_RELATIVA, padraoDe, ehComposto, ehPesado } from '../src/features/treino/classificacao.ts';
-import { LOCAIS } from '../src/features/treino/local.ts';
+import { foraDoLocal, LOCAIS } from '../src/features/treino/local.ts';
+// `localConhecido` nasce nesta rodada — namespace, para o gate rodar contra o
+// código anterior e FALHAR por asserção em vez de morrer no link.
+import * as LOCAL_NS from '../src/features/treino/local.ts';
 import { REGIOES_DOR } from '../src/features/perfil/diagnostico.ts';
 import { CARDIO, RIR_POR_FASE } from '../src/features/treino/periodizacao.ts';
 import { aquecimento } from '../src/features/treino/anilhas.ts';
 import { hidratarSeries, inserirAproximacoes, numeroValendo } from '../src/features/treino/series.ts';
 import { PAPEIS, rirNaFase } from '../src/features/treino/papel.ts';
-import { resolverFase } from '../src/features/treino/fase.ts';
+import { modularSeries, resolverFase } from '../src/features/treino/fase.ts';
+import { faseAtual, faseDaSemanaDoBloco, SEMANAS_DO_BLOCO, semanaDoBloco } from '../src/features/treino/programa.ts';
+// `blocoVencido` nasce nesta rodada: namespace para o gate poder RODAR contra o
+// código anterior e falhar por asserção, em vez de morrer no link.
+import * as PROGRAMA_NS from '../src/features/treino/programa.ts';
+const blocoVencido = PROGRAMA_NS.blocoVencido ?? ((semana) => semana > SEMANAS_DO_BLOCO);
 
 // ── Namespace, e não `import { X }`, de propósito ───────────────────────────
 //
@@ -29,6 +37,7 @@ import { resolverFase } from '../src/features/treino/fase.ts';
 // o que o gate pede.
 import * as PERIODIZACAO from '../src/features/treino/periodizacao.ts';
 import * as GERADOR from '../src/features/treino/gerador.ts';
+import * as PAPEL_NS from '../src/features/treino/papel.ts';
 
 // O seed vira o mesmo formato que o gerador recebe do banco.
 const TODOS = EXERCICIOS.map(([nome, grupo, sec, equip, carga], i) => ({
@@ -96,6 +105,26 @@ for (const l of LOCAIS) {
     TODOS.some((e) => e.grupo_primario === g && eq.has(e.equipamento))
   );
   ok(`${l.label}: tem glúteo, quadríceps e posterior`, temPerna);
+}
+
+// ── 2b. Nenhum teste inventa um local ─────────────────────────────────────
+//
+// UNIDADE: a CHAVE de local. Não mede plano nenhum — mede se o INSTRUMENTO
+// está apontado para onde ele diz que aponta. Três chaves inventadas
+// (`academia_rede`, `academia_simples`, `casa_halteres`) caíram caladas em
+// academia completa por três fases, e todo número medido "por local" desde G1
+// era academia repetida. O fallback de `equipamentosDe` fica na produção; aqui
+// ele é proibido, e é aqui que ele deveria ter sido proibido desde sempre.
+console.log('\n2b. Todo local usado nos testes existe de verdade');
+{
+  const usados = new Set([...LOCAIS.map((l) => l.chave)]);
+  ok('a lista de locais da grade sai de LOCAIS, não de literais', usados.size === LOCAIS.length,
+     [...usados].join(', '));
+  ok('existe uma checagem ESTRITA de chave de local', typeof LOCAL_NS.localConhecido === 'function',
+     typeof LOCAL_NS.localConhecido);
+  const desconhecidos = [...usados].filter((c) => !(LOCAL_NS.localConhecido ?? (() => true))(c));
+  ok('nenhuma chave inventada', desconhecidos.length === 0, desconhecidos.join(', ') || 'todas válidas');
+  ok('e são as cinco reais', LOCAIS.length === 5, LOCAIS.map((l) => l.chave).join(', '));
 }
 
 // ── 3. O foco lidera a sessão ──────────────────────────────────────────────
@@ -359,8 +388,20 @@ const diaLevaONome = (nomeDoDia, grupo) => semAcento(nomeDoDia).includes(semAcen
  * o próprio app diz para evitar), duração (20 min contra 30) e frequência (todo
  * dia contra 3 sessões).
  */
-/** Equipamentos do local, com o mesmo fallback de `equipamentosDe`. */
-const perfilLocal = (p) => new Set((LOCAIS.find((l) => l.chave === p.local) ?? LOCAIS[0]).equipamentos);
+/**
+ * Equipamentos do local — **estrito**, sem o fallback de `equipamentosDe`.
+ *
+ * O fallback fica na produção (o app precisa abrir mesmo com perfil corrompido)
+ * e sai daqui, porque foi exatamente ele que escondeu o defeito: a grade usava
+ * `academia_rede`, `academia_simples` e `casa_halteres`, três chaves que NÃO
+ * existem, e as três caíam caladas em academia completa. Três fases de números
+ * medidos sobre a mesma academia repetida quatro vezes.
+ */
+const perfilLocal = (p) => {
+  const l = LOCAIS.find((x) => x.chave === p.local);
+  if (!l) throw new Error(`local inexistente no teste: "${p.local}" — válidos: ${LOCAIS.map((x) => x.chave).join(', ')}`);
+  return new Set(l.equipamentos);
+};
 
 /** Padrões que o catálogo oferece para um grupo NAQUELE perfil. */
 function padroesDoLocal(grupo, p) {
@@ -376,11 +417,16 @@ function padroesDoLocal(grupo, p) {
   const proibidos = new Set(
     (p.dores ?? []).flatMap((d) => REGIOES_DOR.find((x) => x.chave === d)?.evitar ?? [])
   );
+  // E o que o LOCAL não tem apesar de a etiqueta de equipamento liberar
+  // (`semEstes`): a Smart Fit tem cabo e máquina, mas não tem glute ham raise
+  // nem flexão nórdica. Sem isto a asserção contaria padrão que o gerador está
+  // proibido de escolher — o mesmo erro de unidade, um andar abaixo.
+  const semLocal = foraDoLocal(p.local);
   const out = new Set();
   for (const e of fonte.catalogo) {
     if (e.grupo_primario !== grupo) continue;
     if (e.equipamento && !equip.has(e.equipamento)) continue;
-    if (proibidos.has(e.nome)) continue;
+    if (proibidos.has(e.nome) || semLocal.has(e.nome)) continue;
     // Mesmo filtro de força relativa que o gerador aplica: mergulho no
     // paralelo é o segundo padrão de peito em casa, e ele não existe para quem
     // ainda não sustenta o próprio peso. Contar padrão que o gerador nunca
@@ -431,9 +477,6 @@ function alcancaSegundoPadrao(grupo, p, plano) {
 
 const ORDEM_CARDIO = ['Bicicleta ergométrica', 'Elíptico', 'Remo ergômetro', 'Esteira'];
 
-/** Marcador estável do aviso SEMANAL de dose incompleta (M2). */
-const MARCA_DOSE = 'sessões previstas';
-
 function conferirCardio(plano, p, fonteCat) {
   const comCardio = plano.dias.filter((d) => d.exercicios.some((e) => e.grupo === 'cardio'));
 
@@ -452,19 +495,40 @@ function conferirCardio(plano, p, fonteCat) {
   if (!disponiveis.length) return comCardio.length ? 'cardio prescrito sem modalidade disponível no local' : '';
 
   const esperadoDias = Math.min(conf.sessoes, plano.dias.length);
-  // Sessão que não coube no tempo pode ter perdido o cardio. Isso deixou de ser
-  // desculpa muda: se o plano entrega MENOS sessões do que a dose pede — porque
-  // não há dias, porque o relógio cortou, tanto faz — ele precisa dizer isso na
-  // escala da SEMANA. O aviso por dia existia e nunca somava: com 45 min o
-  // cardio sumia da semana inteira e o usuário só via "o cardio saiu da sessão"
-  // repetido, nunca "das 3 sessões previstas, 0 couberam".
-  const declarouDose = plano.avisos.some((a) => a.includes(MARCA_DOSE));
   if (comCardio.length > esperadoDias)
     return `cardio em ${comCardio.length} dias, esperado ${esperadoDias}`;
-  if (comCardio.length < conf.sessoes && !declarouDose)
-    return `${comCardio.length} de ${conf.sessoes} sessões e nenhum aviso semanal de dose`;
-  if (comCardio.length < esperadoDias && !declarouDose)
-    return `cardio em ${comCardio.length} dias, esperado ${esperadoDias}, sem aviso`;
+
+  // ── A régua que MEDE, em vez de conferir se o aviso existe ───────────────
+  //
+  // A versão anterior aceitava dose incompleta sempre que o aviso semanal
+  // estivesse presente — e o gerador empurra esse aviso incondicionalmente,
+  // toda vez que `comCardio.length < conf.sessoes`. Ou seja: a asserção não
+  // podia falhar, e o "994 → 0" era garantido por construção. É o mesmo defeito
+  // das chaves de local: o instrumento concordando consigo mesmo.
+  //
+  // Três reguas que PODEM falhar, nenhuma consultando a existência do aviso:
+  //
+  // 1. Quando há dias suficientes E nenhuma sessão perdeu o cardio para o
+  //    relógio, a dose tem que estar COMPLETA. Aqui não há desculpa possível.
+  const cortouPorTempo = plano.avisos.some((a) => a.includes('o cardio saiu da sessão'));
+  if (!cortouPorTempo && plano.dias.length >= conf.sessoes && comCardio.length !== conf.sessoes)
+    return `dose incompleta sem corte por tempo: ${comCardio.length} de ${conf.sessoes}`;
+  // 2. Quando há menos DIAS que sessões e nada foi cortado, o plano tem que
+  //    entregar o máximo que a agenda permite — não menos.
+  if (!cortouPorTempo && comCardio.length !== esperadoDias)
+    return `cardio em ${comCardio.length} dias, cabia ${esperadoDias}`;
+  // 3. E quando a dose fica curta, os NÚMEROS do aviso têm que bater com o
+  //    plano entregue. Antes bastava a frase existir; agora ela é lida. Um aviso
+  //    que dissesse "3 de 3" sobre um plano com 0 sessões passava — e é
+  //    exatamente o tipo de texto que envelhece errado quando a constante muda.
+  if (comCardio.length < conf.sessoes) {
+    const m = plano.avisos
+      .map((a) => a.match(/das (\d+) sessões previstas para o seu objetivo, (\d+) couberam/))
+      .find(Boolean);
+    if (!m) return `${comCardio.length} de ${conf.sessoes} sessões e nenhum aviso semanal de dose`;
+    if (Number(m[1]) !== conf.sessoes || Number(m[2]) !== comCardio.length)
+      return `aviso diz ${m[2]} de ${m[1]}, plano tem ${comCardio.length} de ${conf.sessoes}`;
+  }
 
   const preferida = ORDEM_CARDIO.find((n) => disponiveis.some((e) => e.nome === n)) ?? disponiveis[0].nome;
   for (const d of comCardio) {
@@ -842,7 +906,14 @@ console.log('\n16. Invariantes de sessão numa grade de perfis');
   const DIAS = [1, 2, 3, 4, 5, 6];
   const EXP = ['iniciante', 'intermediario', 'avancado'];
   const MIN = [30, 45, 60, 90, 120];
-  const LOC = ['academia', 'academia_rede', 'academia_simples', 'casa_halteres', 'casa_simples'];
+  // ── As chaves REAIS. Três das cinco anteriores não existiam ─────────────
+  //
+  // `academia_rede`, `academia_simples` e `casa_halteres` nunca estiveram em
+  // `LOCAIS` — os nomes são `smart_fit`, `academia_basica` e `casa_equipada`.
+  // Como `equipamentosDe` caía calado em `LOCAIS[0]`, a grade que sustenta os
+  // números de G1, G2 e G2.1 testava academia completa QUATRO vezes e
+  // casa_simples uma: nunca halteres-sem-máquina, nunca academia-sem-cabo.
+  const LOC = LOCAIS.map((l) => l.chave);
   const PREF = ['maquina', 'livre', 'indiferente'];
   const FOC = [[], ['peito'], ['costas'], ['ombro'], ['gluteo'], ['superior'], ['inferior']];
   const OBJ = ['hipertrofia', 'recomposicao', 'emagrecimento'];
@@ -1294,6 +1365,142 @@ console.log('\n22. A fase afrouxa em direção; o número vem de rirNaFase');
        !!f && !/RIR\s*\d/i.test(f.rirTexto), f?.rirTexto ?? '');
     ok(`${rotulo}: e o chip diz a direção`, !!f && f.rirTexto.length > 0, f?.rirTexto ?? '(vazio)');
   }
+}
+
+// ── 28. Papel gravado é CACHE, não verdade eterna ─────────────────────────
+//
+// UNIDADE: a LINHA dentro da COMPOSIÇÃO do dia. Não é uma medida de plano
+// gerado — é a pergunta "o que acontece com o papel JÁ GRAVADO quando o dia
+// muda depois". Desde que `preencherPapeis` passou a persistir papel em rotina
+// antiga, o valor gravado virou o retrato da ordem no instante do backfill, e
+// `papeisDaRotina` prefere sempre o gravado. Antes disso a rotina pré-v16 era
+// imune: derivava a cada render e se autocorrigia.
+//
+// As três manifestações que o cross-review mediu, aqui como transformação pura.
+console.log('\n28. Papel recalculado quando a composição do dia muda');
+{
+  const prescreverDia = PAPEL_NS.prescricaoDaRotina;
+  ok('existe uma função que recalcula o dia inteiro', typeof prescreverDia === 'function',
+     typeof prescreverDia);
+
+  const linha = (id, nome, grupo, equipamento, tipoCarga = 'peso_reps') => ({
+    id, nome, grupo, equipamento, tipoCarga,
+  });
+  // Um "peito e tríceps" de ordem manual, que é a população do backfill.
+  const DIA = [
+    linha(1, 'Supino reto com barra', 'peito', 'barra'),
+    linha(2, 'Supino inclinado com halteres', 'peito', 'halter'),
+    linha(3, 'Crucifixo com halteres', 'peito', 'halter'),
+    linha(4, 'Tríceps na polia com corda', 'triceps', 'cabo'),
+  ];
+  const papelDe = (m, id) => m?.get(id)?.papel;
+
+  const original = prescreverDia?.(DIA);
+  ok('o 1º do grupo é principal e o 2º complementar',
+     papelDe(original, 1) === 'principal' && papelDe(original, 2) === 'complementar',
+     `${papelDe(original, 1)} / ${papelDe(original, 2)}`);
+
+  // (1) REMOVER a âncora: quem sobra no topo do grupo vira o principal. Com o
+  // papel congelado, o supino inclinado seguia "complementar" para sempre e o
+  // grupo ficava sem principal nenhum.
+  const semAncora = DIA.slice(1);
+  const depoisDeRemover = prescreverDia?.(semAncora);
+  ok('remover a âncora promove o próximo a principal',
+     papelDe(depoisDeRemover, 2) === 'principal', String(papelDe(depoisDeRemover, 2)));
+
+  // (2) REORDENAR: o card "Reordenar pela ciência" põe o supino com barra de
+  // volta na posição 1. Papel, RIR e descanso têm que acompanhar — congelados,
+  // ele voltava como complementar, RIR 1-2 e 150 s.
+  const manual = [DIA[1], DIA[2], DIA[0], DIA[3]]; // ordem manual: barra em 3º
+  const antesDeReordenar = prescreverDia?.(manual);
+  const reordenado = prescreverDia?.(DIA);
+  ok('na ordem manual o supino com barra NÃO é o principal',
+     papelDe(antesDeReordenar, 1) !== 'principal', String(papelDe(antesDeReordenar, 1)));
+  ok('reordenar devolve principal, RIR e descanso ao supino com barra',
+     papelDe(reordenado, 1) === 'principal' &&
+       reordenado?.get(1)?.descansoSeg === 180 &&
+       JSON.stringify(reordenado?.get(1)?.rir) === '[2,3]',
+     `${papelDe(reordenado, 1)} / ${reordenado?.get(1)?.descansoSeg}s / ${JSON.stringify(reordenado?.get(1)?.rir)}`);
+
+  // (3) ACRESCENTAR: o finalizador é POSIÇÃO (último, mono, estabilização
+  // baixa). Congelado, o antigo último continuava finalizador e o novo virava
+  // outro — dois finalizadores GRAVADOS, contra a regra dura de `papeisDaSessao`.
+  const comNovo = [...DIA, linha(5, 'Tríceps na polia com barra', 'triceps', 'cabo')];
+  const depoisDeAcrescentar = prescreverDia?.(comNovo);
+  const finalizadores = [...(depoisDeAcrescentar?.values() ?? [])].filter((x) => x.papel === 'finalizador');
+  ok('nunca mais de um finalizador no dia', finalizadores.length <= 1, `${finalizadores.length}`);
+  ok('e o finalizador é o ÚLTIMO da lista',
+     papelDe(depoisDeAcrescentar, 5) === 'finalizador' && papelDe(depoisDeAcrescentar, 4) === 'isolador',
+     `4=${papelDe(depoisDeAcrescentar, 4)} 5=${papelDe(depoisDeAcrescentar, 5)}`);
+
+  // E cardio continua sem papel: a pergunta não existe ali.
+  const comCardio = [...DIA, { id: 9, nome: 'Esteira', grupo: 'cardio', equipamento: 'maquina', tipoCarga: 'tempo' }];
+  ok('cardio fica de fora do recálculo', prescreverDia?.(comCardio)?.get(9) === undefined,
+     JSON.stringify(prescreverDia?.(comCardio)?.get(9) ?? null));
+}
+
+// ── 29. O BLOCO de 8 semanas — a unidade que ninguém media ────────────────
+//
+// UNIDADE: o BLOCO (8 semanas). Era a cobertura mais fina do repositório: todo
+// invariante media série, exercício, sessão, dia ou semana, e NENHUM media o
+// que acontece ENTRE semanas. Foi ali que M1 se escondeu — `semanaDoBloco`
+// grampeava em 8 e `resolverFase` não, então a partir do dia 57 a tela do
+// programa dizia "Semana 8 · Aliviar · 55%" para sempre enquanto o executor,
+// corretamente, já não modulava nada. Duas telas, duas verdades, o mesmo dia.
+console.log('\n29. O bloco de 8 semanas: uma definição de "venceu"');
+{
+  const INICIO = '2026-01-05'; // uma segunda-feira
+  const maisDias = (iso, n) => {
+    const [y, m, d] = iso.split('-').map(Number);
+    const dt = new Date(y, m - 1, d + n);
+    return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+  };
+
+  let divergem = 0;
+  let primeiro = '';
+  for (let semana = 1; semana <= 14; semana++) {
+    const hojeIso = maisDias(INICIO, (semana - 1) * 7 + 1);
+    const s = semanaDoBloco(INICIO, hojeIso);
+    const vencidoPelaTela = blocoVencido(s);
+    const semModulacao =
+      resolverFase({
+        retomouEm: null, mesesParado: 0, rotinaCriadaEmIso: INICIO, hojeIso,
+      }) === null;
+    if (vencidoPelaTela !== semModulacao) {
+      divergem++;
+      primeiro ||= `semana ${semana}: tela=${vencidoPelaTela ? 'venceu' : 'ativo'} executor=${semModulacao ? 'venceu' : 'ativo'}`;
+    }
+  }
+  ok('tela e executor concordam sobre o bloco ter vencido', divergem === 0, `${divergem} — ${primeiro}`);
+
+  // E a semana deixa de mentir: no dia 90 ela é a 13ª, não a 8ª para sempre.
+  const s13 = semanaDoBloco(INICIO, maisDias(INICIO, 85));
+  ok('depois de vencido a semana continua contando', s13 > SEMANAS_DO_BLOCO, `semana ${s13}`);
+
+  // Modulação NUNCA infla: as semanas de 110% do bloco orientam pelo texto, e
+  // inflar o alvo de todo exercício em silêncio não é o combinado (B11).
+  let inflou = 0;
+  for (let semana = 1; semana <= SEMANAS_DO_BLOCO; semana++) {
+    const hojeIso = maisDias(INICIO, (semana - 1) * 7 + 1);
+    const f = resolverFase({ retomouEm: null, mesesParado: 0, rotinaCriadaEmIso: INICIO, hojeIso });
+    if (!f) continue;
+    for (const alvo of [2, 3, 4]) if (modularSeries(alvo, f) > alvo) inflou++;
+    // Piso de 2: exercício de série única é presença, não estímulo.
+    if (modularSeries(2, f) < 2) inflou++;
+  }
+  ok('nenhuma semana do bloco infla série nem cai abaixo de 2', inflou === 0, String(inflou));
+
+  // Bloco vencido = sem modulação, e isso é o comportamento, não só o texto.
+  ok('vencido não modula nada', modularSeries(4, null) === 4, String(modularSeries(4, null)));
+
+  // E toda semana do bloco tem uma fase com direção declarada — é o que as
+  // duas telas imprimem no lugar do número absoluto.
+  let semDirecao = 0;
+  for (let semana = 1; semana <= SEMANAS_DO_BLOCO; semana++) {
+    const f = faseDaSemanaDoBloco(faseAtual(semana), semana);
+    if (!Array.isArray(RIR_POR_FASE[f]?.ajuste)) semDirecao++;
+  }
+  ok('toda semana do bloco declara o ajuste de esforço', semDirecao === 0, String(semDirecao));
 }
 
 // ── 17. A prescrição não sai da EXPERIÊNCIA (A6) ───────────────────────────

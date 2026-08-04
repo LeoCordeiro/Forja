@@ -116,14 +116,17 @@ async function completarCatalogo(db: SQLite.SQLiteDatabase) {
   // Força a reclassificação: sem isto o exercício novo entra sem saber se é
   // composto e com descanso zerado, e o gerador prescreve pausa errada nele.
   //
-  // O CREATE não é redundante: `app_flags` nasce lá embaixo, dentro de
-  // `corrigirDescansos`, e num banco que ainda não chegou lá o DELETE estoura.
-  // Como `normalizar` roda dentro da abertura do banco, isso não daria um erro
-  // discreto — daria o app inteiro sem abrir.
-  await db.execAsync(
-    `CREATE TABLE IF NOT EXISTS app_flags (key TEXT PRIMARY KEY, value TEXT NOT NULL)`
-  );
-  await db.runAsync(`DELETE FROM app_flags WHERE key = '${FLAG_DESCANSO}'`);
+  // ── A flag de descanso NÃO é mais apagada aqui ──────────────────────────
+  //
+  // Ela era, e o efeito colateral custava a escolha do usuário: `corrigirDescansos`
+  // só SOBE o intervalo, então quem tinha baixado um descanso de propósito o
+  // recebia de volta no valor da regra toda vez que o catálogo crescesse. E o
+  // motivo do DELETE nem existia: catálogo novo entra em `exercises`, não em
+  // `routine_exercises` — nenhum exercício recém-inserido está na rotina de
+  // ninguém, então não há descanso de rotina a recalcular. Quem precisa do
+  // descanso certo é a linha do CATÁLOGO, e ela é escrita por
+  // `classificarExercicios` logo abaixo. G2.1 não criou este mecanismo, mas
+  // multiplicou a magnitude dele ao fazer a regra nova valer para todo mundo.
   await db.runAsync('UPDATE exercises SET eh_composto = 0');
 }
 
@@ -206,10 +209,22 @@ async function preencherPapeis(db: SQLite.SQLiteDatabase) {
     tipoCarga: string | null;
     papel: string | null;
   }>(
+    // ── Só a rotina ATIVA ───────────────────────────────────────────────
+    //
+    // "Refazer meu treino" arquiva a anterior com `ativa = 0` e nada mais lê
+    // aquelas linhas — a tela do dia, o executor e a auditoria de volume todos
+    // filtram por `r.ativa = 1`. Reescrever papel e RIR ali era escrita
+    // invisível: custo de UPDATE em rotina que ninguém abre, e mais linhas
+    // tocadas do que o necessário num banco que já teve quatro planos. O
+    // histórico das rotinas velhas mora em `set_logs`, que este passo não toca
+    // de qualquer forma.
     `SELECT re.id, re.routine_day_id AS dia, e.nome, e.grupo_primario AS grupo,
             e.equipamento, e.tipo_carga AS tipoCarga, re.papel
        FROM routine_exercises re
        JOIN exercises e ON e.id = re.exercise_id
+       JOIN routine_days rd ON rd.id = re.routine_day_id
+       JOIN routines r ON r.id = rd.routine_id
+      WHERE r.ativa = 1
       ORDER BY re.routine_day_id, re.ordem, re.id`
   );
   if (!linhas.length) return;
@@ -300,10 +315,15 @@ async function corrigirDescansos(db: SQLite.SQLiteDatabase) {
     reps_max: number | null;
     descanso_seg: number;
   }>(
+    // Mesma razão de `preencherPapeis`: rotina arquivada não é lida por tela
+    // nenhuma, e subir o descanso dela é escrita que ninguém vê.
     `SELECT re.id, e.nome, e.grupo_primario AS grupo, e.equipamento,
             e.tipo_carga AS tipoCarga, re.papel, re.reps_max, re.descanso_seg
        FROM routine_exercises re
-       JOIN exercises e ON e.id = re.exercise_id`
+       JOIN exercises e ON e.id = re.exercise_id
+       JOIN routine_days rd ON rd.id = re.routine_day_id
+       JOIN routines r ON r.id = rd.routine_id
+      WHERE r.ativa = 1`
   );
 
   let ajustadas = 0;
@@ -333,6 +353,11 @@ async function corrigirDescansos(db: SQLite.SQLiteDatabase) {
   await db.runAsync(`INSERT OR REPLACE INTO app_flags (key, value) VALUES ('${FLAG_DESCANSO}', ?)`, [
     String(ajustadas),
   ]);
+  // A marca da rodada anterior sai junto. Ela não controla mais nada, e flag
+  // órfã com nome de flag viva é o mesmo problema de `descansoLegado`: a
+  // próxima pessoa acha `descansos_v3` no banco e passa meia hora procurando
+  // quem a lê.
+  await db.runAsync(`DELETE FROM app_flags WHERE key = 'descansos_v3'`);
 
   // O log diz o que ACONTECEU, não o que a função faria. Antes ele dizia
   // "descanso corrigido em N" sem N nenhum de referência e sem dizer para

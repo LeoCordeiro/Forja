@@ -14,9 +14,11 @@ import { e1rm } from '../perfil/calculos';
 import { getPerfil } from '../perfil/api';
 import { darPontos, registrarAtividade } from '../gamificacao/api';
 import { ehComposto, prioridadeDe, substitutosDe } from './classificacao';
-import { descansoCorreto, type Papel } from './papel';
+import { descansoCorreto, prescricaoDaRotina, type Papel } from './papel';
 import { resolverFase, type FaseEfetiva } from './fase';
 import { isoDe } from '@/shared/utils/date';
+
+
 
 // ─────────────────────────── CATÁLOGO ───────────────────────────
 
@@ -274,7 +276,7 @@ export async function addExercicioNoDia(
     'SELECT COALESCE(MAX(ordem), -1) + 1 AS n FROM routine_exercises WHERE routine_day_id = ?',
     [diaId]
   );
-  await run(
+  const novaLinha = await run(
     `INSERT INTO routine_exercises
        (routine_day_id, exercise_id, ordem, series_alvo, reps_min, reps_max, descanso_seg)
      VALUES (?,?,?,?,?,?,?)`,
@@ -288,10 +290,89 @@ export async function addExercicioNoDia(
       cfg?.descanso ?? 90,
     ]
   );
+  // Acrescentar muda quem é o último do dia — e o finalizador é POSIÇÃO. Sem
+  // isto o dia ficava com DOIS finalizadores gravados, e o exercício novo com
+  // os 90 s fixos do INSERT em vez do descanso do papel dele.
+  //
+  // `novas` existe para a linha recém-criada: nela as repetições também vêm do
+  // papel, porque o 8-12 do INSERT é um DEFAULT, não uma escolha. Sem isso um
+  // finalizador acrescentado à mão saía "3 × 8-12 · RIR 0-1", misturando a
+  // faixa de complementar com o esforço de finalizador. Nas linhas que já
+  // existiam a repetição não é tocada: ali ela pode ter sido editada, e
+  // sobrescrever escolha do usuário é outra coisa.
+  await recalcularPapeisDoDia(diaId, cfg?.repsMin == null ? [novaLinha] : []);
 }
 
 export async function removerExercicioDoDia(routineExerciseId: number) {
+  const linha = await first<{ dia: number }>(
+    'SELECT routine_day_id AS dia FROM routine_exercises WHERE id = ?',
+    [routineExerciseId]
+  );
   await run('DELETE FROM routine_exercises WHERE id = ?', [routineExerciseId]);
+  if (linha) await recalcularPapeisDoDia(linha.dia);
+}
+
+/**
+ * Refaz papel, RIR e descanso de um dia — o cache invalidado.
+ *
+ * Papel é propriedade da SESSÃO: quem é o principal do peito depende de quem
+ * mais está no dia e em que ordem. Enquanto ele era só derivado na tela, isso
+ * se resolvia sozinho a cada render. Desde que `preencherPapeis` passou a
+ * gravá-lo, mudar a composição do dia sem recalcular deixa o banco com o
+ * retrato de uma sessão que não existe mais — remover a âncora deixava o grupo
+ * sem principal, reordenar prendia RIR e descanso na ordem antiga, e
+ * acrescentar exercício criava um SEGUNDO finalizador.
+ *
+ * Chamada por tudo que mexe na composição: remover, acrescentar e reordenar.
+ * A substituição de sessão NÃO chama, e isso é a regra nº 1 do projeto: ela
+ * vale só para hoje e não toca o template.
+ *
+ * ── O descanso só SOBE, e isso é a regra que já existia ──────────────────
+ *
+ * `corrigirDescansos` nunca baixou intervalo — quem configurou 4 minutos de
+ * propósito escolheu isso. Aqui vale o mesmo: a linha que VIRA principal ganha
+ * os 180 s que o papel novo pede; a que deixa de ser não perde os que já tinha.
+ * Errar para mais descanso custa minutos; errar para menos custa carga e
+ * repetição nas séries seguintes.
+ */
+export async function recalcularPapeisDoDia(diaId: number, semearReps: number[] = []) {
+  const linhas = await all<{
+    id: number;
+    nome: string;
+    grupo: string;
+    equipamento: string | null;
+    tipoCarga: string | null;
+    descanso_seg: number;
+  }>(
+    `SELECT re.id, e.nome, e.grupo_primario AS grupo, e.equipamento,
+            e.tipo_carga AS tipoCarga, re.descanso_seg
+       FROM routine_exercises re
+       JOIN exercises e ON e.id = re.exercise_id
+      WHERE re.routine_day_id = ?
+      ORDER BY re.ordem, re.id`,
+    [diaId]
+  );
+  if (!linhas.length) return;
+
+  const prescrito = prescricaoDaRotina(linhas);
+  for (const l of linhas) {
+    const p = prescrito.get(l.id);
+    // Cardio não tem papel, e inventar um seria mentir num campo.
+    if (!p) continue;
+    await run(
+      `UPDATE routine_exercises
+          SET papel = ?, rir_min = ?, rir_max = ?, descanso_seg = ?
+        WHERE id = ?`,
+      [p.papel, p.rir?.[0] ?? null, p.rir?.[1] ?? null, Math.max(l.descanso_seg, p.descansoSeg), l.id]
+    );
+    if (semearReps.includes(l.id)) {
+      await run('UPDATE routine_exercises SET reps_min = ?, reps_max = ? WHERE id = ?', [
+        p.reps[0],
+        p.reps[1],
+        l.id,
+      ]);
+    }
+  }
 }
 
 export async function atualizarExercicioDoDia(
@@ -434,6 +515,11 @@ export async function reordenarPorPrioridade(diaId: number) {
   for (let i = 0; i < ordenados.length; i++) {
     await run('UPDATE routine_exercises SET ordem = ? WHERE id = ?', [i, ordenados[i].id]);
   }
+  // Reordenar TROCA quem abre cada grupo, e papel sai da posição. Sem isto o
+  // supino reto voltava para a primeira posição ainda gravado como
+  // complementar, com RIR 1-2 e 150 s — o card que oferece a reordenação
+  // aparece justamente em rotina de ordem manual, que é a população do backfill.
+  await recalcularPapeisDoDia(diaId);
 }
 
 /** Substitutos do exercício, já resolvidos para ids do catálogo local. */

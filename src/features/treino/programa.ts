@@ -117,11 +117,33 @@ export function faseDaSemanaDoBloco(s: SemanaDoBloco, semana: number): Fase {
   return s.volumePct < 100 ? 'deload' : semana >= 5 ? 'intensificacao' : 'acumulo';
 }
 
+/**
+ * Em que semana do bloco a pessoa está — **sem clamp** (M1).
+ *
+ * ── Duas fontes de verdade sobre a mesma semana ──────────────────────────
+ *
+ * `resolverFase` calcula a semana e devolve `null` quando ela passa de 8: bloco
+ * vencido significa "sem modulação", e o executor aplica 100% do volume. Esta
+ * função grampeava em 8 — então, a partir do dia 57, a tela do programa dizia
+ * para sempre "Semana 8 de 8 · Aliviar · volume 55%" enquanto o executor, do
+ * lado certo, treinava normal. O M3-texto de G2.1 unificou o TEXTO das duas
+ * telas e deixou a FONTE divergente, que é meio conserto.
+ *
+ * Agora ela devolve a semana de verdade — 12, 30, o que for — e quem lê decide
+ * o que fazer com o que passou de 8. `faseAtual` continua grampeando porque a
+ * pergunta dela é outra ("qual linha do BLOCO descreve esta semana"), e ali o
+ * grampo é o comportamento certo: não existe linha 12.
+ */
 export function semanaDoBloco(inicioIso: string | null, hojeIso: string): number {
   if (!inicioIso) return 1;
   const d = (Date.parse(hojeIso) - Date.parse(inicioIso)) / 86400000;
   if (Number.isNaN(d) || d < 0) return 1;
-  return Math.min(SEMANAS_DO_BLOCO, Math.floor(d / 7) + 1);
+  return Math.floor(d / 7) + 1;
+}
+
+/** O bloco já venceu? Mesma régua de `resolverFase`, que devolve `null` aqui. */
+export function blocoVencido(semana: number): boolean {
+  return semana > SEMANAS_DO_BLOCO;
 }
 
 export function faseAtual(semana: number): SemanaDoBloco {

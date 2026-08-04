@@ -490,5 +490,89 @@ conferir(
   preenche.prepare('SELECT papel FROM routine_exercises WHERE id = 1').get().papel === 'isolador'
 );
 
+// ── 8b. Rotina ARQUIVADA não é reescrita ──────────────────────────────────
+//
+// UNIDADE: a ROTINA. "Refazer meu treino" arquiva a anterior com `ativa = 0` e
+// nenhuma tela volta a lê-la — a do dia, o executor e a auditoria de volume
+// filtram por `r.ativa = 1`. Escrever papel, RIR e descanso ali é trabalho que
+// ninguém vê, num banco que depois de alguns meses tem meia dúzia de planos
+// velhos. O histórico daquelas rotinas mora em `set_logs`, que este passo não
+// toca de qualquer jeito.
+console.log('\n8b. Backfill ignora rotina arquivada');
+preenche.prepare(`INSERT INTO routines (nome, ativa, criado_em) VALUES ('Treino velho',0,0)`).run();
+const rotVelha = preenche.prepare(`SELECT id FROM routines WHERE nome = 'Treino velho'`).get().id;
+preenche
+  .prepare(`INSERT INTO routine_days (routine_id, nome, ordem) VALUES (?, 'A — antigo', 0)`)
+  .run(rotVelha);
+const diaVelho = preenche.prepare(`SELECT id FROM routine_days WHERE routine_id = ?`).get(rotVelha).id;
+preenche
+  .prepare(
+    `INSERT INTO routine_exercises (routine_day_id, exercise_id, ordem, series_alvo, reps_min, reps_max, descanso_seg)
+     VALUES (?,?,0,4,8,12,120)`
+  )
+  .run(diaVelho, idDe('Supino reto com barra'));
+// E uma linha NOVA sem papel na rotina ativa, para provar que o filtro não
+// desligou o backfill inteiro.
+preenche
+  .prepare(
+    `INSERT INTO routine_exercises (routine_day_id, exercise_id, ordem, series_alvo, reps_min, reps_max, descanso_seg)
+     VALUES (2,?,2,3,10,15,90)`
+  )
+  .run(idDe('Rosca direta com barra'));
+
+await normalizar(adaptar(preenche));
+
+const velha = preenche
+  .prepare(`SELECT papel, rir_min, descanso_seg FROM routine_exercises WHERE routine_day_id = ?`)
+  .get(diaVelho);
+conferir(
+  'a linha da rotina arquivada continua intocada',
+  velha.papel === null && velha.rir_min === null && velha.descanso_seg === 120,
+  `papel=${velha.papel} rir=${velha.rir_min} ${velha.descanso_seg}s`
+);
+const novaAtiva = preenche
+  .prepare(
+    `SELECT papel, rir_min FROM routine_exercises re JOIN exercises e ON e.id = re.exercise_id
+      WHERE e.nome = 'Rosca direta com barra'`
+  )
+  .get();
+conferir(
+  'e a linha nova da rotina ATIVA ganhou papel',
+  !!novaAtiva.papel && novaAtiva.rir_min !== null,
+  `papel=${novaAtiva.papel} rir=${novaAtiva.rir_min}`
+);
+
+// ── 8c. A flag da rodada anterior não fica órfã ───────────────────────────
+//
+// UNIDADE: a FLAG. `descansos_v3` não controla mais nada desde que a rodada
+// subiu para v4, e flag órfã com nome de flag viva manda a próxima pessoa
+// procurar quem a lê. É barato de limpar e caro de manter.
+console.log('\n8c. Flags de descanso');
+const flags = preenche.prepare(`SELECT key FROM app_flags`).all().map((f) => f.key);
+conferir('a marca da rodada atual existe', flags.includes('descansos_v4'), flags.join(', '));
+conferir('e a antiga foi embora', !flags.includes('descansos_v3'), flags.join(', '));
+
+// ── 8d. Catálogo novo não devolve o descanso que o usuário baixou ─────────
+//
+// UNIDADE: a LINHA da rotina, ao longo do TEMPO. `completarCatalogo` apagava a
+// marca de descanso toda vez que o catálogo crescia, e `corrigirDescansos` só
+// SOBE — então quem tinha baixado um intervalo de propósito o recebia de volta
+// no valor da regra, sem pedir. O DELETE nem tinha função: exercício novo entra
+// em `exercises`, não na rotina de ninguém.
+console.log('\n8d. Descanso baixado à mão sobrevive ao catálogo crescer');
+preenche.prepare(`UPDATE routine_exercises SET descanso_seg = 60 WHERE id = 1`).run();
+preenche.prepare(`DELETE FROM exercises WHERE nome = 'Rosca martelo'`).run();
+await normalizar(adaptar(preenche));
+conferir(
+  'o catálogo voltou a ficar completo',
+  preenche.prepare('SELECT COUNT(*) AS n FROM exercises').get().n === EXERCICIOS.length,
+  `${preenche.prepare('SELECT COUNT(*) AS n FROM exercises').get().n} de ${EXERCICIOS.length}`
+);
+conferir(
+  'e o descanso escolhido à mão continua 60 s',
+  preenche.prepare('SELECT descanso_seg FROM routine_exercises WHERE id = 1').get().descanso_seg === 60,
+  `${preenche.prepare('SELECT descanso_seg FROM routine_exercises WHERE id = 1').get().descanso_seg}s`
+);
+
 console.log(falhas ? `\n${falhas} falha(s)\n` : '\nTudo passou\n');
 process.exit(falhas ? 1 : 0);

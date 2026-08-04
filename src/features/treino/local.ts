@@ -97,8 +97,42 @@ export const LOCAIS: OpcaoLocal[] = [
   },
 ];
 
+/** A chave existe de verdade? Quem precisa ser ESTRITO pergunta antes. */
+export function localConhecido(local: string): boolean {
+  return LOCAIS.some((l) => l.chave === local);
+}
+
+/**
+ * Equipamentos do local — com fallback, mas **nunca mais em silêncio**.
+ *
+ * ── O que o silêncio custou ──────────────────────────────────────────────
+ *
+ * A grade de 1.350 perfis que sustenta os números de G1, G2 e G2.1 usava as
+ * chaves `academia_rede`, `academia_simples` e `casa_halteres`. **Nenhuma das
+ * três existe** — os nomes reais são `smart_fit`, `academia_basica` e
+ * `casa_equipada`. Como o fallback era mudo, as três caíam em `LOCAIS[0]` e a
+ * grade testava **academia 4× e casa_simples 1×** durante três fases inteiras:
+ * nunca halteres-sem-máquina, nunca academia-sem-cabo. Invariante declarado
+ * como 0 estava em 3 assim que as chaves certas entraram.
+ *
+ * O fallback FICA, e isso é decisão, não descuido: `local_treino` é
+ * `NOT NULL DEFAULT 'academia'` desde a v11, mas um banco restaurado ou uma
+ * linha escrita por versão futura pode trazer qualquer coisa — e travar a
+ * abertura do app por causa de uma string de perfil seria trocar um plano
+ * imperfeito por nenhum plano. O que muda é que ele grita: quem tiver console
+ * aberto vê, e o harness é ESTRITO (`localConhecido`), que é onde o defeito
+ * deveria ter sido pego.
+ */
 export function equipamentosDe(local: string): string[] {
-  return (LOCAIS.find((l) => l.chave === local) ?? LOCAIS[0]).equipamentos;
+  const achado = LOCAIS.find((l) => l.chave === local);
+  if (!achado) {
+    console.warn(
+      `[forja] local de treino desconhecido: "${local}". Caindo em "${LOCAIS[0].chave}" — ` +
+        `o plano vai sair como se fosse academia completa. Chaves válidas: ` +
+        `${LOCAIS.map((l) => l.chave).join(', ')}.`
+    );
+  }
+  return (achado ?? LOCAIS[0]).equipamentos;
 }
 
 /** Exercícios que este local não tem, apesar de a etiqueta de equipamento liberar. */

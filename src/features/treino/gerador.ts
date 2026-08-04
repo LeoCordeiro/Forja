@@ -1442,11 +1442,7 @@ export async function montarPlano(
   // grupo com UM exercício por dia repetindo o mesmo movimento em dois dias.
   //
   // Agora `diversificarNaSemana` consulta `padroesSaturados` do próprio dia:
-  // ela só escolhe o que a sessão também aceitaria. Com as duas escalas
-  // querendo a mesma coisa, a ordem deixa de ser um empate a decidir e a
-  // semana pode rodar depois — que é o único ponto em que a variedade
-  // sobrevive.
-  diversificarNaSemana(dias, disponiveis, p.preferenciaEquipamento, equipDe);
+  // ela só escolhe o que a sessão também aceitaria.
 
   // ── A ÚLTIMA palavra é da sessão, não da agenda ─────────────────────────
   //
@@ -1463,6 +1459,25 @@ export async function montarPlano(
   // dos supinos, e `consolidar` juntava os dois exercícios num só — o piso
   // precisava ser reafirmado quando ninguém mais fosse mexer.
   garantirPisoDoPequeno(dias, p, disponiveis, equipDe, avisos);
+
+  // ── E a SEMANA por ÚLTIMO, depois de quem REMOVE exercício ──────────────
+  //
+  // G2.1 já tinha movido esta chamada uma vez, para depois da cobertura da
+  // sessão. Não bastou, e o que sobrou tinha exatamente a mesma forma: com as
+  // chaves de local corretas apareceram 3 perfis em que o dia chegava aqui com
+  // TRÊS exercícios de glúteo e três padrões distintos — variedade de sobra —
+  // e `aplicarTetosDaSessao` logo em seguida aparava os dois últimos por
+  // estouro do teto fracionado, deixando os dois dias com o mesmo `ponte`. A
+  // diversificação olhava um plano que ainda não existia.
+  //
+  // Aqui ela é a última coisa que toca a composição, e por isso é a única que
+  // enxerga o plano entregue. Ela SÓ TROCA — nome por nome, com o mesmo número
+  // de séries — então não pode reabrir o teto do grupo que acabou de ser
+  // aparado. O que ela pode mexer é o volume INDIRETO de outro grupo (o
+  // substituto tem outros secundários), e é por isso que o invariante de teto
+  // por sessão continua rodando na grade dos dois lados: se essa troca abrisse
+  // um estouro, ele apareceria lá.
+  diversificarNaSemana(dias, disponiveis, p.preferenciaEquipamento, equipDe);
 
   // E a ordem também só pode ser decidida no fim: `porPapel` rodava na montagem
   // e `posicaoPara` insere sem reordenar, então composto pesado acrescentado
@@ -1582,7 +1597,17 @@ function cortarParaCaber(
     }
   }
 
-  while (d.exercicios.length > 3 && estimarDuracao(paraEstimativa(d)).totalSeg > limite) {
+  // O piso de 3 conta MUSCULAÇÃO, não linhas.
+  //
+  // `d.exercicios.length` inclui o cardio, então um dia com bicicleta parava o
+  // corte com DOIS exercícios de força em vez de três — o piso protegia a
+  // linha errada. Ficou visível ao consertar o corte do cardio logo acima: num
+  // perfil de 2 dias × 30 min com emagrecimento, o peito da semana inteira caiu
+  // de 8 séries para ZERO, porque a vaga que o piso reservava estava ocupada
+  // pelo aeróbio. O piso existe para o dia ainda ser um treino; cardio não
+  // ajuda nisso e também não atrapalha — ele simplesmente não é a conta.
+  const forcaNoDia = () => d.exercicios.filter((e) => e.grupo !== 'cardio').length;
+  while (forcaNoDia() > 3 && estimarDuracao(paraEstimativa(d)).totalSeg > limite) {
     // Quantos exercícios cada grupo ainda tem no dia. Tirar o ÚLTIMO de um
     // grupo é diferente de tirar o terceiro de outro: apaga o grupo da sessão.
     const quantosNoGrupo: Record<string, number> = {};
@@ -1605,6 +1630,22 @@ function cortarParaCaber(
     const escolher = (respeitarPiso: boolean, protegerUnico: boolean) => {
       for (let i = d.exercicios.length - 1; i > 0; i--) {
         const e = d.exercicios[i];
+        // ── O cardio nunca é candidato aqui, e o motivo é aritmético ───────
+        //
+        // `estimarDuracao` filtra cardio (`duracao.ts:84`). Remover a linha do
+        // cardio devolve **zero segundo** à estimativa que este laço está
+        // tentando baixar — o laço tira o cardio, não ganha nada e volta para
+        // tirar musculação na iteração seguinte. Pura perda.
+        //
+        // E era pior: o cardio é a ÚLTIMA linha do dia, então virava o primeiro
+        // candidato da varredura de trás para frente. Em `emagrecimento` isso
+        // contradizia a regra escrita vinte linhas acima ("ali o aeróbio fica e
+        // a musculação é que cede") — medido em **112 de 1.350 perfis da
+        // grade, todos emagrecimento**, e a remoção ainda saía anunciada como
+        // "cardio ficou abaixo do mínimo semanal", uma frase sobre grupo
+        // muscular aplicada ao aeróbio. Quem tira cardio é o bloco dedicado lá
+        // em cima, que sabe por que está tirando e diz.
+        if (e.grupo === 'cardio') continue;
         if (ehPesado(e.nome)) continue;
         if (protegerUnico && (quantosNoGrupo[e.grupo] ?? 0) <= 1) continue;
         if (respeitarPiso && (volumeAtual[e.grupo] ?? 0) - e.series < (pisos[e.grupo] ?? 0)) continue;
@@ -2143,7 +2184,40 @@ function diversificarNaSemana(
       preferencia
     );
     const cabe = (e: ExercicioCat) => cabeNoPadrao(outros, e, alvo.grupo, equip);
-    const novo = cands.find((e) => cabe(e) && !saturados.has(padraoDe(e.nome, alvo.grupo)));
+
+    // ── E a troca não pode reabrir o teto que a sessão acabou de fechar ────
+    //
+    // Esta função roda por ÚLTIMO, depois de `aplicarTetosDaSessao`. Ela troca
+    // nome por nome com o MESMO número de séries, então não mexe no volume
+    // direto — mas mexe no INDIRETO: o substituto tem outros `secundarios`, e
+    // meia série vezes quatro séries chega em outro grupo. Medido ao mover a
+    // chamada para o fim: **12 perfis da grade** passaram a estourar o teto
+    // fracionado da sessão (glúteo em 12,5 num teto de 12), e um cenário
+    // nomeado do qa junto. Rodar `aplicarTetosDaSessao` de novo depois seria
+    // devolver o problema para o outro lado — ele apararia justamente o
+    // exercício que a variedade acabou de trazer.
+    //
+    // Então a régua entra AQUI, na escolha: o candidato só serve se, com ele no
+    // lugar, nenhum grupo do dia passe a estourar o teto que já não estourava.
+    // "Passe a" é a palavra: grupo que já estava acima (a exceção declarada do
+    // teste, com um exercício e duas séries) não vira motivo para recusar uma
+    // troca que não piora nada.
+    const antes = fracionadoNaSessao(d);
+    const naoEstoura = (e: ExercicioCat) => {
+      const simulado = d.exercicios.map((x) =>
+        x === alvo ? novoExercicio(e, alvo.grupo, alvo.series) : x
+      );
+      const depois = fracionadoNaSessao({ ...d, exercicios: simulado });
+      for (const [g, v] of Object.entries(depois)) {
+        if (v <= tetoDaSessao(g)) continue;
+        if (v > (antes[g] ?? 0)) return false;
+      }
+      return true;
+    };
+
+    const novo = cands.find(
+      (e) => cabe(e) && !saturados.has(padraoDe(e.nome, alvo.grupo)) && naoEstoura(e)
+    );
     if (!novo) return false;
     d.exercicios[d.exercicios.indexOf(alvo)] = novoExercicio(novo, alvo.grupo, alvo.series);
     return true;
@@ -2596,6 +2670,21 @@ function preencherTempo(
           .filter((x) => x.grupo === e.grupo && padraoDe(x.nome, x.grupo) === k)
           .reduce((s, x) => s + x.series, 0);
       };
+      // ── A folga vai primeiro para quem a pessoa PEDIU ──────────────────
+      //
+      // A ordenação era só `a.series - b.series` (menos séries primeiro), e
+      // isso entrega a folga sistematicamente ao grupo PEQUENO: ele nasce com
+      // 2 séries e o grupo grande em foco com 3 ou 4. Passou despercebido
+      // enquanto o teto do pequeno era 14 — ele saturava cedo e devolvia a vaga.
+      // Com o teto em 18 (M1) ele passou a segurar a folga por mais tempo, e o
+      // preço apareceu medido: **96 quedas de volume direto em grupo marcado
+      // como FOCO** na grade de 5.400 perfis, contra 13 altas. Quem escolheu
+      // priorizar peito recebia mais bíceps.
+      //
+      // A ênfase ganhar o desempate não é regra nova: `alvoSemanal`,
+      // `priorizarNoDia`, `aparExcesso` e `ordenarPorPapelNoDia` já dão
+      // prioridade ao foco. Era esta função que não tinha sido avisada.
+      const emFocoAqui = pesosDaEnfase(p.focos).alvos;
       const cand = d.exercicios
         .filter((e) => e.grupo !== 'cardio' && e.series < 4)
         .filter((e) => (volume[e.grupo] ?? 0) + 1 <= tetoDe(e.grupo as Grupo, p))
@@ -2603,7 +2692,11 @@ function preencherTempo(
         // sozinho autorizava despejar a semana inteira num dia só.
         .filter((e) => (naSessao[e.grupo] ?? 0) + 1 <= tetoDaSessao(e.grupo))
         .filter((e) => seriesDoPadrao(e) + 1 <= tetoDoPadrao(e.grupo))
-        .sort((a, b) => a.series - b.series)[0];
+        .sort(
+          (a, b) =>
+            (emFocoAqui.has(b.grupo) ? 1 : 0) - (emFocoAqui.has(a.grupo) ? 1 : 0) ||
+            a.series - b.series
+        )[0];
 
       if (!cand) break;
       cand.series += 1;
