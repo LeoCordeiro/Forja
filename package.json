@@ -50,6 +50,7 @@
     "typecheck": "tsc --noEmit",
     "testar:migracao": "npx --yes tsx scripts/testar-migracao.mjs",
     "testar:gerador": "npx --yes tsx scripts/testar-gerador.mjs",
+    "semana": "npx --yes tsx scripts/semana-do-leonardo.mjs",
     "cenarios": "npx --yes tsx scripts/cenarios.mjs"
   },
   "private": true

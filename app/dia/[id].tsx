@@ -224,6 +224,18 @@ export default function DiaDeTreino() {
                           isso que a tela mostrava. */}
                       {ex.grupo_primario === 'cardio' ? (
                         `${nomeGrupo(ex.grupo_primario)} · ${Math.round((ex.reps_max ?? 0) / 60)} min · Zona 2`
+                      ) : ex.tipo_carga === 'tempo' ? (
+                        /* ── E a prancha é medida em SEGUNDOS ─────────────────
+                           A tela imprimia `Prancha 4 × 0-0 · 60s`: o caso
+                           especial existia só para cardio, e o fallback `?? 8`
+                           não pegava porque 0 não é null — zero é um número, e
+                           o app o mostrava com toda a confiança. Quatro séries
+                           de zero segundo. O par agora carrega a duração alvo
+                           por papel, e aqui ele ganha a unidade que sempre teve. */
+                        <>
+                          {nomeGrupo(ex.grupo_primario)} · {modularSeries(ex.series_alvo, fase)} ×{' '}
+                          {ex.reps_min}-{ex.reps_max}s · {ex.descanso_seg}s de pausa
+                        </>
                       ) : (
                         <>
                           {/* Alvo modulado pela fase — o mesmo número que a sessão vai abrir. */}

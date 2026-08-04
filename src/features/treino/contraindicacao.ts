@@ -1,5 +1,4 @@
 import { padraoDe, perfilDeResistencia } from './classificacao';
-import { cargaDe } from './papel';
 import { REGIOES_DOR } from '@/features/perfil/diagnostico';
 
 /**
@@ -67,8 +66,16 @@ export type CargaMecanica =
   | 'tronco_inclinado_livre'
   /** Flexão profunda de joelho unilateral (afundo, búlgaro, subida). */
   | 'joelho_profundo_unilateral'
-  /** Agachamento profundo com carga externa. */
-  | 'joelho_profundo_carregado'
+  /**
+   * Agachamento em que a AMPLITUDE é ditada pelo implemento, não escolhida.
+   *
+   * Substitui `joelho_profundo_carregado`, que perguntava "tem carga?" — e
+   * assim removia todo agachamento com peso, inclusive smith e goblet, e
+   * deixava passar o agachamento SEM PESO, a 4 × 8-15 com RIR 0-2, para uma
+   * pessoa de 88 kg em academia completa. Era o pior tipo de defeito: a
+   * exceção do peso corporal deixava passar exatamente o inútil.
+   */
+  | 'joelho_amplitude_nao_escolhida'
   /** Punho em extensão sustentando o corpo (flexão de braço). */
   | 'punho_em_extensao'
   /** Punho travado numa barra reta, sem liberdade de pronação. */
@@ -96,7 +103,12 @@ export function cargasDe(ex: ExercicioParaDor): CargaMecanica[] {
   const n = nome.toLowerCase();
   const padrao = padraoDe(nome, grupo);
   const perfil = perfilDeResistencia(nome, ex.equipamento);
-  const ajustavel = cargaDe(ex.tipo_carga) === 'ajustavel';
+  // `const ajustavel = cargaDe(ex.tipo_carga) === 'ajustavel'` SAIU daqui.
+  //
+  // Era o único uso de `cargaDe` neste arquivo e ele sustentava a pergunta
+  // errada — "tem carga?" — na regra do joelho. Deixar a variável viva depois de
+  // trocar o critério é como a próxima pessoa reintroduz o defeito: ela acha um
+  // atributo pronto com nome plausível e o usa.
   const out = new Set<CargaMecanica>();
 
   // ── Ombro ────────────────────────────────────────────────────────────
@@ -129,11 +141,27 @@ export function cargasDe(ex: ExercicioParaDor): CargaMecanica[] {
 
   // ── Joelho ───────────────────────────────────────────────────────────
   if (padrao === 'unilateral' || padrao === 'unilateral_em_pe') out.add('joelho_profundo_unilateral');
-  // Sem carga externa a amplitude é escolhida por quem agacha, não pela barra
-  // nas costas — e é o que sobra em casa. `Agachamento livre sem peso` e
-  // `Agachamento na cadeira` continuam disponíveis por causa desta linha.
-  if (grupo === 'quadriceps' && padrao === 'agachamento' && ajustavel)
-    out.add('joelho_profundo_carregado');
+  // ── O critério é CONTROLE DE AMPLITUDE, não presença de carga ──────────
+  //
+  // Este arquivo já sabia disso: é a razão escrita pela qual o leg press fica
+  // ("o apoio do pé é escolhido, e é por isso que ele fica: dá para fugir da
+  // amplitude que dói"). O atributo é que estava errado — ele perguntava
+  // `ajustavel`, ou seja "tem carga?".
+  //
+  // O que sobra bloqueado é o agachamento em pé com a barra no tronco e sem
+  // guia: ali a profundidade é comprometida pelo implemento (não dá para
+  // abandonar a repetição no meio sem gaiola ou observador) e o joelho viaja
+  // até onde a barra mandar. Smith (barra guiada, pés à frente, trava em
+  // qualquer altura), goblet (peso à frente, dá para largar), halteres, prensa
+  // e peso corporal ficam — em todos eles a pessoa escolhe onde parar.
+  //
+  // A revisão de 79 estudos sobre extensores do joelho na dor femoropatelar
+  // classifica a evidência como INCERTA: ela não sustenta proibir carga.
+  // Sustenta controlar amplitude, que é o que esta linha passou a fazer.
+  // https://pmc.ncbi.nlm.nih.gov/articles/PMC12377044/
+  const barraNoTronco = perfil === 'barra' && !/smith/i.test(nome);
+  if (grupo === 'quadriceps' && padrao === 'agachamento' && barraNoTronco)
+    out.add('joelho_amplitude_nao_escolhida');
 
   // ── Punho e cotovelo ─────────────────────────────────────────────────
   // Peso do corpo com a mão espalmada no chão. A nórdica também é "flexão" e
@@ -161,7 +189,7 @@ export function cargasDe(ex: ExercicioParaDor): CargaMecanica[] {
 export const CARGAS_POR_DOR: Record<string, CargaMecanica[]> = {
   ombro: ['overhead', 'abducao_rotacao_interna', 'ombro_extensao_profunda', 'mao_travada_empurrando'],
   lombar: ['axial_em_pe', 'hinge_carregado', 'tronco_inclinado_livre'],
-  joelho: ['joelho_profundo_unilateral', 'joelho_profundo_carregado'],
+  joelho: ['joelho_profundo_unilateral', 'joelho_amplitude_nao_escolhida'],
   punho: ['punho_em_extensao', 'punho_travado_em_barra'],
   // Mergulho entra duas vezes, e não é engano: ele é ombro em extensão E
   // extensão de cotovelo com o corpo inteiro pendurado no tríceps.
@@ -206,7 +234,7 @@ const COMO_SE_FALA: Record<CargaMecanica, string> = {
   hinge_carregado: 'dobra o quadril com peso livre na mão',
   tronco_inclinado_livre: 'sustenta o tronco inclinado com a barra na mão',
   joelho_profundo_unilateral: 'dobra muito um joelho de cada vez',
-  joelho_profundo_carregado: 'agacha fundo com carga',
+  joelho_amplitude_nao_escolhida: 'agacha com a barra nas costas, onde a profundidade não é sua escolha',
   punho_em_extensao: 'apoia o corpo no punho dobrado para trás',
   punho_travado_em_barra: 'trava o punho numa barra reta',
   cotovelo_alongado_carregado: 'carrega o cotovelo na posição mais alongada',

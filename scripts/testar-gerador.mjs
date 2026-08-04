@@ -266,12 +266,31 @@ function medirNivel2(plano, p, rot) {
       const emUso = new Set(ls.map((x) => x.e.nome));
       const temAlternativa = a.some((e) => {
         const pad = padraoDe(e.nome, g);
+        // ── E o TETO POR PADRÃO da sessão também decide o que é alternativa ──
+        //
+        // Faltava esta metade da régua. O gerador só aceita um segundo
+        // exercício do mesmo padrão quando ele traz um PERFIL DE RESISTÊNCIA
+        // que o primeiro não tem (`cabeNoPadrao`) — então um substituto que
+        // repete o perfil de OUTRA linha do mesmo padrão naquele dia não é
+        // alternativa: é uma troca que o projeto recusa por regra.
+        //
+        // Sem isto o gate acusava par irreparável: num dia com remada de halter
+        // E remada de máquina, ele contava `Remada máquina` como saída para a
+        // de halter — e a sessão a recusaria por ser o mesmo perfil da que já
+        // está ali. Duas máquinas do mesmo padrão são o movimento repetido que
+        // o teto existe para impedir.
+        const perfisDoPadraoNoDia = new Set(
+          doDia(nomesDeDia[0])
+            .filter((x) => x !== e && padraoDe(x.nome, g) === pad)
+            .map((x) => perfilResDe(x.nome))
+        );
         return noPerfil.some(
           (c) =>
             c.nome !== e.nome &&
             !emUso.has(c.nome) &&
             padraoDe(c.nome, g) === pad &&
             perfilResDe(c.nome) !== perfilResDe(e.nome) &&
+            !perfisDoPadraoNoDia.has(perfilResDe(c.nome)) &&
             cargaDoCatalogo(c.nome) === cargaDoCatalogo(e.nome)
         );
       });
@@ -531,10 +550,36 @@ const cincoDias = { ...base, dias: 5, diasDisponiveis: [1, 2, 3, 4, 5], focos: [
 const comTres = await montarPlano({ ...cincoDias, barraFixaReps: 3 }, fonte);
 const nomes3 = nomesDe(comTres);
 ok('com 3 barras: barra fixa fica fora', !nomes3.has('Barra fixa'));
+// ── A ponte deixou de furar a fila do catálogo inteiro ────────────────────
+//
+// Ela furava, e o preço estava na semana real: `Puxada assistida no graviton` e
+// `Barra fixa negativa` ocupavam as DUAS vagas de puxada vertical e a `Puxada
+// frontal na polia` nunca era alcançada — num plano de quem tinha marcado
+// preferência por máquina. Em 32 dias gerados, zero aparições da polia.
+//
+// E a justificativa do aviso não sobrevivia ao comparativo: ele prometia "carga
+// que dá para dosar", e a **ponte assistida tem carga MENOS dosável que a
+// puxada na polia**, onde o pino escolhe o quilo exato.
+//
+// O que a ponte tem de único é outra coisa, mais estreita e verdadeira: ela
+// exige sustentar o próprio peso, e é por isso que ela constrói a barra fixa
+// enquanto a puxada sentada não. Isso decide a vaga quando não há alternativa
+// de carga ajustável no mesmo padrão — e não decide quando há.
+//
+// Então a exigência mudou de lugar: o plano traz quem dosa melhor, e o AVISO
+// nomeia a ponte como o caminho de volta, em vez de prometer o que o plano não
+// entregou. Aviso que promete uma coisa e entrega outra é pior que aviso nenhum.
 ok(
-  'com 3 barras: entra a ponte, que ainda exige sustentar o peso',
-  nomes3.has('Puxada assistida no graviton') || nomes3.has('Barra fixa negativa'),
-  [...nomes3].filter((n) => /graviton|negativa/i.test(n)).join(', ') || 'nenhuma'
+  'com 3 barras: quem dosa melhor ocupa a vaga da barra fixa',
+  nomes3.has('Puxada frontal na polia') || nomes3.has('Puxada supinada'),
+  [...nomes3].filter((n) => /puxada/i.test(n)).join(', ') || 'nenhuma'
+);
+ok(
+  'com 3 barras: a ponte é NOMEADA no aviso como o caminho de volta',
+  comTres.avisos.some(
+    (a) => /Puxada assistida no graviton|Barra fixa negativa/.test(a) && /caminho/i.test(a)
+  ),
+  comTres.avisos.find((a) => /graviton|negativa/i.test(a))?.slice(0, 120) ?? 'sem aviso'
 );
 ok(
   'com 3 barras: costas continua tendo exercício',
@@ -1217,8 +1262,13 @@ console.log('\n16. Invariantes de sessão numa grade de perfis');
         // e na barra fixa negativa a fase concêntrica é assistida, então
         // "quantas repetições sobraram" não é pergunta respondível. Imprimir
         // RIR ali seria inventar prescrição para caber num campo.
+        // A régua é `porTempo`, e NÃO `repsMax > 0`: usar o zero como sentinela
+        // de "é por tempo" era a outra metade do defeito B10 — a prancha saía
+        // `4 x 0-0` na tela e este invariante lia esse mesmo zero como "não se
+        // aplica". Agora a prancha carrega SEGUNDOS no par, e quem responde se
+        // existe repetição em reserva é o tipo de carga.
         if (
-          e.repsMax > 0 &&
+          !e.porTempo &&
           !EXCENTRICOS_T.has(e.nome) &&
           (!Number.isFinite(e.rirMin) || !Number.isFinite(e.rirMax))
         ) {
@@ -1227,7 +1277,7 @@ console.log('\n16. Invariantes de sessão numa grade de perfis');
         }
         // (d) o tier dos 180 s existe e é alcançável: reps ≤ 8 só sai do
         // principal de estabilização alta, e ele descansa 3 min.
-        if (e.repsMax > 0 && e.repsMax <= 8 && e.descanso < 180) {
+        if (!e.porTempo && e.repsMax <= 8 && e.descanso < 180) {
           descansoErrado++;
           amostra.descanso ||= `${rot} | ${d.nome} | ${e.nome} ${e.repsMin}-${e.repsMax} @ ${e.descanso}s`;
         }
@@ -1303,7 +1353,24 @@ console.log('\n16. Invariantes de sessão numa grade de perfis');
       // Aí um desenvolvimento pesado é o mesmo músculo pelo mesmo padrão, feito
       // por último e cansado (A9). O limiar do código é mais apertado (60% do
       // alvo da sessão) e avaliado na seleção; aqui a régua é o resultado final.
-      const indiretoOmbro = (fracionadoDoDia(d).ombro ?? 0) - (dir.ombro ?? 0);
+      //
+      // ── A régua passou a ser o PADRÃO, e não o total do grupo ────────────
+      //
+      // Era `fracionado.ombro - direto.ombro >= 5`, e esse número parou de
+      // significar o que o parágrafo acima afirma no dia em que as remadas
+      // passaram a declarar `ombro` como secundário (elas treinam o deltoide
+      // POSTERIOR, e não declarar isso era um dos defeitos desta fase). O total
+      // do grupo passou a somar posterior junto de anterior, e três dias da
+      // grade apareceram "saturados" com 5,0 no grupo e apenas 3,0-3,5 caindo
+      // de fato no padrão de empurrar — abaixo até do limiar que o código usa.
+      //
+      // Contar por padrão é a MESMA conta que `indiretoPorPadrao` faz no
+      // gerador, e é a única que enxerga a composição em vez do agregado — que
+      // é literalmente o argumento escrito naquele docblock.
+      const indiretoOmbro = d.exercicios
+        .filter((e) => e.grupo !== 'ombro' && e.secundarios.includes('ombro'))
+        .filter((e) => padraoDe(e.nome, 'ombro') === 'desenvolvimento')
+        .reduce((soma, e) => soma + e.series * 0.5, 0);
       if (indiretoOmbro >= 5) {
         const press = forca.find(
           (e) => e.grupo === 'ombro' && ehPesado(e.nome) && padraoDe(e.nome, 'ombro') === 'desenvolvimento'
@@ -2427,7 +2494,7 @@ console.log('\n30. Contraindicação por dor derivada de padrão + atributo (F5a
       // "Remada alta na máquina" é um HIGH ROW (grupo costas): nome parecido,
       // movimento diferente. Bloquear por semelhança de nome seria a lista
       // nominal de volta, com outro disfarce.
-      'Remada alta na máquina': false,
+      'Remada em diagonal na máquina': false,
     },
     lombar: {
       Stiff: true,
@@ -2457,11 +2524,28 @@ console.log('\n30. Contraindicação por dor derivada de padrão + atributo (F5a
       'Subida no banco': true,
       'Subida no banco com halteres': true,
       'Agachamento livre': true,
-      'Agachamento goblet': true,
+      'Agachamento frontal': true,
       'Hack machine': true,
+      // ── O critério virou CONTROLE DE AMPLITUDE, e estas quatro linhas mudaram
+      //
+      // A régua antiga era "tem carga ajustável?", e com ela o goblet e o smith
+      // saíam junto com o agachamento livre enquanto o `Agachamento sem peso`
+      // — 4 × 8-15 a RIR 0-2 para 88 kg em academia completa — passava. A
+      // isenção do peso corporal deixava passar exatamente o inútil.
+      //
+      // No smith a barra é guiada, os pés ficam à frente e a trava pega em
+      // qualquer altura; no goblet o peso está na frente e dá para largar a
+      // qualquer momento. Nos dois a profundidade é escolha de quem agacha, que
+      // é a mesma razão pela qual o leg press sempre ficou.
+      //
+      // A revisão de 79 estudos sobre extensores do joelho na dor femoropatelar
+      // classifica a evidência como INCERTA — ela não sustenta proibir carga.
+      'Agachamento no smith': false,
+      'Agachamento goblet': false,
+      'Agachamento com halteres': false,
       // Agachamento sem carga externa é o que sobra em casa — e a amplitude
       // ali é escolhida pela pessoa, não pela barra nas costas.
-      'Agachamento livre sem peso': false,
+      'Agachamento sem peso': false,
       'Agachamento na cadeira': false,
       'Leg press': false,
       'Cadeira extensora': false,
@@ -2481,7 +2565,12 @@ console.log('\n30. Contraindicação por dor derivada de padrão + atributo (F5a
       'Tríceps testa': true,
       'Tríceps francês': true,
       'Rosca scott': true,
-      'Rosca concentrada': true,
+      // A concentrada SAIU: ela e a scott são opostas e moravam no mesmo padrão
+      // `apoiada`, que só descrevia "tem o braço apoiado". No scott o cotovelo
+      // chega à extensão máxima sob carga — a posição alongada, que é o que a
+      // regra do cotovelo protege. Na concentrada o pico é no ENCURTAMENTO, com
+      // o cotovelo fechado. Bloquear a segunda era herança do balde comum.
+      'Rosca concentrada': false,
       'Mergulho no paralelo': true,
       'Mergulho entre bancos': true,
       'Tríceps na polia com corda': false,
@@ -4682,6 +4771,352 @@ console.log('\n46. A quebra de âncora aparece nos dois lados da transição');
   // histórias opostas e nenhuma delas serve para o outro lado.
   ok('os dois lados têm rótulo próprio',
      /Esta curva termina aqui/.test(fonte) && /Esta curva começa do zero/.test(fonte));
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// FASE 6 — O CATÁLOGO
+//
+// As seções acima medem REGRA. Estas medem o DADO sobre o qual a regra opera,
+// e existem porque a suíte inteira passava com o levantamento terra ancorando
+// as costas, um agachamento sem peso a RIR 0-2 para 88 kg em academia completa
+// e uma remada alta de barra a 5-8 como principal de ombro. Invariante de
+// regra não pega dado errado: a regra "âncora abre o bloco" estava certa e
+// entregava um e1RM de terra rotulado "progresso de costas".
+// ══════════════════════════════════════════════════════════════════════════
+
+const PICO_NS = await carregarModulo('../src/features/treino/papel.ts');
+const CLASS_NS = await carregarModulo('../src/features/treino/classificacao.ts');
+
+/** Linha crua do seed por nome — o dado, não o que o gerador fez com ele. */
+const seedDe = (nome) => EXERCICIOS.find(([n]) => n === nome);
+const grupoDe = (nome) => seedDe(nome)?.[1];
+const secDe = (nome) => (seedDe(nome)?.[2] ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+
+// ── 47. Exercício × MOTOR PRIMÁRIO ────────────────────────────────────────
+//
+// UNIDADE: **exercício × motor primário**. Um exercício, um grupo, e o grupo é
+// o músculo que PRODUZ o movimento — não o que aparece na foto, não o que
+// segura a barra, não o que resiste isometricamente.
+//
+// O catálogo atribuía por associação. O terra é o caso visível: dorsal e
+// trapézio seguram a barra e não encurtam em ponto nenhum do movimento, e
+// mesmo assim ele era o exercício de COSTAS que abria o bloco em 100% dos
+// perfis, 2× por semana, 29% do volume de costas do usuário.
+console.log('\n47. Exercício × motor primário: o grupo é quem produz o movimento');
+{
+  ok('Levantamento terra é posterior, não costas',
+     grupoDe('Levantamento terra') === 'posterior',
+     `hoje: ${grupoDe('Levantamento terra')}`);
+  ok('e costas/trapézio continuam declarados — como SECUNDÁRIOS isométricos',
+     secDe('Levantamento terra').includes('costas') &&
+     secDe('Levantamento terra').includes('trapezio') &&
+     secDe('Levantamento terra').includes('gluteo'),
+     secDe('Levantamento terra').join(','));
+  ok('o padrão do terra é dobradiça de quadril, não lombar',
+     padraoDe('Levantamento terra', 'posterior') === 'quadril',
+     padraoDe('Levantamento terra', 'posterior'));
+
+  // `costas:lombar` contava como padrão de costas coberto: o dia PARECIA ter 4
+  // padrões e tinha 3, e por isso `diversificarNaSemana` não via que a semana
+  // estava sem remada.
+  const cobertoPorHinge = PAPEL_NS.padroesCobertos?.('costas', [
+    { nome: 'Levantamento terra romeno', grupo: 'posterior', secundarios: ['costas'] },
+  ]);
+  ok('hinge com `costas` secundário NÃO cobre padrão de costas',
+     !!cobertoPorHinge && !cobertoPorHinge.has('lombar') && cobertoPorHinge.size === 0,
+     cobertoPorHinge ? [...cobertoPorHinge].join(',') || '(nenhum)' : 'sem função');
+
+  // O mesmo defeito, o mesmo movimento, dois grupos.
+  ok('Hiperextensão lombar e inversa no MESMO grupo',
+     grupoDe('Hiperextensão lombar') === grupoDe('Hiperextensão inversa'),
+     `${grupoDe('Hiperextensão lombar')} vs ${grupoDe('Hiperextensão inversa')}`);
+  ok('Subida no banco com e sem halteres no MESMO grupo',
+     grupoDe('Subida no banco') === grupoDe('Subida no banco com halteres'),
+     `${grupoDe('Subida no banco')} vs ${grupoDe('Subida no banco com halteres')}`);
+  // Duas linhas idênticas na tela — e o defeito era o TEXTO, não a linha. Em
+  // português de academia a distinção já existia no nome (elevação pélvica é do
+  // chão, hip thrust é com as costas no banco); as instruções da primeira é que
+  // descreviam um hip thrust. Apagar a linha custaria o histórico de quem já
+  // registrou série nela; corrigir o texto devolve dois exercícios distintos.
+  ok('elevação pélvica e hip thrust não descrevem o mesmo movimento',
+     !seedDe('Elevação pélvica com barra') ||
+     (/CH[ÃA]O/i.test(seedDe('Elevação pélvica com barra')[6]) &&
+      !/banco/i.test(seedDe('Elevação pélvica com barra')[6])),
+     seedDe('Elevação pélvica com barra')?.[6]?.slice(0, 60));
+
+  // Nome que a biomecânica desmente.
+  ok('não existem dois "remada alta" com movimentos sem relação',
+     !seedDe('Remada alta na máquina'),
+     seedDe('Remada alta na máquina') ? 'ainda existe' : '');
+  ok('"agachamento livre sem peso" não se contradiz no nome',
+     !seedDe('Agachamento livre sem peso'));
+}
+
+// ── 48. `grupos_secundarios` × sinergista de verdade ──────────────────────
+//
+// UNIDADE: **exercício × grupo secundário**. Cada secundário vale 0,5 série no
+// volume fracionado, e é essa conta que alimenta o aviso. Com trapézio ausente
+// das remadas e posterior presente nos agachamentos, o app dizia ao usuário
+// para não treinar mais tríceps, ombro, posterior e glúteo — os QUATRO mais
+// magros da semana dele.
+console.log('\n48. Secundário é sinergista, não vizinho de foto');
+{
+  const GRUPOS_VALIDOS = new Set([
+    'peito', 'costas', 'ombro', 'biceps', 'triceps', 'quadriceps', 'posterior',
+    'gluteo', 'panturrilha', 'abdomen', 'antebraco', 'trapezio',
+  ]);
+  const invalidos = EXERCICIOS
+    .filter(([, g]) => g !== 'cardio')
+    .flatMap(([n, , sec]) => sec.split(',').map((s) => s.trim()).filter(Boolean)
+      .filter((s) => !GRUPOS_VALIDOS.has(s)).map((s) => `${n}:${s}`));
+  ok('nenhum secundário fora do vocabulário de músculo', invalidos.length === 0, invalidos.join(', '));
+
+  const remadas = EXERCICIOS.filter(([n, g]) => g === 'costas' && /remada/i.test(n)).map(([n]) => n);
+  const semTrapezio = remadas.filter((n) => !secDe(n).includes('trapezio'));
+  ok('toda remada de costas lista trapézio', semTrapezio.length === 0, semTrapezio.join(', '));
+
+  const desenvolvimentos = EXERCICIOS
+    .filter(([n, g]) => g === 'ombro' && padraoDe(n, 'ombro') === 'desenvolvimento').map(([n]) => n);
+  const devSemTrap = desenvolvimentos.filter((n) => !secDe(n).includes('trapezio'));
+  ok('todo desenvolvimento lista trapézio', devSemTrap.length === 0, devSemTrap.join(', '));
+
+  // O isquiotibial é biarticular: encurta no quadril e alonga no joelho no
+  // agachamento — fica quase isométrico. Co-contrator, não sinergista.
+  const comPosterior = EXERCICIOS
+    .filter(([n, g]) => g === 'quadriceps' &&
+      ['agachamento', 'prensa', 'unilateral'].includes(padraoDe(n, 'quadriceps')))
+    .filter(([n]) => secDe(n).includes('posterior')).map(([n]) => n);
+  ok('agachamento e prensa não listam posterior', comPosterior.length === 0, comPosterior.join(', '));
+
+  ok('hip thrust não lista quadríceps (ângulo de joelho fixo)',
+     !secDe('Hip thrust com barra').includes('quadriceps'), secDe('Hip thrust com barra').join(','));
+  ok('encolhimento: sai ombro, entra antebraço',
+     !secDe('Encolhimento').includes('ombro') && secDe('Encolhimento').includes('antebraco'),
+     secDe('Encolhimento').join(','));
+  ok('cadeira adutora não lista glúteo (é antagonista)',
+     !secDe('Cadeira adutora').includes('gluteo'), secDe('Cadeira adutora').join(','));
+  ok('escalador não lista "cardio" como músculo',
+     !secDe('Escalador').includes('cardio'), secDe('Escalador').join(','));
+  ok('pulldown com braço estendido tem secundários',
+     secDe('Pulldown com braço estendido').length > 0, secDe('Pulldown com braço estendido').join(','));
+  ok('cadeira flexora lista panturrilha (o gastrocnêmio flexiona o joelho)',
+     secDe('Cadeira flexora').includes('panturrilha'), secDe('Cadeira flexora').join(','));
+  ok('flexão de braço lista ombro',
+     secDe('Flexão de braço').includes('ombro'), secDe('Flexão de braço').join(','));
+}
+
+// ── 49. Padrão × PICO DE TENSÃO ───────────────────────────────────────────
+//
+// UNIDADE: **(grupo, padrão) × pico de tensão**. O pico decide a ORDEM (o
+// alongado abre) e o piso de A7 ("ao menos um monoarticular alongado"). Quatro
+// rótulos estavam invertidos, e o card chegou a se contradizer na mesma dobra:
+// "braço atrás do tronco, com o bíceps alongado" ao lado de instruções que
+// dizem "braços abertos na horizontal".
+console.log('\n49. Padrão × pico de tensão: alongado é onde o músculo estica');
+{
+  const pico = (n, g) => PICO_NS.picoDeTensao?.(n, g);
+  // Kinoshita 2023 (n=14, 12 semanas, intra-sujeito): gastrocnêmio lateral
+  // +12,4% em pé contra +1,7% sentado. Joelho fletido ENCURTA o gastrocnêmio.
+  ok('panturrilha sentada = encurtado (joelho fletido encurta o gastrocnêmio)',
+     pico('Panturrilha sentado', 'panturrilha') === 'encurtado',
+     pico('Panturrilha sentado', 'panturrilha'));
+  ok('panturrilha em pé = alongado',
+     pico('Panturrilha em pé', 'panturrilha') === 'alongado',
+     pico('Panturrilha em pé', 'panturrilha'));
+
+  // A regex mirava a rosca inclinada, que o catálogo não tem. Sobrou o
+  // exercício com o ombro flexionado — a cabeça longa ENCURTADA.
+  ok('rosca na polia alta = encurtado (ombro flexionado)',
+     pico('Rosca na polia alta', 'biceps') === 'encurtado',
+     pico('Rosca na polia alta', 'biceps'));
+  // Scott e concentrada são OPOSTOS e caíam no mesmo padrão `apoiada`.
+  ok('scott = alongado; concentrada = encurtado',
+     pico('Rosca scott', 'biceps') === 'alongado' &&
+     pico('Rosca concentrada', 'biceps') === 'encurtado',
+     `scott=${pico('Rosca scott', 'biceps')} concentrada=${pico('Rosca concentrada', 'biceps')}`);
+  ok('e eles não dividem o mesmo padrão',
+     padraoDe('Rosca scott', 'biceps') !== padraoDe('Rosca concentrada', 'biceps'));
+
+  // O silêncio é o defeito: padrão sem entrada cai em 'meio' sem ninguém
+  // decidir, e foi assim que a panturrilha em pé virou finalizador de 60 s.
+  const GRUPOS_COM_PICO = ['peito', 'costas', 'ombro', 'biceps', 'triceps',
+    'quadriceps', 'posterior', 'gluteo', 'panturrilha'];
+  const semRotulo = [];
+  for (const [n, g] of EXERCICIOS) {
+    if (!GRUPOS_COM_PICO.includes(g)) continue;
+    if (!PICO_NS.picoDeclarado?.(g, padraoDe(n, g))) semRotulo.push(`${g}:${padraoDe(n, g)}`);
+  }
+  ok('todo (grupo, padrão) do catálogo tem pico DECLARADO',
+     semRotulo.length === 0, [...new Set(semRotulo)].join(', '));
+}
+
+// ── 50. Exercício × PERFIL DE EQUIPAMENTO ─────────────────────────────────
+//
+// UNIDADE: **exercício × perfil de equipamento**, medida contra a preferência
+// declarada. Ele marcou "prefiro máquina" e recebeu graviton, halter e barra:
+// em 32 dias gerados, ZERO aparições de voador, remada máquina, puxada frontal
+// na polia, puxada supinada, desenvolvimento máquina, desenvolvimento na polia,
+// supino na polia, tríceps na polia com barra, rosca scott na polia, cadeira
+// flexora e panturrilha no leg press.
+console.log('\n50. Exercício × perfil de equipamento: máquina pedida, máquina entregue');
+{
+  const LEO = {
+    dias: 4, diasDisponiveis: [1, 2, 4, 5], experiencia: 'intermediario',
+    objetivo: 'recomposicao', local: 'academia', minutosPorDia: Array(7).fill(90),
+    preferenciaEquipamento: 'maquina', dores: ['joelho'], focos: [], barraFixaReps: 1,
+  };
+  // As 8 variantes de perfil da auditoria — 32 dias, a mesma amostra em que as
+  // onze máquinas deram zero.
+  const VARIANTES = [
+    LEO,
+    { ...LEO, focos: ['superior'] },
+    { ...LEO, focos: ['inferior'] },
+    { ...LEO, focos: ['peito'] },
+    { ...LEO, focos: ['costas'] },
+    { ...LEO, dores: [] },
+    { ...LEO, barraFixaReps: 10 },
+    { ...LEO, experiencia: 'avancado' },
+  ];
+  const vistos = new Set();
+  for (const p of VARIANTES) {
+    const pl = await montarPlano(p, fonte);
+    for (const d of pl.dias) for (const e of d.exercicios) vistos.add(e.nome);
+  }
+
+  const NUNCA_VIRAM = [
+    'Voador (peck deck)', 'Remada máquina', 'Puxada frontal na polia', 'Puxada supinada',
+    'Desenvolvimento máquina', 'Desenvolvimento na polia', 'Supino na polia',
+    'Tríceps na polia com barra', 'Rosca scott na polia', 'Cadeira flexora',
+    'Panturrilha no leg press',
+  ];
+  // ── A régua exata: nenhuma delas perde a vaga para PESO LIVRE ──────────
+  //
+  // "Todas as onze aparecem" seria régua errada, e não por ser difícil: duas
+  // máquinas do mesmo padrão têm o mesmo perfil de resistência, e `cabeNoPadrao`
+  // recusa a segunda de propósito — supino de máquina seguido de supino de
+  // smith é o movimento repetido que o teto por padrão existe para impedir.
+  // `Puxada supinada` nunca cabe junto de `Puxada frontal na polia`, e isso é
+  // o projeto funcionando.
+  //
+  // A pergunta que importa é a do usuário: **o padrão dele foi para uma máquina
+  // ou para uma barra?** Máquina cedendo para cabo é substituição legítima
+  // (trajetória guiada, carga em pino); máquina cedendo para halter, barra ou
+  // peso corporal é a preferência sendo ignorada, que é o achado B6.
+  const perdeuParaPesoLivre = NUNCA_VIRAM.filter((n) => {
+    if (vistos.has(n)) return false;
+    const c = CAT_FORCA.find((x) => x.nome === n);
+    if (!c) return true;
+    const pad = padraoDe(n, c.grupo_primario);
+    const ocupantes = [...vistos]
+      .map((v) => CAT_FORCA.find((x) => x.nome === v))
+      .filter((x) => x && x.grupo_primario === c.grupo_primario && padraoDe(x.nome, c.grupo_primario) === pad);
+    // O padrão inteiro não apareceu em 32 dias: aí a máquina não perdeu para
+    // ninguém — ela sumiu, que é o defeito na forma mais crua.
+    if (!ocupantes.length) return true;
+    return !ocupantes.some((x) => x.equipamento === 'maquina' || x.equipamento === 'cabo');
+  });
+  ok('nenhuma máquina do catálogo perde o padrão dela para peso livre em 32 dias',
+     perdeuParaPesoLivre.length === 0, perdeuParaPesoLivre.join(', '));
+
+  // O nomeado da auditoria: a puxada na polia é o exercício que a ponte de
+  // força relativa cobria, e ele não aparecia NENHUMA vez.
+  ok('a puxada frontal na polia aparece', vistos.has('Puxada frontal na polia'));
+
+  // A ordenação é a causa (b): `cabo` e `maquina` empatavam, então a ordem do
+  // catálogo decidia entre polia e aparelho.
+  // A comparação é DENTRO do mesmo tier de fadiga, que é onde a preferência
+  // decide. Entre tiers quem manda é a fadiga: composto pesado abre a sessão
+  // mesmo de quem prefere máquina, e isso não é negociável por gosto.
+  const isoladoresDePeito = CAT_FORCA.filter(
+    (e) => e.grupo_primario === 'peito' && !ehComposto(e.nome)
+  );
+  const ord = GERADOR.ordenarParaEscolha?.(isoladoresDePeito, 'maquina') ?? [];
+  const iMaq = ord.findIndex((e) => e.equipamento === 'maquina');
+  const iCabo = ord.findIndex((e) => e.equipamento === 'cabo');
+  const iLivre = ord.findIndex((e) => ['barra', 'halter', 'livre'].includes(e.equipamento));
+  ok('com preferência máquina, máquina vem antes de cabo, e cabo antes de peso livre',
+     ord.length > 0 && iMaq === 0 && iCabo > iMaq && iLivre > iCabo,
+     ord.length ? `maquina@${iMaq} cabo@${iCabo} livre@${iLivre}` : 'sem função exportada');
+}
+
+// ── 51. A SEMANA DELE, lida de novo ───────────────────────────────────────
+//
+// UNIDADE: **linha do plano dele**. É o gate que faltou nas cinco fases
+// anteriores: a suíte inteira passava e ele achou dois erros em dez segundos
+// olhando a tela. Aqui a régua é a prescrição entregue, não o invariante.
+console.log('\n51. A semana do Leonardo (perfil real, prescrição entregue)');
+{
+  const LEO = {
+    dias: 4, diasDisponiveis: [1, 2, 4, 5], experiencia: 'intermediario',
+    objetivo: 'recomposicao', local: 'academia', minutosPorDia: Array(7).fill(90),
+    preferenciaEquipamento: 'maquina', dores: ['joelho'], focos: [], barraFixaReps: 1,
+  };
+  const plano = await montarPlano(LEO, fonte);
+  const linhas = plano.dias.flatMap((d) => d.exercicios.map((e) => ({ d, e })));
+  const forca = linhas.filter((x) => x.e.grupo !== 'cardio');
+
+  // B1 — o e1RM que o app mostra como "progresso de costas" era um e1RM de terra.
+  const ancorasCostas = forca.filter((x) => x.e.grupo === 'costas' && x.e.ancora).map((x) => x.e.nome);
+  ok('o terra não ancora o bloco de costas em dia nenhum',
+     !ancorasCostas.includes('Levantamento terra'), ancorasCostas.join(', '));
+
+  // B2 — 4×8-15 a RIR 0-2 sem peso, para 88 kg, em academia completa.
+  ok('nenhum agachamento sem peso em academia completa',
+     !forca.some((x) => x.e.nome === 'Agachamento livre sem peso'));
+  const ajustavelNoPadrao = (grupo, padrao) =>
+    CAT_FORCA.some((c) => c.grupo_primario === grupo && padraoDe(c.nome, grupo) === padrao &&
+      c.tipo_carga === 'peso_reps' && !bloqueado(acharEx(c.nome) ?? c, 'joelho'));
+  const corporalEvitavel = forca.filter((x) =>
+    x.e.tipoCarga === 'peso_corporal' && ajustavelNoPadrao(x.e.grupo, padraoDe(x.e.nome, x.e.grupo)));
+  ok('nenhum peso corporal onde existia carga ajustável no mesmo padrão',
+     corporalEvitavel.length === 0, corporalEvitavel.map((x) => x.e.nome).join(', '));
+
+  // B10 — `Prancha 4 × 0-0 · 60s` na tela.
+  const zerados = forca.filter((x) => x.e.repsMin === 0 && x.e.repsMax === 0);
+  ok('nenhum exercício com faixa 0-0', zerados.length === 0, zerados.map((x) => x.e.nome).join(', '));
+
+  // B5 — 2 séries de 5-8 com 180 s e aproximações, para quem prefere máquina.
+  ok('remada alta nunca recebe papel principal',
+     !forca.some((x) => /^Remada alta/.test(x.e.nome) && x.e.papel === 'principal'));
+  ok('a semana tem ao menos um desenvolvimento',
+     forca.some((x) => x.e.grupo === 'ombro' && padraoDe(x.e.nome, 'ombro') === 'desenvolvimento'),
+     forca.filter((x) => x.e.grupo === 'ombro').map((x) => x.e.nome).join(', '));
+
+  // B7 — 14 séries de empurrar horizontal contra 3 de remar.
+  const remarPorDia = plano.dias
+    .filter((d) => d.exercicios.some((e) => e.grupo === 'costas'))
+    .map((d) => ({ dia: d.nome, n: d.exercicios.filter((e) => e.grupo === 'costas' &&
+      padraoDe(e.nome, 'costas') === 'horizontal').length }));
+  ok('todo dia com costas tem ao menos uma remada',
+     remarPorDia.every((x) => x.n >= 1),
+     remarPorDia.filter((x) => !x.n).map((x) => x.dia).join(', '));
+  const empurrar = forca.filter((x) => x.e.grupo === 'peito' &&
+    ['horizontal', 'inclinado'].includes(padraoDe(x.e.nome, 'peito')))
+    .reduce((s, x) => s + x.e.series, 0);
+  const remar = forca.filter((x) => x.e.grupo === 'costas' &&
+    padraoDe(x.e.nome, 'costas') === 'horizontal').reduce((s, x) => s + x.e.series, 0);
+  ok('empurrar horizontal : remar não passa de 2:1',
+     remar > 0 && empurrar / remar <= 2, `${empurrar}:${remar}`);
+
+  // B8 — com dor no joelho, o posterior abre por dobradiça de quadril, não por
+  // flexão de joelho (e muito menos pelo excêntrico mais agressivo do catálogo,
+  // para quem voltou de 2 meses parado).
+  const ancoraPosterior = forca.find((x) => x.e.grupo === 'posterior' && x.e.ancora);
+  ok('com dor no joelho o posterior abre por hinge',
+     !!ancoraPosterior && padraoDe(ancoraPosterior.e.nome, 'posterior') === 'quadril',
+     ancoraPosterior ? `${ancoraPosterior.e.nome} (${padraoDe(ancoraPosterior.e.nome, 'posterior')})` : 'sem posterior');
+
+  // A.2 + B9 — nenhum grupo grande fica sem série direta.
+  const diretas = {};
+  for (const x of forca) diretas[x.e.grupo] = (diretas[x.e.grupo] ?? 0) + x.e.series;
+  const GRANDES = ['peito', 'costas', 'ombro', 'quadriceps', 'posterior', 'gluteo'];
+  const zerados2 = GRANDES.filter((g) => !(diretas[g] > 0));
+  ok('nenhum grupo grande com 0 séries diretas na semana', zerados2.length === 0, zerados2.join(', '));
+  ok('trapézio recebe série direta ou fracionada de remada, não só do terra',
+     forca.some((x) => x.e.grupo === 'trapezio') ||
+     forca.some((x) => x.e.secundarios.includes('trapezio') && x.e.grupo === 'costas' &&
+       padraoDe(x.e.nome, 'costas') === 'horizontal'),
+     'nenhuma remada carrega trapézio');
 }
 
 console.log(falhas ? `\n${falhas} falha(s)\n` : '\nTudo passou\n');

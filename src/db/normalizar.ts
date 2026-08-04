@@ -3,6 +3,7 @@ import { COMPOSTOS, COMPOSTOS_PESADOS } from '@/features/treino/classificacao';
 import {
   descansoCorreto,
   papeisDaRotina,
+  prescricaoDaRotina,
   prescricaoDe,
   type Papel,
 } from '@/features/treino/papel';
@@ -23,6 +24,7 @@ export async function normalizar(db: SQLite.SQLiteDatabase) {
   await renomearExercicios(db);
   await completarCatalogo(db);
   await sincronizarDicas(db);
+  await reclassificarCatalogo(db);
   await classificarExercicios(db);
   // ORDEM: o papel entra ANTES do descanso, e isso é a fase inteira.
   // Sem papel, `corrigirDescansos` cai no fallback que trata todo
@@ -52,6 +54,15 @@ export async function normalizar(db: SQLite.SQLiteDatabase) {
  */
 const RENOMEADOS: [de: string, para: string][] = [
   ['Crossover na polia baixa', 'Supino na polia'],
+  // "Livre" em português de academia significa BARRA livre, e este é o
+  // `Bodyweight_Squat` — com um `Agachamento livre` de barra no catálogo. O
+  // nome dizia as duas coisas ao mesmo tempo.
+  ['Agachamento livre sem peso', 'Agachamento sem peso'],
+  // `Leverage_High_Row`: puxada em diagonal com o peito apoiado, exercício de
+  // costas. Em PT-BR "remada alta" é *upright row*, e existe outra entrada com
+  // esse nome exato em `ombro` — dois nomes quase iguais, movimentos sem
+  // relação. A classificação sempre esteve certa; o nome é que não.
+  ['Remada alta na máquina', 'Remada em diagonal na máquina'],
 ];
 
 async function renomearExercicios(db: SQLite.SQLiteDatabase) {
@@ -166,6 +177,184 @@ async function sincronizarDicas(db: SQLite.SQLiteDatabase) {
   for (const [nome, de, para] of DICAS_CORRIGIDAS) {
     await db.runAsync('UPDATE exercises SET dica = ? WHERE nome = ? AND dica = ?', [para, nome, de]);
   }
+}
+
+/**
+ * Grupo e sinergistas corrigidos no banco de quem já usa o app.
+ *
+ * ── E quem já está com o banco estragado? ────────────────────────────────
+ *
+ * Ele é atendido AQUI, e a resposta precisa de número. `Levantamento terra`
+ * deixou de ser `costas` e virou `posterior`; `Hiperextensão lombar` foi junto;
+ * `Subida no banco` saiu de `gluteo` para `quadriceps`. Toda série que essas
+ * três linhas já registraram muda de grupo — e é isso que este passo escreve no
+ * log, contado em `set_logs`, para que a mudança apareça em vez de acontecer
+ * por baixo. O gráfico que dizia "progresso de costas" com uma curva de terra
+ * passa a dizer "posterior", que é o que ele sempre mediu.
+ *
+ * ── O que NÃO é tocado ───────────────────────────────────────────────────
+ *
+ * `set_logs`, `personal_records`, `point_events` e `workout_sessions` não
+ * aparecem em nenhuma cláusula de escrita. Nenhuma série é apagada, nenhum
+ * recorde recalculado, nenhum XP mexido: o que muda é a ETIQUETA do exercício,
+ * e as telas que agrupam por músculo passam a somar no balde certo. A carga
+ * levantada continua exatamente a mesma linha do mesmo dia.
+ *
+ * ── Por que uma lista declarada, e não "sincronize tudo do seed" ─────────
+ *
+ * Mesma razão de `DICAS_CORRIGIDAS`: reescrever em massa o que o app mostra é o
+ * tipo de passo que passa despercebido. Aqui entram só os nomes que esta fase
+ * reclassificou, com o `WHERE` casando o valor VELHO — idempotente por
+ * construção, e inerte em banco que já nasceu certo.
+ */
+const GRUPOS_CORRIGIDOS: [nome: string, de: string, para: string][] = [
+  ['Levantamento terra', 'costas', 'posterior'],
+  ['Hiperextensão lombar', 'costas', 'posterior'],
+  ['Subida no banco', 'gluteo', 'quadriceps'],
+];
+
+/** Sinergistas que o catálogo atribuía por associação. `null` = veio do seed. */
+const SECUNDARIOS_CORRIGIDOS: [nome: string, de: string][] = [
+  ['Levantamento terra', 'posterior,gluteo,trapezio'],
+  ['Remada curvada com barra', 'biceps,posterior'],
+  ['Remada unilateral com halter', 'biceps'],
+  ['Remada baixa na polia', 'biceps'],
+  ['Remada cavalinho', 'biceps,trapezio'],
+  ['Remada máquina', 'biceps'],
+  ['Remada em diagonal na máquina', 'ombro'],
+  ['Remada invertida', 'biceps,ombro'],
+  ['Pulldown com braço estendido', ''],
+  ['Hiperextensão lombar', 'posterior,gluteo'],
+  ['Desenvolvimento militar', 'triceps'],
+  ['Desenvolvimento com halteres', 'triceps'],
+  ['Desenvolvimento Arnold', 'triceps'],
+  ['Desenvolvimento máquina', 'triceps'],
+  ['Desenvolvimento na polia', 'triceps'],
+  ['Flexão pique', 'triceps'],
+  ['Encolhimento', 'ombro'],
+  ['Agachamento livre', 'gluteo,posterior,abdomen'],
+  ['Leg press', 'gluteo,posterior'],
+  ['Afundo com halteres', 'gluteo,posterior'],
+  ['Agachamento sem peso', 'gluteo,posterior'],
+  ['Hip thrust com barra', 'posterior,quadriceps'],
+  ['Cadeira adutora', 'gluteo'],
+  ['Cadeira flexora', ''],
+  ['Escalador', 'cardio'],
+  ['Flexão de braço', 'triceps,abdomen'],
+  ['Subida no banco', 'quadriceps'],
+];
+
+/** Instrução que descrevia OUTRO exercício. */
+const INSTRUCOES_CORRIGIDAS: [nome: string, trechoVelho: string][] = [
+  // Descrevia um hip thrust (escápulas no banco) e criava duas linhas idênticas
+  // com nomes diferentes. Em PT-BR a distinção já estava no nome: elevação
+  // pélvica é do chão, hip thrust é com as costas no banco.
+  ['Elevação pélvica com barra', 'Costas apoiadas no banco'],
+];
+
+async function reclassificarCatalogo(db: SQLite.SQLiteDatabase) {
+  let seriesAfetadas = 0;
+  const mudou: string[] = [];
+
+  for (const [nome, de, para] of GRUPOS_CORRIGIDOS) {
+    const alvo = await db.getFirstAsync<{ id: number }>(
+      'SELECT id FROM exercises WHERE nome = ? AND grupo_primario = ?',
+      [nome, de]
+    );
+    if (!alvo) continue;
+    // Contado ANTES do UPDATE: é a resposta a "quantas séries do histórico
+    // mudam de grupo", e ela precisa ser dita, não deduzida.
+    const n = await db.getFirstAsync<{ n: number }>(
+      'SELECT COUNT(*) AS n FROM set_logs WHERE exercise_id = ?',
+      [alvo.id]
+    );
+    seriesAfetadas += n?.n ?? 0;
+    await db.runAsync('UPDATE exercises SET grupo_primario = ? WHERE id = ?', [para, alvo.id]);
+    mudou.push(`${nome}: ${de} → ${para}${n?.n ? ` (${n.n} série(s))` : ''}`);
+  }
+
+  const doSeed = (nome: string) => EXERCICIOS.find(([n]) => n === nome);
+  for (const [nome, de] of SECUNDARIOS_CORRIGIDOS) {
+    const linha = doSeed(nome);
+    if (!linha) continue;
+    await db.runAsync(
+      'UPDATE exercises SET grupos_secundarios = ? WHERE nome = ? AND grupos_secundarios = ?',
+      [linha[2], nome, de]
+    );
+  }
+
+  for (const [nome, trechoVelho] of INSTRUCOES_CORRIGIDAS) {
+    const linha = doSeed(nome);
+    if (!linha) continue;
+    await db.runAsync(
+      `UPDATE exercises SET instrucoes = ?
+        WHERE nome = ? AND instrucoes LIKE '%' || ? || '%'`,
+      [linha[6], nome, trechoVelho]
+    );
+  }
+
+  if (!mudou.length) return;
+
+  // ── E o papel GRAVADO daquele dia virou o retrato de uma sessão que não
+  //    existe mais ────────────────────────────────────────────────────────
+  //
+  // `papel` é cache desde G2.1, e quem muda a composição do dia é obrigado a
+  // invalidá-lo — é a mesma regra que `recalcularPapeisDoDia` aplica ao
+  // acrescentar, remover e reordenar. Trocar o GRUPO de um exercício muda a
+  // composição tanto quanto remover um: o levantamento terra estava gravado
+  // como principal de COSTAS, e a partir de agora ele abre o bloco de posterior
+  // — enquanto a puxada, que passou a abrir as costas, continuaria gravada como
+  // complementar. Sem este passo o plano de quem já usa o app mostraria dois
+  // grupos com papel trocado, e o descanso junto.
+  //
+  // Só a rotina ATIVA, só os dias que contêm um dos reclassificados, e o
+  // descanso só SOBE — as três regras que este arquivo já segue.
+  const diasAfetados = await db.getAllAsync<{ dia: number }>(
+    `SELECT DISTINCT re.routine_day_id AS dia
+       FROM routine_exercises re
+       JOIN exercises e ON e.id = re.exercise_id
+       JOIN routine_days rd ON rd.id = re.routine_day_id
+       JOIN routines r ON r.id = rd.routine_id
+      WHERE r.ativa = 1 AND e.nome IN (${GRUPOS_CORRIGIDOS.map(() => '?').join(',')})`,
+    GRUPOS_CORRIGIDOS.map(([n]) => n)
+  );
+
+  for (const { dia } of diasAfetados) {
+    const linhas = await db.getAllAsync<{
+      id: number;
+      nome: string;
+      grupo: string;
+      equipamento: string | null;
+      tipoCarga: string | null;
+      descanso_seg: number;
+    }>(
+      `SELECT re.id, e.nome, e.grupo_primario AS grupo, e.equipamento,
+              e.tipo_carga AS tipoCarga, re.descanso_seg
+         FROM routine_exercises re
+         JOIN exercises e ON e.id = re.exercise_id
+        WHERE re.routine_day_id = ?
+        ORDER BY re.ordem, re.id`,
+      [dia]
+    );
+    const pres = prescricaoDaRotina(linhas);
+    for (const l of linhas) {
+      const p = pres.get(l.id);
+      if (!p) continue;
+      await db.runAsync(
+        `UPDATE routine_exercises
+            SET papel = ?, rir_min = ?, rir_max = ?, descanso_seg = MAX(descanso_seg, ?)
+          WHERE id = ?`,
+        [p.papel, p.rir?.[0] ?? null, p.rir?.[1] ?? null, p.descansoSeg, l.id]
+      );
+    }
+  }
+
+  console.log(
+    `[forja] catálogo reclassificado pelo motor primário — ${mudou.join('; ')}. ` +
+      `${seriesAfetadas} série(s) do seu histórico passam a contar no grupo certo e ` +
+      `${diasAfetados.length} dia(s) da sua rotina tiveram papel e descanso refeitos; ` +
+      `nenhuma carga, recorde ou XP foi alterado.`
+  );
 }
 
 async function classificarExercicios(db: SQLite.SQLiteDatabase) {

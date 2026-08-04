@@ -145,8 +145,14 @@ const PICO_POR_PADRAO: Record<string, PicoDeTensao> = {
   'triceps:polia': 'meio',
   'triceps:coice': 'encurtado',
   'triceps:composto': 'meio',
-  'biceps:alongada': 'alongado',
-  'biceps:apoiada': 'encurtado',
+  // No banco scott o cotovelo chega à extensão máxima sob carga — é a posição
+  // ALONGADA, e é por isso que a dica do catálogo avisa para não estender 100%.
+  // Na concentrada o pico é no encurtamento. Os dois moravam em `apoiada`.
+  'biceps:apoiada': 'alongado',
+  'biceps:concentrada': 'encurtado',
+  // Ombro flexionado (rosca na polia alta) encurta a cabeça longa. Este slot
+  // estava rotulado 'alongado' e era o MENOS alongado do catálogo.
+  'biceps:ombro_flexionado': 'encurtado',
   'biceps:livre': 'meio',
   'biceps:pegada': 'meio',
   'peito:abertura': 'alongado',
@@ -157,27 +163,63 @@ const PICO_POR_PADRAO: Record<string, PicoDeTensao> = {
   'ombro:posterior': 'encurtado',
   'ombro:desenvolvimento': 'meio',
   'ombro:frontal': 'meio',
+  // Remada alta: abdução com rotação interna, pico no meio da elevação.
+  'ombro:alta': 'meio',
   'costas:vertical': 'alongado',
   'costas:extensao_ombro': 'alongado',
   'costas:horizontal': 'meio',
+  'costas:lombar': 'meio',
   'posterior:quadril': 'alongado',
   'posterior:joelho_sentado': 'alongado',
   'posterior:joelho_excentrico': 'alongado',
   'posterior:joelho_deitado': 'meio',
+  'posterior:joelho_unilateral': 'meio',
+  // Hiperextensão (lombar e inversa): o quadril desce em flexão e o
+  // isquiotibial recebe a carga alongado, igual ao hinge.
+  'posterior:lombar': 'alongado',
   'quadriceps:agachamento': 'alongado',
   'quadriceps:prensa': 'alongado',
   'quadriceps:unilateral': 'alongado',
   'quadriceps:extensao_joelho': 'encurtado',
+  // Adutor: a carga máxima é com as pernas abertas, ou seja alongado.
+  'quadriceps:aducao': 'alongado',
   'gluteo:hinge': 'alongado',
   'gluteo:unilateral_em_pe': 'alongado',
   'gluteo:ponte': 'encurtado',
   'gluteo:extensao_unilateral': 'encurtado',
   'gluteo:abducao': 'encurtado',
-  'panturrilha:joelho_fletido': 'alongado',
+  // ── Panturrilha: os dois rótulos estavam invertidos ────────────────────
+  //
+  // Joelho FLETIDO (versão sentada) ENCURTA o gastrocnêmio — ele cruza o
+  // joelho. Era rotulado 'alongado', e o efeito estava na tela: a sentada saía
+  // antes dizendo "posição alongada" e a EM PÉ, que estava ausente da tabela e
+  // caía no 'meio' mudo, saía como finalizador, por último, com 60 s.
+  //
+  // Kinoshita 2023 (n=14, 12 semanas, intra-sujeito): gastrocnêmio lateral
+  // +12,4% em pé contra +1,7% sentado (p=0,001); medial +9,2% contra +0,6%;
+  // sóleo sem diferença. Estudo único, destreinados — direcionalmente claro,
+  // não robusto. https://pmc.ncbi.nlm.nih.gov/articles/PMC10753835/
+  // O mérito real da sentada continua de pé e é outro: ela isola o SÓLEO.
+  'panturrilha:joelho_fletido': 'encurtado',
+  'panturrilha:joelho_estendido': 'alongado',
 };
 
 export function picoDeTensao(nome: string, grupo: string): PicoDeTensao {
   return PICO_POR_PADRAO[`${grupo}:${padraoDe(nome, grupo)}`] ?? 'meio';
+}
+
+/**
+ * O pico deste (grupo, padrão) foi DECIDIDO por alguém, ou caiu no 'meio' mudo?
+ *
+ * Existe para o harness. O buraco que ela expõe é o defeito B3 inteiro:
+ * `panturrilha:joelho_estendido` simplesmente não estava na tabela, `picoDeTensao`
+ * devolvia 'meio' sem que ninguém tivesse decidido isso, e a panturrilha em pé
+ * — a variação com melhor evidência — virou finalizador de 60 s por omissão.
+ * Ausência que se comporta como resposta é a forma mais cara de erro que este
+ * projeto já pagou.
+ */
+export function picoDeclarado(grupo: string, padrao: string): boolean {
+  return `${grupo}:${padrao}` in PICO_POR_PADRAO;
 }
 
 // ── Papel na sessão ───────────────────────────────────────────────────────
@@ -210,6 +252,31 @@ interface ItemDaSessao {
  *   ÚLTIMA posição. Refalo 2023: quando a falha for usada, que seja em
  *   exercício de baixa complexidade e baixa fadiga associada.
  */
+/**
+ * Multiarticular de carga ajustável que mesmo assim NÃO pode ser principal.
+ *
+ * ── O que a remada alta recebia ao ser principal ─────────────────────────
+ *
+ * `principal_alta`: 5-8 repetições, RIR 2-3, 180 s de descanso e duas séries de
+ * aproximação. Numa sessão com o resto do orçamento gasto, isso saía como
+ * **2 séries de trabalho custando 12 minutos** — e era o único trabalho de
+ * ombro da pessoa, num plano em que ela marcou preferência por máquina.
+ *
+ * O argumento aqui é a PRESCRIÇÃO, não o risco. A evidência sobre impacto
+ * subacromial na remada alta é dividida e não foi aberta nesta sessão, então
+ * ela não sustenta um bloqueio — tanto que o exercício continua no catálogo e
+ * continua entrando como complementar. O que não se sustenta é a zona pesada:
+ * a remada alta é abdução com rotação interna sob carga, com braço de alavanca
+ * curto e amplitude pequena, e a faixa de 5-8 na falha próxima não é onde ela
+ * rende nem onde alguém aprende a fazê-la. Ela vira complementar (8-12,
+ * RIR 1-2, 150 s), que é a prescrição que o movimento comporta.
+ *
+ * Não é lista de exceção crescendo sem critério: a régua para entrar aqui é
+ * "multiarticular pela contagem, mas sem carga absoluta nem amplitude para
+ * sustentar 5-8 repetições pesadas". Hoje só a remada alta atende.
+ */
+const NUNCA_PRINCIPAL = new Set(['Remada alta']);
+
 export function papeisDaSessao<T extends ItemDaSessao>(exs: T[]): Map<T, Papel> {
   const out = new Map<T, Papel>();
   const forca = exs.filter((e) => e.grupo !== 'cardio');
@@ -235,7 +302,7 @@ export function papeisDaSessao<T extends ItemDaSessao>(exs: T[]): Map<T, Papel> 
     // fixa abre o bloco de costas e continua sendo o que é — um exercício em
     // que a zona não é escolhível. Ela é ÂNCORA, não principal.
     const ajustavel = e.tipoCarga === undefined || cargaDe(e.tipoCarga) === 'ajustavel';
-    if (ehAncora && multi && ajustavel) {
+    if (ehAncora && multi && ajustavel && !NUNCA_PRINCIPAL.has(e.nome)) {
       out.set(e, 'principal');
       continue;
     }
@@ -436,6 +503,37 @@ const PRESCRICAO: Record<string, Prescricao> = {
   isolador: { reps: [10, 15], rir: [0, 2], rirReadaptacao: [2, 2], descansoSeg: 90 },
   finalizador: { reps: [12, 20], rir: [0, 1], rirReadaptacao: null, descansoSeg: 60 },
 };
+
+/**
+ * Série medida em TEMPO: quantos segundos, por papel.
+ *
+ * ── O buraco que isto tapa ───────────────────────────────────────────────
+ *
+ * `repsMin: porTempo ? 0 : reps[0]` — os dois extremos zerados — e a tela
+ * imprimindo **`Prancha 4 × 0-0 · 60s`**. O fallback `?? 8` do render não
+ * pegava, porque 0 não é `null`: zero é um número, e o app o mostrava com toda
+ * a confiança. Quatro séries de zero segundo.
+ *
+ * O estimador de duração pagava junto: para `tipo_carga = 'tempo'` ele usa as
+ * repetições COMO segundos, então a prancha custava 0 s de trabalho na conta do
+ * dia — e o app achava que sobrava tempo que não sobrava.
+ *
+ * Os números seguem a mesma lógica das faixas de repetição: quanto mais perto
+ * da falha o papel prescreve, mais curta a série. O isolador é a faixa canônica
+ * da prancha (30-60 s); o finalizador encurta porque vai perto da falha; e o
+ * complementar/principal (uma prancha que abre o bloco de abdômen) fica mais
+ * longo porque é onde a pessoa está descansada.
+ */
+const DURACAO_POR_PAPEL: Record<Papel, [number, number]> = {
+  principal: [40, 75],
+  complementar: [40, 75],
+  isolador: [30, 60],
+  finalizador: [20, 45],
+};
+
+export function duracaoDe(papel: Papel): [number, number] {
+  return DURACAO_POR_PAPEL[papel] ?? DURACAO_POR_PAPEL.isolador;
+}
 
 /**
  * Grupos em que a faixa não sai do papel — e por quê.
@@ -660,9 +758,37 @@ export const LABEL_PAPEL: Record<Papel, string> = {
  * não faz. Por isso a cobertura só conta quando o grupo está declarado como
  * secundário no catálogo.
  */
+/**
+ * Padrões que NÃO são trabalho daquele grupo — só o rótulo do balde onde a
+ * consulta caiu.
+ *
+ * ── O caso que obrigou a tabela ──────────────────────────────────────────
+ *
+ * O levantamento terra declara `costas` como secundário, e é verdade: o dorsal
+ * e o trapézio seguram a barra. Só que segurar não é PUXAR. Com `costas:lombar`
+ * contando como padrão de costas coberto, o dia PARECIA ter quatro padrões e
+ * tinha três, e a troca da semana não via que a semana estava sem remada — a
+ * consequência medida foram 14 séries de empurrar horizontal contra 3 de remar.
+ *
+ * `quadriceps:hinge` é o mesmo caso pela outra ponta: o terra estende o joelho
+ * contra carga (por isso `quadriceps` é secundário dele), e sem um balde
+ * próprio ele caía em 'agachamento' e passava a cobrir o agachamento do dia.
+ *
+ * A tabela é curta de propósito. Ela não é "corrija o default de todo grupo" —
+ * essa correção ampla foi medida e move a composição de outros dias em cascata
+ * (um perfil de 6 dias passou a receber desenvolvimento militar num dia de
+ * empurrar, quebrando o invariante (b) de A9). Aqui entram só os pares em que o
+ * balde é reconhecidamente um NÃO-movimento daquele grupo.
+ */
+const NAO_COBRE: Record<string, string[]> = {
+  costas: ['lombar'],
+  quadriceps: ['hinge'],
+};
+
 /** Que padrões de `grupo` um exercício de outro grupo cobre ao treiná-lo junto. */
 function padroesQueCobre(nome: string, grupo: string): string[] {
   const p = padraoDe(nome, grupo);
+  if (NAO_COBRE[grupo]?.includes(p)) return [];
   // Empurrar treina o deltoide ANTERIOR, e ele é o mesmo músculo da elevação
   // frontal. Sem esta linha, "restrito aos padrões não cobertos" liberava
   // justamente a elevação frontal num dia com 19 séries de supino.

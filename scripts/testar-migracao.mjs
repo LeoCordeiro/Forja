@@ -163,7 +163,7 @@ const nomes = antigo.prepare('SELECT nome FROM exercises').all().map((e) => e.no
 conferir('sem duplicata', new Set(nomes).size === nomes.length,
   `${nomes.length - new Set(nomes).size} repetido(s)`);
 conferir('trouxe os de perna sem equipamento',
-  ['Ponte de glúteo', 'Agachamento livre sem peso', 'Flexão nórdica'].every((n) => nomes.includes(n)));
+  ['Ponte de glúteo', 'Agachamento sem peso', 'Flexão nórdica'].every((n) => nomes.includes(n)));
 
 // Cardio fica de fora: não tem descanso entre séries para definir.
 const semDescanso = antigo
@@ -572,6 +572,183 @@ conferir(
   'e o descanso escolhido à mão continua 60 s',
   preenche.prepare('SELECT descanso_seg FROM routine_exercises WHERE id = 1').get().descanso_seg === 60,
   `${preenche.prepare('SELECT descanso_seg FROM routine_exercises WHERE id = 1').get().descanso_seg}s`
+);
+
+// ── 9. Catálogo reclassificado pelo motor primário ────────────────────────
+//
+// UNIDADE: **exercício × grupo primário**, no banco de QUEM JÁ USA.
+//
+// `Levantamento terra` deixou de ser `costas` e virou `posterior` — ele ancorava
+// o bloco de costas em 100% dos perfis e o e1RM que o app mostrava como
+// "progresso de costas" era um e1RM de terra. `seedIfEmpty` só roda em banco
+// vazio e `completarCatalogo` só INSERE o que falta, então sem um passo próprio
+// a correção não chegaria a aparelho nenhum: o iPhone continuaria com o terra
+// em `costas` para sempre.
+//
+// A pergunta que o projeto obriga a responder é "e quem já está com o banco
+// estragado?", e ela tem duas metades. A primeira é que a reclassificação
+// ACONTECE. A segunda, mais importante, é que ela não pode custar histórico:
+// `set_logs`, `personal_records` e `point_events` têm que sair intactos, porque
+// o histórico é o produto. É isso que este bloco mede.
+console.log('\n9. Reclassificação de grupo primário em banco já usado');
+const velho = new DatabaseSync(':memory:');
+velho.exec(DDL);
+await aplicarMigracoes(adaptar(velho));
+
+// O catálogo COMO ELE ERA antes desta fase — é este o banco do usuário.
+const insV = velho.prepare(
+  `INSERT INTO exercises (nome, grupo_primario, grupos_secundarios, equipamento, tipo_carga, instrucoes)
+   VALUES (?,?,?,?,?,?)`
+);
+const CATALOGO_ANTIGO = [
+  ['Levantamento terra', 'costas', 'posterior,gluteo,trapezio', 'barra', 'peso_reps', 'Pés na largura do quadril.'],
+  ['Hiperextensão lombar', 'costas', 'posterior,gluteo', 'maquina', 'peso_corporal', 'Quadril apoiado na almofada.'],
+  ['Subida no banco', 'gluteo', 'quadriceps', 'livre', 'peso_corporal', 'Pé inteiro apoiado num banco.'],
+  ['Remada baixa na polia', 'costas', 'biceps', 'maquina', 'peso_reps', 'Sentado, joelhos flexionados.'],
+  ['Agachamento livre', 'quadriceps', 'gluteo,posterior,abdomen', 'barra', 'peso_reps', 'Barra no trapézio.'],
+  ['Agachamento livre sem peso', 'quadriceps', 'gluteo,posterior', 'livre', 'peso_corporal', 'Pés na largura do ombro.'],
+  ['Remada alta na máquina', 'costas', 'ombro', 'maquina', 'peso_reps', 'Puxada em diagonal.'],
+  ['Elevação pélvica com barra', 'gluteo', 'posterior', 'barra', 'peso_reps', 'Costas apoiadas no banco, barra sobre o quadril.'],
+  ['Puxada frontal na polia', 'costas', 'biceps', 'maquina', 'peso_reps', 'Pegada aberta.'],
+];
+for (const l of CATALOGO_ANTIGO) insV.run(...l);
+const idV = (n) => velho.prepare('SELECT id FROM exercises WHERE nome = ?').get(n)?.id;
+
+// Rotina ativa com o terra abrindo o bloco de costas — o retrato que a
+// reclassificação precisa desfazer.
+velho.prepare(`INSERT INTO routines (nome, ativa, criado_em) VALUES ('Meu treino',1,0)`).run();
+velho.prepare(`INSERT INTO routine_days (routine_id, nome, ordem) VALUES (1,'B — Costas',0)`).run();
+const insReV = velho.prepare(
+  `INSERT INTO routine_exercises (routine_day_id, exercise_id, ordem, series_alvo, reps_min, reps_max, descanso_seg, papel)
+   VALUES (?,?,?,?,?,?,?,?)`
+);
+insReV.run(1, idV('Levantamento terra'), 0, 3, 5, 8, 180, 'principal');
+insReV.run(1, idV('Puxada frontal na polia'), 1, 3, 8, 12, 150, 'complementar');
+insReV.run(1, idV('Remada baixa na polia'), 2, 3, 8, 12, 150, 'complementar');
+
+// Histórico REAL no exercício que vai trocar de grupo.
+velho.prepare(`INSERT INTO workout_sessions (nome, iniciado_em) VALUES ('B — Costas', 0)`).run();
+const insSet = velho.prepare(
+  `INSERT INTO set_logs (session_id, exercise_id, serie_index, peso_kg, reps, registrado_em)
+   VALUES (1,?,?,?,?,0)`
+);
+insSet.run(idV('Levantamento terra'), 1, 100, 5);
+insSet.run(idV('Levantamento terra'), 2, 100, 5);
+insSet.run(idV('Levantamento terra'), 3, 105, 4);
+insSet.run(idV('Subida no banco'), 1, 0, 12);
+velho
+  .prepare(`INSERT INTO personal_records (exercise_id, tipo, valor, atingido_em) VALUES (?,'carga_max',105,0)`)
+  .run(idV('Levantamento terra'));
+velho.prepare(`INSERT INTO point_events (pontos, origem, criado_em) VALUES (50,'treino',0)`).run();
+
+const idTerraAntes = idV('Levantamento terra');
+const seriesAntes = velho.prepare('SELECT COUNT(*) AS n FROM set_logs').get().n;
+const prAntes = velho.prepare('SELECT valor FROM personal_records WHERE exercise_id = ?').get(idTerraAntes).valor;
+const xpAntes = velho.prepare('SELECT SUM(pontos) AS s FROM point_events').get().s;
+
+conferir(
+  'antes: o terra é um exercício de COSTAS',
+  velho.prepare(`SELECT grupo_primario AS g FROM exercises WHERE nome = 'Levantamento terra'`).get().g === 'costas'
+);
+
+await normalizar(adaptar(velho));
+
+const grupoDe = (n) =>
+  velho.prepare('SELECT grupo_primario AS g FROM exercises WHERE nome = ?').get(n)?.g;
+const secDeDb = (n) =>
+  velho.prepare('SELECT grupos_secundarios AS s FROM exercises WHERE nome = ?').get(n)?.s;
+
+conferir('o terra virou posterior', grupoDe('Levantamento terra') === 'posterior', grupoDe('Levantamento terra'));
+conferir(
+  'a hiperextensão lombar acompanha a inversa, em posterior',
+  grupoDe('Hiperextensão lombar') === 'posterior',
+  grupoDe('Hiperextensão lombar')
+);
+conferir(
+  'a subida no banco acompanha a gêmea com halteres, em quadríceps',
+  grupoDe('Subida no banco') === 'quadriceps',
+  grupoDe('Subida no banco')
+);
+
+// ── E o histórico? ────────────────────────────────────────────────────────
+conferir('é a MESMA linha (id preservado)', idV('Levantamento terra') === idTerraAntes);
+conferir(
+  'nenhuma série do histórico foi apagada nem criada',
+  velho.prepare('SELECT COUNT(*) AS n FROM set_logs').get().n === seriesAntes,
+  `${velho.prepare('SELECT COUNT(*) AS n FROM set_logs').get().n} de ${seriesAntes}`
+);
+conferir(
+  'as 3 séries do terra continuam apontando para ele',
+  velho.prepare('SELECT COUNT(*) AS n FROM set_logs WHERE exercise_id = ?').get(idTerraAntes).n === 3
+);
+conferir(
+  'a carga registrada não mudou',
+  velho.prepare('SELECT MAX(peso_kg) AS p FROM set_logs WHERE exercise_id = ?').get(idTerraAntes).p === 105
+);
+conferir(
+  'o recorde pessoal não foi recalculado',
+  velho.prepare('SELECT valor FROM personal_records WHERE exercise_id = ?').get(idTerraAntes).valor === prAntes
+);
+conferir(
+  'o XP continua sendo a soma do ledger',
+  velho.prepare('SELECT SUM(pontos) AS s FROM point_events').get().s === xpAntes
+);
+
+// ── Secundários, nomes e instruções ───────────────────────────────────────
+conferir(
+  'a remada passou a declarar trapézio',
+  (secDeDb('Remada baixa na polia') ?? '').includes('trapezio'),
+  secDeDb('Remada baixa na polia')
+);
+conferir(
+  'o agachamento deixou de declarar posterior',
+  !(secDeDb('Agachamento livre') ?? '').split(',').includes('posterior'),
+  secDeDb('Agachamento livre')
+);
+conferir(
+  'o nome contraditório do agachamento sem peso foi corrigido no lugar',
+  !idV('Agachamento livre sem peso') && !!idV('Agachamento sem peso')
+);
+conferir(
+  'a "remada alta" que era high row ganhou nome de high row',
+  !idV('Remada alta na máquina') && !!idV('Remada em diagonal na máquina')
+);
+conferir(
+  'a elevação pélvica parou de descrever um hip thrust',
+  !/Costas apoiadas no banco/.test(
+    velho.prepare(`SELECT instrucoes AS i FROM exercises WHERE nome = 'Elevação pélvica com barra'`).get().i
+  )
+);
+
+// ── O papel GRAVADO era o retrato de uma sessão que não existe mais ───────
+//
+// O terra estava gravado como principal de COSTAS. Com ele em `posterior`, quem
+// abre o bloco de costas passou a ser a puxada — e sem invalidar o cache o
+// plano mostraria dois grupos com papel trocado e o descanso junto.
+const papelDe = (n) =>
+  velho
+    .prepare(
+      `SELECT re.papel AS p FROM routine_exercises re
+         JOIN exercises e ON e.id = re.exercise_id WHERE e.nome = ?`
+    )
+    .get(n)?.p;
+conferir(
+  'a puxada virou o principal do bloco de costas',
+  papelDe('Puxada frontal na polia') === 'principal',
+  papelDe('Puxada frontal na polia')
+);
+conferir(
+  'e o terra continua principal — agora do bloco de posterior',
+  papelDe('Levantamento terra') === 'principal',
+  papelDe('Levantamento terra')
+);
+
+// ── Idempotência ──────────────────────────────────────────────────────────
+await normalizar(adaptar(velho));
+conferir('rodar de novo não muda nada', grupoDe('Levantamento terra') === 'posterior');
+conferir(
+  'e continua sem mexer no histórico',
+  velho.prepare('SELECT COUNT(*) AS n FROM set_logs').get().n === seriesAntes
 );
 
 console.log(falhas ? `\n${falhas} falha(s)\n` : '\nTudo passou\n');

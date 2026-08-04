@@ -147,10 +147,12 @@ const PADRAO: Record<string, { rotulo: Substantivo; acao: string }> = {
     rotulo: { nome: 'extensão de ombro', genero: 'f' },
     acao: 'Estender o ombro com o cotovelo travado, sem o bíceps',
   },
-  'costas:lombar': {
-    rotulo: { nome: 'cadeia posterior', genero: 'f' },
-    acao: 'Carregar a cadeia posterior de pé: força, não largura',
-  },
+  // `costas:lombar` MORREU aqui, e o texto dele era a confissão do defeito:
+  // "carregar a cadeia posterior de pé: força, não largura" descrevia um
+  // exercício de costas admitindo, na tela, que não treinava costas. Nenhum
+  // exercício de `costas` cai mais nesse padrão — o terra e a hiperextensão
+  // lombar são `posterior` agora, e o rótulo vive em `posterior:lombar`. Entrada
+  // morta com a moldura antiga é a que a próxima pessoa acha primeiro.
   'ombro:desenvolvimento': {
     rotulo: { nome: 'desenvolvimento', genero: 'm' },
     acao: 'Empurrar acima da cabeça, onde o deltoide anterior carrega',
@@ -191,13 +193,27 @@ const PADRAO: Record<string, { rotulo: Substantivo; acao: string }> = {
     rotulo: { nome: 'rosca em pé', genero: 'f' },
     acao: 'Flexionar o cotovelo com o braço ao lado, onde carrega mais',
   },
-  'biceps:alongada': {
-    rotulo: { nome: 'rosca com o braço atrás', genero: 'f' },
-    acao: 'Flexionar com o braço atrás do tronco, com o bíceps alongado',
+  // ── O card se contradizia na mesma dobra ────────────────────────────────
+  //
+  // Ele dizia "braço atrás do tronco, com o bíceps alongado" enquanto as
+  // instruções do MESMO card diziam "braços abertos na horizontal". A regex de
+  // `padraoDe` mirava a rosca inclinada, que este catálogo não tem, e sobrou a
+  // rosca na polia alta — ombro flexionado, cabeça longa ENCURTADA. O slot
+  // "alongado" estava preenchido pelo menos alongado do catálogo.
+  'biceps:ombro_flexionado': {
+    rotulo: { nome: 'rosca com o braço à frente', genero: 'f' },
+    acao: 'Flexionar com o ombro à frente, fechando o bíceps encurtado',
   },
+  // Scott e concentrada moravam juntas em `apoiada` e são OPOSTAS: no banco
+  // scott o cotovelo chega à extensão máxima sob carga; na concentrada o pico é
+  // no encurtamento.
   'biceps:apoiada': {
-    rotulo: { nome: 'rosca apoiada', genero: 'f' },
-    acao: 'Flexionar com o braço apoiado, que impede roubar com o tronco',
+    rotulo: { nome: 'rosca no banco scott', genero: 'f' },
+    acao: 'Flexionar do cotovelo esticado, onde o bíceps carrega alongado',
+  },
+  'biceps:concentrada': {
+    rotulo: { nome: 'rosca concentrada', genero: 'f' },
+    acao: 'Flexionar com o cotovelo fixo, apertando no pico da contração',
   },
   'biceps:pegada': {
     rotulo: { nome: 'rosca de pegada neutra', genero: 'f' },
@@ -267,9 +283,14 @@ const PADRAO: Record<string, { rotulo: Substantivo; acao: string }> = {
     rotulo: { nome: 'extensão unilateral', genero: 'f' },
     acao: 'Estender o quadril isolado, sem a coxa dividir a carga',
   },
+  // O joelho estendido é a posição ALONGADA do gastrocnêmio, e o fletido é a
+  // encurtada — os dois rótulos de pico estavam invertidos, e o efeito na tela
+  // era a sentada saindo primeiro "por estar alongada" e a em pé virando
+  // finalizador de 60 s. Kinoshita 2023 (n=14, 12 semanas, intra-sujeito):
+  // gastrocnêmio lateral +12,4% em pé contra +1,7% sentado.
   'panturrilha:joelho_estendido': {
     rotulo: { nome: 'panturrilha em pé', genero: 'f' },
-    acao: 'Subir na ponta com o joelho estendido: gastrocnêmio',
+    acao: 'Subir na ponta com o joelho esticado, que alonga o gastrocnêmio',
   },
   'panturrilha:joelho_fletido': {
     rotulo: { nome: 'panturrilha sentada', genero: 'f' },

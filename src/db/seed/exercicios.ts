@@ -65,7 +65,7 @@ export const EXERCICIOS: L[] = [
   ['Voador (peck deck)','peito','ombro','maquina','peso_reps','Butterfly',
    'Ajuste o banco para as alças ficarem na linha do peito.|Feche os braços contraindo o peito.|Volte devagar até alongar.',
    'Segure 1 segundo fechado. É onde o peito realmente trabalha.'],
-  ['Flexão de braço','peito','triceps,abdomen','livre','peso_corporal','Pushups',
+  ['Flexão de braço','peito','triceps,ombro,abdomen','livre','peso_corporal','Pushups',
    'Mãos pouco além da largura dos ombros.|Corpo em linha reta da cabeça ao calcanhar.|Desça até o peito quase tocar o chão.',
    'Quadril caindo = abdômen desligado. Contraia o glúteo.'],
   ['Mergulho no paralelo','peito','triceps,ombro','livre','peso_corporal','Dips_-_Chest_Version',
@@ -73,9 +73,18 @@ export const EXERCICIOS: L[] = [
    'Tronco vertical foca tríceps; inclinado foca peito. Escolha de propósito.'],
 
   // ── COSTAS ──────────────────────────────────────────────────────────────
-  ['Levantamento terra','costas','posterior,gluteo,trapezio','barra','peso_reps','Barbell_Deadlift',
-   'Pés na largura do quadril, barra encostada na canela.|Coluna neutra, peito aberto, quadril acima do joelho.|Empurre o chão e suba estendendo quadril e joelho juntos.',
-   'A barra sobe raspando a perna. Se afastar do corpo, a lombar paga a conta.'],
+  //
+  // O `Levantamento terra` SAIU daqui, para `posterior`.
+  //
+  // Ele era o exercício de costas que abria o bloco em 100% dos perfis, 2× por
+  // semana, e respondia por 29% do volume de costas — então o e1RM que o app
+  // mostrava como "progresso de costas" era um e1RM de terra. Os motores dele
+  // são os extensores de quadril e joelho; os eretores resistem isometricamente
+  // e **o dorsal e o trapézio seguram a barra sem encurtar em ponto nenhum**.
+  // Numa revisão de 19 estudos de EMG do terra, latíssimo e trapézio não foram
+  // analisados em NENHUM: o que se mede ali é bíceps femoral, glúteo, vaso
+  // lateral, eretores, semitendinoso, reto femoral, oblíquo e gastrocnêmio.
+  // https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0229507
   ['Barra fixa','costas','biceps,ombro','livre','peso_corporal','Pullups',
    'Pegada pronada, pouco além da largura dos ombros.|Puxe levando o peito à barra, cotovelo pro bolso.|Desça até estender completo.',
    'Puxe com o cotovelo, não com a mão. Pense em "descer o cotovelo".'],
@@ -88,33 +97,45 @@ export const EXERCICIOS: L[] = [
   ['Puxada supinada','costas','biceps','maquina','peso_reps','Underhand_Cable_Pulldowns',
    'Pegada supinada na largura dos ombros.|Puxe até o peito, cotovelos rentes ao corpo.|Volte controlado.',
    'Pega mais a parte baixa do dorsal. Ótimo complemento da pegada aberta.'],
-  ['Remada curvada com barra','costas','biceps,posterior','barra','peso_reps','Bent_Over_Barbell_Row',
+  // ── Remada carrega trapézio e deltoide posterior ────────────────────────
+  //
+  // Nenhuma das seis remadas listava `trapezio` nem `ombro`, e remada é o
+  // principal exercício de trapézio médio, romboides e deltoide posterior. O
+  // efeito era medível na semana real: o trapézio terminava com **0 séries
+  // diretas e 8 fracionadas, todas vindas do levantamento terra**.
+  //
+  // `posterior` saiu da remada curvada pelo motivo inverso: ali o quadril fica
+  // parado em flexão — o isquiotibial segura, não move.
+  ['Remada curvada com barra','costas','biceps,trapezio,ombro','barra','peso_reps','Bent_Over_Barbell_Row',
    'Tronco a ~45°, coluna neutra, joelho levemente flexionado.|Puxe a barra até o umbigo.|Desça controlado sem arredondar as costas.',
    'Se precisar dar tranco pra subir, o peso está errado.'],
-  ['Remada unilateral com halter','costas','biceps','halter','peso_reps','One-Arm_Dumbbell_Row',
+  ['Remada unilateral com halter','costas','biceps,trapezio,ombro','halter','peso_reps','One-Arm_Dumbbell_Row',
    'Um joelho e uma mão no banco, coluna paralela ao chão.|Puxe o halter até a lateral do abdômen.|Desça alongando o dorsal.',
    'Não gire o tronco para ajudar. O ombro fica na mesma altura o tempo todo.'],
-  ['Remada baixa na polia','costas','biceps','maquina','peso_reps','Seated_Cable_Rows',
+  ['Remada baixa na polia','costas','biceps,trapezio,ombro','maquina','peso_reps','Seated_Cable_Rows',
    'Sentado, joelhos levemente flexionados, coluna ereta.|Puxe o triângulo até o abdômen.|Volte alongando sem curvar as costas.',
    'Peito estufado e escápulas se juntando no fim do movimento.'],
-  ['Remada cavalinho','costas','biceps,trapezio','barra','peso_reps','Lying_T-Bar_Row',
+  ['Remada cavalinho','costas','biceps,trapezio,ombro','barra','peso_reps','Lying_T-Bar_Row',
    'Tronco inclinado, pegada firme na barra.|Puxe até o abdômen contraindo as escápulas.|Desça controlado.',
    'Excelente para espessura de costas. Amplitude completa importa mais que carga.'],
-  ['Pulldown com braço estendido','costas','','cabo','peso_reps','Straight-Arm_Pulldown',
+  // O braço não dobra: quem estende o ombro é o dorsal COM a cabeça longa do
+  // tríceps, e o deltoide posterior entra junto. A linha vazia dizia que este
+  // exercício não treina mais nada, e nenhuma outra do catálogo dizia isso.
+  ['Pulldown com braço estendido','costas','triceps,ombro','cabo','peso_reps','Straight-Arm_Pulldown',
    'Em pé de frente à polia alta, braços estendidos.|Empurre a barra até a coxa mantendo o cotovelo fixo.|Volte controlado.',
    'Isolador de dorsal puro. Se o cotovelo dobrar, virou tríceps.'],
-  ['Hiperextensão lombar','costas','posterior,gluteo','maquina','peso_corporal','Hyperextensions_Back_Extensions',
-   'Quadril apoiado na almofada, pés travados.|Desça flexionando o quadril com a coluna neutra.|Suba até alinhar o tronco.',
-   'Não hiperestenda no topo. Pare quando o corpo estiver reto.'],
 
   // ── OMBRO ───────────────────────────────────────────────────────────────
-  ['Desenvolvimento militar','ombro','triceps','barra','peso_reps','Standing_Military_Press',
+  //
+  // Todo overhead faz rotação SUPERIOR da escápula, e quem a faz é o trapézio.
+  // Nenhum desenvolvimento listava `trapezio`.
+  ['Desenvolvimento militar','ombro','triceps,trapezio','barra','peso_reps','Standing_Military_Press',
    'Em pé, barra na altura da clavícula, pegada pouco além dos ombros.|Empurre acima da cabeça.|Desça controlado até o queixo.',
    'Contraia glúteo e abdômen — sem isso a lombar arqueia e vira supino em pé.'],
-  ['Desenvolvimento com halteres','ombro','triceps','halter','peso_reps','Dumbbell_Shoulder_Press',
+  ['Desenvolvimento com halteres','ombro','triceps,trapezio','halter','peso_reps','Dumbbell_Shoulder_Press',
    'Sentado com apoio, halteres na altura das orelhas.|Empurre para cima sem bater.|Desça até 90° no cotovelo.',
    'Amplitude maior que a barra e menos estresse no ombro.'],
-  ['Desenvolvimento Arnold','ombro','triceps','halter','peso_reps','Arnold_Dumbbell_Press',
+  ['Desenvolvimento Arnold','ombro','triceps,trapezio','halter','peso_reps','Arnold_Dumbbell_Press',
    'Comece com as palmas voltadas para você, halteres na frente.|Gire enquanto empurra para cima.|Volte fazendo o caminho inverso.',
    'A rotação recruta as três porções do deltoide. Vale usar menos peso.'],
   ['Elevação lateral','ombro','trapezio','halter','peso_reps','Side_Lateral_Raise',
@@ -129,7 +150,9 @@ export const EXERCICIOS: L[] = [
   ['Remada alta','ombro','trapezio,biceps','barra','peso_reps','Upright_Barbell_Row',
    'Pegada na largura dos ombros.|Puxe a barra até a altura do peito, cotovelo acima da mão.|Desça controlado.',
    'Pegada muito fechada causa impacto no ombro. Mantenha na largura dos ombros.'],
-  ['Encolhimento','trapezio','ombro','barra','peso_reps','Barbell_Shrug',
+  // O deltoide não eleva escápula — ele não faz parte deste movimento. O que
+  // trabalha junto é a PEGADA: braço estendido segurando a barra o tempo todo.
+  ['Encolhimento','trapezio','antebraco','barra','peso_reps','Barbell_Shrug',
    'Em pé com a barra à frente das coxas, braços estendidos.|Eleve os ombros em direção às orelhas.|Desça controlado.',
    'Não gire os ombros. É movimento vertical, para cima e para baixo.'],
   ['Face pull','ombro','costas,trapezio','cabo','peso_reps','Face_Pull',
@@ -183,19 +206,27 @@ export const EXERCICIOS: L[] = [
    'Peso leve. O que conta aqui é segurar a contração no fim.'],
 
   // ── QUADRÍCEPS ──────────────────────────────────────────────────────────
-  ['Agachamento livre','quadriceps','gluteo,posterior,abdomen','barra','peso_reps','Barbell_Squat',
+  //
+  // `posterior` SAIU dos agachamentos e da prensa.
+  //
+  // O isquiotibial é biarticular: no agachamento ele encurta no quadril e
+  // alonga no joelho ao mesmo tempo, e o comprimento quase não muda. Ele é
+  // CO-CONTRATOR, não sinergista — e cada série contada ali virava meia série
+  // de posterior no aviso, que então mandava o usuário parar de treinar o
+  // posterior justamente porque o agachamento "já treinava".
+  ['Agachamento livre','quadriceps','gluteo,abdomen','barra','peso_reps','Barbell_Squat',
    'Barra no trapézio, pés na largura dos ombros, pontas levemente para fora.|Desça empurrando o quadril para trás até a coxa passar do paralelo.|Suba empurrando o chão.',
    'Joelho segue a linha do pé. Se cair para dentro, reduza a carga.'],
   ['Agachamento frontal','quadriceps','gluteo,abdomen','barra','peso_reps','Front_Barbell_Squat',
    'Barra apoiada na frente dos ombros, cotovelos altos.|Desça mantendo o tronco vertical.|Suba.',
    'Cotovelo caiu, barra cai. Mantenha os cotovelos apontados para frente.'],
-  ['Leg press','quadriceps','gluteo,posterior','maquina','peso_reps','Leg_Press',
+  ['Leg press','quadriceps','gluteo','maquina','peso_reps','Leg_Press',
    'Pés na plataforma na largura dos ombros.|Desça até 90° no joelho.|Empurre sem travar o joelho.',
    'Nunca deixe a lombar descolar do encosto. Se descolar, pare de descer.'],
   ['Cadeira extensora','quadriceps','','maquina','peso_reps','Leg_Extensions',
    'Sentado, tornozelo atrás da almofada.|Estenda até quase travar.|Desça controlado.',
    'Segure 1 segundo no topo. É onde o reto femoral trabalha de verdade.'],
-  ['Afundo com halteres','quadriceps','gluteo,posterior','halter','peso_reps','Dumbbell_Lunges',
+  ['Afundo com halteres','quadriceps','gluteo','halter','peso_reps','Dumbbell_Lunges',
    'Halteres ao lado do corpo, um passo à frente.|Desça até o joelho de trás quase tocar o chão.|Empurre com a perna da frente.',
    'Tronco ereto. Inclinar pra frente transfere o trabalho pro glúteo.'],
   ['Afundo com barra','quadriceps','gluteo','barra','peso_reps','Barbell_Lunge',
@@ -206,6 +237,16 @@ export const EXERCICIOS: L[] = [
    'Pé mais alto pega glúteo; pé mais baixo pega quadríceps.'],
 
   // ── POSTERIOR / GLÚTEO ──────────────────────────────────────────────────
+  //
+  // O terra mora AQUI: os motores são os extensores de quadril e joelho.
+  // Costas e trapézio continuam declarados como secundários porque eles de fato
+  // trabalham — isometricamente, segurando barra e coluna. A diferença entre
+  // "trabalha" e "é o motor" é a fase inteira: como secundário ele soma meia
+  // série ao volume de costas; como primário ele ancorava o bloco, definia a
+  // curva de progresso e comia 29% do volume de costas da semana.
+  ['Levantamento terra','posterior','gluteo,quadriceps,costas,trapezio,antebraco','barra','peso_reps','Barbell_Deadlift',
+   'Pés na largura do quadril, barra encostada na canela.|Coluna neutra, peito aberto, quadril acima do joelho.|Empurre o chão e suba estendendo quadril e joelho juntos.',
+   'A barra sobe raspando a perna. Se afastar do corpo, a lombar paga a conta.'],
   ['Stiff','posterior','gluteo,costas','barra','peso_reps','Stiff-Legged_Barbell_Deadlift',
    'Barra à frente das coxas, joelho quase estendido.|Desça empurrando o quadril para trás até sentir alongar.|Suba contraindo o glúteo.',
    'Movimento é do quadril, não da coluna. Costas retas o tempo todo.'],
@@ -215,12 +256,18 @@ export const EXERCICIOS: L[] = [
   ['Mesa flexora','posterior','panturrilha','maquina','peso_reps','Lying_Leg_Curls',
    'Deitado de bruços, tornozelo sob a almofada.|Flexione o joelho até o máximo.|Desça controlado.',
    'Não levante o quadril pra ajudar. Se levantar, o peso está alto.'],
-  ['Cadeira flexora','posterior','','maquina','peso_reps','Seated_Leg_Curl',
+  ['Cadeira flexora','posterior','panturrilha','maquina','peso_reps','Seated_Leg_Curl',
    'Sentado, almofada sobre a coxa, tornozelo atrás do rolo.|Flexione o joelho.|Volte controlado.',
    'A versão sentada alonga mais o isquiotibial que a deitada.'],
+  // Este NÃO é o hip thrust — as instruções antigas descreviam um, com as
+  // escápulas no banco, e o catálogo passava a ter duas linhas idênticas com
+  // nomes diferentes. Em português de academia a distinção já existia no nome:
+  // elevação pélvica é do CHÃO, hip thrust é com as costas no banco. Quem
+  // estava errado era o texto, não o nome — e a amplitude menor do chão é uma
+  // diferença real, não cosmética.
   ['Elevação pélvica com barra','gluteo','posterior','barra','peso_reps','Barbell_Glute_Bridge',
-   'Costas apoiadas no banco, barra sobre o quadril.|Empurre o quadril para cima até alinhar tronco e coxa.|Desça controlado.',
-   'Contraia o glúteo 1 segundo no topo. Sem isso o exercício não rende.'],
+   'Deitado de costas NO CHÃO, joelhos dobrados, barra sobre a dobra do quadril.|Empurre o quadril até alinhar tronco e coxa — a amplitude é menor que a do hip thrust, e é para ser.|Desça até quase encostar e recomece.',
+   'Sem banco, o movimento acaba mais cedo: pare de subir quando o tronco alinhar com a coxa. Passar disso é lombar arqueando, não glúteo.'],
   ['Abdução na máquina','gluteo','','maquina','peso_reps','Thigh_Abductor',
    'Sentado, joelhos contra as almofadas.|Abra as pernas contra a resistência.|Volte controlado.',
    'Inclinar o tronco à frente pega mais glúteo médio.'],
@@ -261,7 +308,13 @@ export const EXERCICIOS: L[] = [
   ['Russian twist','abdomen','','livre','peso_reps','Russian_Twist',
    'Sentado, tronco inclinado para trás, pés fora do chão.|Gire o tronco de um lado ao outro.|Mantenha o abdômen contraído.',
    'O giro vem do tronco, não dos braços.'],
-  ['Escalador','abdomen','cardio','livre','tempo','Mountain_Climbers',
+  // `cardio` era um dos secundários — e cardio não é músculo. Quem sustenta a
+  // prancha alta é o OMBRO, e é o único sinergista que o vocabulário de grupos
+  // sabe nomear aqui: quem alterna o joelho é o flexor de quadril (iliopsoas),
+  // que não é quadríceps e não tem balde. Declarar `quadriceps` faria o
+  // escalador "cobrir" o padrão de agachamento do dia — o mesmo defeito de
+  // balde-default que esta fase veio fechar, em versão menor.
+  ['Escalador','abdomen','ombro','livre','tempo','Mountain_Climbers',
    'Posição de prancha alta.|Traga um joelho ao peito e alterne rapidamente.|Mantenha o quadril baixo.',
    'Serve como abdômen e como condicionamento. Ritmo alto.'],
 
@@ -295,7 +348,9 @@ export const EXERCICIOS: L[] = [
   // consegue treinar.
 
   // ── GLÚTEO ──────────────────────────────────────────────────────────────
-  ['Hip thrust com barra','gluteo','posterior,quadriceps','barra','peso_reps','Barbell_Hip_Thrust',
+  // Sem `quadriceps`: o ângulo do joelho é FIXO do começo ao fim, e músculo que
+  // não muda de comprimento não é sinergista do movimento.
+  ['Hip thrust com barra','gluteo','posterior','barra','peso_reps','Barbell_Hip_Thrust',
    'Apoie as escápulas na borda do banco, barra na dobra do quadril.|Suba até tronco e coxa formarem uma linha.|Segure um instante no topo e desça sem largar o peso no chão.',
    'Termine o movimento com o queixo pra dentro. Jogar a cabeça pra trás dá a sensação de subir mais, mas quem sobe é a lombar, não o glúteo.'],
   ['Agachamento ajoelhado com barra','gluteo','posterior','barra','peso_reps','Kneeling_Squat',
@@ -313,7 +368,10 @@ export const EXERCICIOS: L[] = [
   ['Coice no solo','gluteo','','livre','peso_corporal','Glute_Kickback',
    'Apoiado nas mãos e joelhos, coluna neutra.|Empurre um calcanhar pro teto sem passar da linha do tronco.|Volte controlando.',
    'Subir mais alto não é melhor: passou da linha do tronco, é lombar arqueando.'],
-  ['Subida no banco','gluteo','quadriceps','livre','peso_corporal','Step-up_with_Knee_Raise',
+  // Segurar peso não troca o motor primário: a subida no banco com halteres já
+  // estava em `quadriceps` e esta, o mesmo movimento sem carga, estava em
+  // `gluteo`. Uma das duas tinha que ceder, e cedeu a que discordava da gêmea.
+  ['Subida no banco','quadriceps','gluteo','livre','peso_corporal','Step-up_with_Knee_Raise',
    'Pé inteiro apoiado num banco na altura do joelho.|Suba empurrando com a perna de cima, sem impulso da de baixo.|Desça devagar.',
    'Quanto mais alto o banco, mais glúteo. Baixo demais vira exercício de panturrilha.'],
 
@@ -336,9 +394,18 @@ export const EXERCICIOS: L[] = [
   ['Hiperextensão inversa','posterior','gluteo','maquina','peso_reps','Reverse_Hyperextension',
    'Tronco apoiado no aparelho, pernas soltas.|Suba as pernas até a linha do tronco.|Desça sem balançar.',
    'Carrega posterior e glúteo sem comprimir a coluna. Boa escolha em dia de lombar cansada.'],
+  // Estava em `costas`, ao lado da inversa — quase o MESMO movimento — que já
+  // estava aqui. Os motores dos dois são glúteo e isquiotibial; os eretores
+  // seguram a coluna neutra e não produzem o movimento.
+  ['Hiperextensão lombar','posterior','gluteo','maquina','peso_corporal','Hyperextensions_Back_Extensions',
+   'Quadril apoiado na almofada, pés travados.|Desça flexionando o quadril com a coluna neutra.|Suba até alinhar o tronco.',
+   'Não hiperestenda no topo. Pare quando o corpo estiver reto.'],
 
   // ── QUADRÍCEPS ──────────────────────────────────────────────────────────
-  ['Agachamento livre sem peso','quadriceps','gluteo,posterior','livre','peso_corporal','Bodyweight_Squat',
+  // "Livre" em português de academia significa BARRA livre, e este é o
+  // `Bodyweight_Squat` — com um `Agachamento livre` de barra no catálogo logo
+  // acima. O nome dizia as duas coisas ao mesmo tempo.
+  ['Agachamento sem peso','quadriceps','gluteo','livre','peso_corporal','Bodyweight_Squat',
    'Pés na largura do ombro, ponta levemente pra fora.|Desça como se fosse sentar, peito aberto.|Suba empurrando o chão com o pé inteiro.',
    'A progressão aqui não é peso, é profundidade e cadência. Descer em 3 segundos vale mais que somar repetição.'],
   ['Agachamento na cadeira','quadriceps','gluteo','livre','peso_corporal','Chair_Squat',
@@ -387,7 +454,7 @@ export const EXERCICIOS: L[] = [
   ['Flexão com pés elevados','peito','ombro,triceps','livre','peso_corporal','Push-Ups_With_Feet_Elevated',
    'Pés num banco, mãos no chão pouco mais largas que o ombro.|Desça o peito até quase tocar.|Empurre sem deixar o quadril cair.',
    'A progressão da flexão quando o chão ficou fácil: sobe o pé, não a repetição.'],
-  ['Remada invertida','costas','biceps,ombro','livre','peso_corporal','Inverted_Row',
+  ['Remada invertida','costas','biceps,trapezio,ombro','livre','peso_corporal','Inverted_Row',
    'Deite sob uma barra fixa baixa ou mesa firme, corpo reto.|Puxe o peito até a barra.|Desça controlando.',
    'Quanto mais horizontal o corpo, mais pesa. Andar com os pés pra frente é como aumentar carga.'],
   // ── CAMINHO PARA A BARRA FIXA ───────────────────────────────────────────
@@ -426,19 +493,24 @@ export const EXERCICIOS: L[] = [
   ['Supino na polia','peito','triceps,ombro','cabo','peso_reps','Cable_Chest_Press',
    'Polias na altura do peito, um pé à frente para estabilizar.|Empurre as mãos para a frente até quase estender o cotovelo.|Volte devagar até sentir o peito alongar.',
    'A tensão não some no fim do movimento, coisa que barra e halter não fazem — é a vantagem do cabo sobre o supino comum.'],
-  ['Desenvolvimento máquina','ombro','triceps','maquina','peso_reps','Leverage_Shoulder_Press',
+  ['Desenvolvimento máquina','ombro','triceps,trapezio','maquina','peso_reps','Leverage_Shoulder_Press',
    'Costas apoiadas, pegada na altura das orelhas.|Empurre para cima sem travar o cotovelo.|Desça até o cotovelo passar de 90°.',
    'Tira a estabilização do core da conta e deixa o ombro receber toda a carga.'],
-  ['Desenvolvimento na polia','ombro','triceps','cabo','peso_reps','Seated_Cable_Shoulder_Press',
+  ['Desenvolvimento na polia','ombro','triceps,trapezio','cabo','peso_reps','Seated_Cable_Shoulder_Press',
    'Sentado de frente para a polia alta ajustada baixa.|Empurre acima da cabeça.|Volte controlando.',
    'Alternativa quando a máquina de desenvolvimento está ocupada — a academia inteira usa uma, e o cabo quase sempre está livre.'],
   ['Crucifixo inverso na máquina','ombro','costas','maquina','peso_reps','Reverse_Machine_Flyes',
    'Peito apoiado, braços à frente na altura do ombro.|Abra para trás apertando as escápulas.|Volte sem deixar o peso cair.',
    'Ombro posterior é o que quase todo mundo esquece — e é ele que corrige postura de quem trabalha sentado.'],
-  ['Remada máquina','costas','biceps','maquina','peso_reps','Leverage_Iso_Row',
+  ['Remada máquina','costas','biceps,trapezio,ombro','maquina','peso_reps','Leverage_Iso_Row',
    'Peito no apoio, pegada na largura do ombro.|Puxe levando o cotovelo para trás.|Solte até sentir a escápula abrir.',
    'Com o peito apoiado, a lombar sai da conta: dá para puxar pesado em dia de lombar cansada.'],
-  ['Remada alta na máquina','costas','ombro','maquina','peso_reps','Leverage_High_Row',
+  // Chamava-se "Remada alta na máquina" e não é uma remada alta: em PT-BR
+  // "remada alta" é *upright row*, e existe outra entrada com esse nome exato
+  // em `ombro`. Dois nomes quase iguais, movimentos sem relação nenhuma. A
+  // classificação sempre esteve certa (`Leverage_High_Row`, puxada em diagonal
+  // com o peito apoiado); o que estava errado era o nome.
+  ['Remada em diagonal na máquina','costas','biceps,trapezio,ombro','maquina','peso_reps','Leverage_High_Row',
    'Puxada em diagonal de cima para baixo, peito apoiado.|Leve o cotovelo para trás e para baixo.|Volte controlando.',
    'Ângulo entre puxada e remada — pega a parte do dorsal que nenhuma das duas cobre inteira.'],
   ['Rosca na máquina','biceps','antebraco','maquina','peso_reps','Machine_Bicep_Curl',
@@ -459,11 +531,16 @@ export const EXERCICIOS: L[] = [
   ['Agachamento no smith','quadriceps','gluteo','maquina','peso_reps','Smith_Machine_Squat',
    'Barra guiada nas costas, pés um pouco à frente.|Desça até a coxa passar da paralela.|Suba empurrando o chão.',
    'A guia tira o equilíbrio da conta e deixa descer mais fundo — bom para quem ainda não confia no agachamento livre.'],
-  ['Cadeira adutora','quadriceps','gluteo','maquina','peso_reps','Thigh_Adductor',
+  // Sem `gluteo`: glúteo médio e mínimo são ABDUTORES — antagonistas do
+  // movimento — e estavam listados como sinergistas. O adutor não tem balde
+  // próprio no vocabulário de grupos, e criar um só para ele custaria vaga em
+  // toda divisão, alvo semanal, teto, ícone e região; ele fica em `quadriceps`
+  // com padrão `aducao`, que é o balde que de fato o separa na hora de escolher.
+  ['Cadeira adutora','quadriceps','','maquina','peso_reps','Thigh_Adductor',
    'Sentado, joelhos abertos contra os apoios.|Junte as pernas contraindo a parte interna.|Volte devagar.',
    'Adutor entra em toda passada e todo agachamento aberto — treiná-lo direto reduz lesão de virilha.'],
 
-  ['Flexão pique','ombro','triceps','livre','peso_corporal',null,
+  ['Flexão pique','ombro','triceps,trapezio','livre','peso_corporal',null,
    'Em V invertido, quadril alto, mãos e pés no chão.|Desça a cabeça em direção ao chão entre as mãos.|Empurre de volta.',
    'O único jeito honesto de treinar ombro sem nenhum equipamento. Quanto mais alto o quadril, mais vira ombro e menos peito.'],
 ];

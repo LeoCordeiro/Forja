@@ -60,7 +60,7 @@ export const COMPOSTOS = [
   'Bom dia com barra',
   'Flexão nórdica',
   'Glute ham raise na máquina',
-  'Agachamento livre sem peso',
+  'Agachamento sem peso',
   'Agachamento na cadeira',
   'Afundo caminhando',
   'Agachamento búlgaro',
@@ -79,7 +79,7 @@ export const COMPOSTOS = [
   'Desenvolvimento máquina',
   'Desenvolvimento na polia',
   'Remada máquina',
-  'Remada alta na máquina',
+  'Remada em diagonal na máquina',
   'Agachamento no smith',
   // Era 'Crossover na polia baixa'. Nome de crucifixo, demonstração de supino
   // (`Cable_Chest_Press`) e classificação de composto — três identidades para o
@@ -207,6 +207,8 @@ export const SUBSTITUICOES: Record<string, string[]> = {
   'Remada baixa na polia': ['Remada curvada com barra', 'Remada unilateral com halter'],
   'Remada cavalinho': ['Remada curvada com barra', 'Remada baixa na polia'],
   'Levantamento terra': ['Levantamento terra romeno', 'Stiff', 'Hiperextensão lombar'],
+  'Remada máquina': ['Remada baixa na polia', 'Remada em diagonal na máquina'],
+  'Remada em diagonal na máquina': ['Remada máquina', 'Remada baixa na polia'],
 
   'Desenvolvimento militar': ['Desenvolvimento com halteres', 'Desenvolvimento Arnold'],
   'Desenvolvimento com halteres': ['Desenvolvimento militar', 'Desenvolvimento Arnold'],
@@ -304,15 +306,33 @@ export function padraoDe(nome: string, grupo: string): string {
   }
   if (grupo === 'ombro') {
     if (/lateral/.test(n)) return 'lateral';
-    if (/invers|face pull|posterior/.test(n)) return 'posterior';
-    if (/frontal/.test(n)) return 'frontal';
+    // A remada ALTA primeiro: ela é abdução com rotação interna e não tem nada
+    // a ver com a remada horizontal da linha seguinte.
     if (/remada alta/.test(n)) return 'alta';
+    // ── Remada consultada como OMBRO é deltoide posterior ─────────────────
+    //
+    // Sem esta linha ela caía no DEFAULT do ramo ('desenvolvimento') e passava
+    // a "cobrir" o overhead do dia. Com as remadas declarando `ombro` como
+    // secundário, isso saturaria o padrão de desenvolvimento em todo dia de
+    // costas — e o desenvolvimento sumiria da semana pela porta dos fundos,
+    // que é exatamente o defeito que esta fase existe para fechar.
+    if (/remada|invers|face pull|posterior/.test(n)) return 'posterior';
+    if (/frontal/.test(n)) return 'frontal';
     return 'desenvolvimento';
   }
   if (grupo === 'quadriceps') {
     // Extensora é monoarticular: separá-la da prensa é o que impede leg press,
     // hack e extensora entrarem como se fossem três variações da mesma coisa.
     if (/extensora/.test(n)) return 'extensao_joelho';
+    // ── Dobradiça de quadril consultada como QUADRÍCEPS ───────────────────
+    //
+    // O terra lista `quadriceps` como secundário (ele estende o joelho contra
+    // carga) e caía no DEFAULT do ramo, 'agachamento' — passando a "cobrir" o
+    // agachamento do dia. O terra não agacha. Balde próprio, fora do
+    // vocabulário de trabalho de quadríceps, e por isso ele não conta cobertura
+    // (ver `NAO_COBRE` em `papel.ts`).
+    if (/terra|stiff|romeno|bom dia|hiperexten|pull through|pélvica|pelvica|hip thrust/.test(n))
+      return 'hinge';
     if (/afundo|búlgaro|bulgaro|subida|passada|caminhand/.test(n)) return 'unilateral';
     if (/leg press|hack/.test(n)) return 'prensa';
     if (/adutora/.test(n)) return 'aducao';
@@ -349,10 +369,24 @@ export function padraoDe(nome: string, grupo: string): string {
   // seguidas. O que muda entre eles é onde o músculo fica mais alongado: banco
   // inclinado e scott trabalham posições diferentes do bíceps, e martelo e
   // inversa mudam a pegada.
+  // ── Bíceps: `apoiada` juntava dois OPOSTOS ────────────────────────────
+  //
+  // Scott e concentrada caíam no mesmo balde porque os dois têm o braço
+  // apoiado — e apoiar não é o critério. No banco scott o cotovelo chega à
+  // extensão máxima SOB CARGA (a posição alongada, e é por isso que a dica do
+  // próprio catálogo avisa para não estender 100%); na concentrada o pico é no
+  // encurtamento. Um balde para os dois é um balde que não informa nada.
+  //
+  // E `alongada` estava preenchida pelo MENOS alongado do catálogo: a regex
+  // mirava a rosca inclinada, que este catálogo não tem, e sobrou a rosca na
+  // polia alta — ombro flexionado, cabeça longa encurtada. O card chegava a se
+  // contradizer na mesma dobra, dizendo "braço atrás do tronco, com o bíceps
+  // alongado" ao lado de instruções que dizem "braços abertos na horizontal".
   if (grupo === 'biceps') {
     if (/martelo|invers/.test(n)) return 'pegada';
-    if (/scott|concentrada/.test(n)) return 'apoiada';
-    if (/polia alta|inclinad/.test(n)) return 'alongada';
+    if (/scott/.test(n)) return 'apoiada';
+    if (/concentrada/.test(n)) return 'concentrada';
+    if (/polia alta|inclinad/.test(n)) return 'ombro_flexionado';
     return 'livre';
   }
   if (grupo === 'triceps') {
@@ -494,7 +528,7 @@ export const FORCA_RELATIVA: Record<
 export function ajusteDeForcaRelativa(
   nome: string,
   barraFixaReps: number
-): { troca: string; motivo: string } | null {
+): { troca: string; motivo: string; ehPonte: boolean } | null {
   const r = FORCA_RELATIVA[nome];
   // `!Number.isFinite` cobre undefined vindo de perfil antigo: sem resposta, o
   // exercício passa. A alternativa era o valor ausente parecer "zero barras" e
@@ -506,6 +540,11 @@ export function ajusteDeForcaRelativa(
   // corpo. Sem nenhuma, a ponte também falha e a troca é o caminho.
   const usarPonte = r.ponte && barraFixaReps >= 1;
   return {
+    // `ehPonte` deixa o gerador distinguir "caminho de volta declarado" de
+    // "equivalente qualquer". Só os dois exercícios de barra fixa têm ponte, e
+    // só sobre eles o plano deve falar quando a substituta não alcança a vaga:
+    // a pessoa RESPONDEU quantas barras faz, então ela sabe que perguntamos.
+    ehPonte: !!usarPonte,
     troca: usarPonte ? r.ponte! : r.troca,
     motivo: usarPonte
       ? `${nome} pede ao menos ${r.minReps} repetições limpas para render como série. ` +

@@ -10,7 +10,9 @@ import {
 import {
   ancorasDaSessao,
   articulacoesDe,
+  cargaDe,
   descansoCorreto,
+  duracaoDe,
   indiretoPorPadrao,
   padroesCobertos,
   papeisDaSessao,
@@ -886,9 +888,23 @@ function provisorio(
  * gosto.
  */
 function ordenar(cands: ExercicioCat[], preferencia: string): ExercicioCat[] {
+  // ── `cabo` e `maquina` NÃO empatam ──────────────────────────────────────
+  //
+  // Empatavam, e o desempate caía na ordem do catálogo. Quem pedia máquina
+  // recebia polia sempre que a polia estivesse escrita antes — e as onze
+  // máquinas que a auditoria achou com ZERO aparições em 32 dias perdiam a vaga
+  // para um cabo do mesmo padrão. Cabo continua sendo a segunda escolha de quem
+  // pediu máquina (trajetória guiada, carga em pino), e peso livre a última;
+  // o simétrico vale para quem pediu peso livre.
   const peso = (e: ExercicioCat) => {
-    if (preferencia === 'maquina') return e.equipamento === 'maquina' || e.equipamento === 'cabo' ? 0 : 1;
-    if (preferencia === 'livre') return e.equipamento === 'barra' || e.equipamento === 'halter' || e.equipamento === 'livre' ? 0 : 1;
+    if (preferencia === 'maquina')
+      return e.equipamento === 'maquina' ? 0 : e.equipamento === 'cabo' ? 1 : 2;
+    if (preferencia === 'livre')
+      return e.equipamento === 'barra' || e.equipamento === 'halter'
+        ? 0
+        : e.equipamento === 'livre'
+          ? 1
+          : 2;
     return 0;
   };
   const papel = (e: ExercicioCat) => (ehPesado(e.nome) ? 0 : ehComposto(e.nome) ? 1 : 2);
@@ -906,6 +922,20 @@ function ordenar(cands: ExercicioCat[], preferencia: string): ExercicioCat[] {
     if (pa !== pb) return pa - pb;
     return peso(a) - peso(b);
   });
+}
+
+/**
+ * A mesma ordenação, exposta para o harness.
+ *
+ * Sem porta de entrada, "a preferência decide quem entra" só era verificável
+ * pelo resultado de um plano inteiro — e foi assim que `cabo` e `maquina`
+ * ficaram empatados sem ninguém notar.
+ */
+export function ordenarParaEscolha(
+  cands: ExercicioCat[],
+  preferencia: string
+): ExercicioCat[] {
+  return ordenar(cands, preferencia);
 }
 
 /** Ordem dentro da sessão: composto pesado primeiro, isolado no fim. */
@@ -1021,7 +1051,27 @@ function restringirPorCobertura(
   // Mono primeiro: o que falta num grupo já saturado de indireto é trabalho
   // específico, não outro composto empurrando o mesmo padrão (B9).
   const mono = livres.filter((e) => articulacoesDe(e.nome) === 'mono');
-  return mono.length ? mono : livres.length ? livres : cands;
+  const restantes = mono.length ? mono : livres.length ? livres : cands;
+
+  // ── E entre os livres, o MENOS coberto primeiro ────────────────────────
+  //
+  // "Saturado / não saturado" é binário e a vaga é uma só: entre dois padrões
+  // não saturados, quem decidia era a preferência de equipamento. O custo
+  // apareceu assim que a preferência passou a funcionar de verdade — com
+  // `maquina` desempatando na frente de `cabo`, o único exercício de deltoide
+  // MEDIAL do catálogo (elevação lateral, halter) perdeu a vaga para um
+  // crucifixo inverso de máquina, e o medial foi a ZERO na semana enquanto o
+  // posterior já recebia meia série de cada remada.
+  //
+  // Este é o objetivo declarado de A9 escrito por inteiro: não é "menos ombro",
+  // é ombro onde ele ainda não foi treinado. Preferência de equipamento
+  // continua decidindo — dentro do mesmo grau de cobertura, que é onde ela é
+  // gosto e não custo.
+  const indireto = indiretoPorPadrao(grupo, jaNoDia);
+  return [...restantes].sort(
+    (a, b) =>
+      (indireto.get(padraoDe(a.nome, grupo)) ?? 0) - (indireto.get(padraoDe(b.nome, grupo)) ?? 0)
+  );
 }
 
 /** O grupo já tem um monoarticular na posição alongada? (metade de A7) */
@@ -1047,8 +1097,11 @@ function novoExercicio(e: ExercicioCat, grupo: string, series: number): Exercici
     porTempo,
     tipoCarga: e.tipo_carga,
     series,
-    repsMin: porTempo ? 0 : reps[0],
-    repsMax: porTempo ? 0 : reps[1],
+    // Série por TEMPO carrega SEGUNDOS neste par, não repetições — era `0 : 0`,
+    // e a tela imprimia `Prancha 4 x 0-0`. Provisório aqui, como o resto da
+    // prescricao: o papel so existe quando a sessao fecha.
+    repsMin: porTempo ? duracaoDe('isolador')[0] : reps[0],
+    repsMax: porTempo ? duracaoDe('isolador')[1] : reps[1],
     descanso,
     papel: null,
     ancora: false,
@@ -1206,7 +1259,8 @@ export async function montarPlano(
   // Precisa acontecer ANTES de qualquer escolha: senão barra fixa entra como
   // primeiro exercício do dia de costas e a sessão começa numa falha.
   const foraPorForca = new Set<string>();
-  const substituicoes: { de: string; para: string; motivo: string }[] = [];
+  /** `ehPonte`: a troca é o caminho de volta declarado, não uma equivalente. */
+  const substituicoes: { de: string; para: string; motivo: string; ehPonte: boolean }[] = [];
   const pontes = new Set<string>();
   // Cabe no local? A substituta precisa existir onde a pessoa treina.
   const cabeAqui = (nome: string) => {
@@ -1226,8 +1280,60 @@ export async function montarPlano(
     // Nesse caso a pessoa faz a amplitude que conseguir, que é o certo.
     if (!cabeAqui(a.troca)) continue;
     foraPorForca.add(e.nome);
-    pontes.add(a.troca);
-    substituicoes.push({ de: e.nome, para: a.troca, motivo: a.motivo });
+    substituicoes.push({ de: e.nome, para: a.troca, motivo: a.motivo, ehPonte: !!a.ehPonte });
+  }
+
+  // ── A ponte só fura a fila quando não existe carga ajustável no padrão ──
+  //
+  // Ela ia para a frente do CATÁLOGO INTEIRO, e o preço apareceu na semana
+  // real: graviton e barra fixa negativa ocupavam as duas vagas de puxada
+  // vertical e a `Puxada frontal na polia` nunca era alcançada — num plano de
+  // quem marcou preferência por máquina.
+  //
+  // A justificativa do aviso ("continua exigindo sustentar seu peso, só com
+  // carga que dá para dosar") não sobrevive ao comparativo: a **ponte assistida
+  // tem carga MENOS dosável que a puxada na polia**, onde o pino escolhe o
+  // quilo exato. O argumento verdadeiro da ponte é outro e é mais estreito —
+  // ela constrói a barra fixa porque exige sustentar o corpo — e ele só decide
+  // a vaga quando não há alternativa que dose a carga no mesmo padrão. Onde
+  // houver, a ponte disputa a segunda vaga como qualquer outro exercício.
+  const pontePrecisaDaFila = (nome: string): boolean => {
+    const p = catalogo.find((x) => x.nome === nome);
+    if (!p) return false;
+    const grupo = p.grupo_primario;
+    const padrao = padraoDe(nome, grupo);
+    return !catalogo.some(
+      (x) =>
+        x.nome !== nome &&
+        x.grupo_primario === grupo &&
+        padraoDe(x.nome, grupo) === padrao &&
+        cargaDe(x.tipo_carga) === 'ajustavel' &&
+        !proibidos.has(x.nome) &&
+        !foraPorForca.has(x.nome) &&
+        cabeAqui(x.nome)
+    );
+  };
+  /** Carga ajustável no mesmo grupo e padrão de alguma ponte — a vaga é dela. */
+  const dosaMelhorQueAPonte = new Set<string>();
+  for (const s of substituicoes) {
+    if (pontePrecisaDaFila(s.para)) {
+      pontes.add(s.para);
+      continue;
+    }
+    const p = catalogo.find((x) => x.nome === s.para);
+    if (!p) continue;
+    const padrao = padraoDe(s.para, p.grupo_primario);
+    for (const x of catalogo)
+      if (
+        x.grupo_primario === p.grupo_primario &&
+        padraoDe(x.nome, p.grupo_primario) === padrao &&
+        cargaDe(x.tipo_carga) === 'ajustavel' &&
+        cabeAqui(x.nome)
+      )
+        dosaMelhorQueAPonte.add(x.nome);
+    // A ponte continua à frente do RESTO — só não passa na frente de quem dosa
+    // melhor que ela. Ela ainda é o caminho para o exercício que a pessoa quer.
+    pontes.add(s.para);
   }
 
   const disponiveis = catalogo
@@ -1238,14 +1344,16 @@ export async function montarPlano(
         !semLocal.has(e.nome) &&
         !foraPorForca.has(e.nome)
     )
-    // A ponte vai para a frente da fila do grupo dela.
-    //
-    // Sem isto o aviso mentia: dizia "entrou puxada assistida no graviton" e o
-    // plano trazia puxada frontal, porque as duas empatam em papel e em
-    // preferência de equipamento, e o empate era decidido pela ordem do
-    // catálogo. Aviso que promete uma coisa e entrega outra é pior que aviso
-    // nenhum — a pessoa deixa de acreditar nos outros também.
-    .sort((a, b) => (pontes.has(b.nome) ? 1 : 0) - (pontes.has(a.nome) ? 1 : 0));
+    // Três degraus, não dois: quem dosa melhor que a ponte → a ponte → o resto.
+    // Com dois degraus (ponte na frente do catálogo inteiro), graviton e barra
+    // negativa ocupavam as DUAS vagas de puxada vertical e a puxada na polia
+    // nunca era alcançada. Com nenhum, a ponte sumia do plano e o aviso passava
+    // a prometer um caminho que o plano não trazia.
+    .sort((a, b) => {
+      const rank = (e: ExercicioCat) =>
+        dosaMelhorQueAPonte.has(e.nome) ? 0 : pontes.has(e.nome) ? 1 : 2;
+      return rank(a) - rank(b);
+    });
 
   // O dia gerado carrega só o nome do exercício, e o perfil de resistência
   // depende do equipamento. Este mapa é a ponte entre os dois, para que o teto
@@ -1531,6 +1639,7 @@ export async function montarPlano(
   // substituto tem outros secundários), e é por isso que o invariante de teto
   // por sessão continua rodando na grade dos dois lados: se essa troca abrisse
   // um estouro, ele apareceria lá.
+  garantirRemadaEmDiaDeCostas(dias, disponiveis, p.preferenciaEquipamento, equipDe);
   diversificarNaSemana(dias, disponiveis, p.preferenciaEquipamento, equipDe);
 
   // E a ordem também só pode ser decidida no fim: `porPapel` rodava na montagem
@@ -1579,10 +1688,70 @@ export async function montarPlano(
   // escolhidas. Sete parágrafos, cinco sobre exercícios que a pessoa nunca
   // veria — e o aviso que importava, o da barra fixa, perdido no meio.
   const noPlano = new Set(dias.flatMap((d) => d.exercicios.map((e) => e.nome)));
-  const relevantes = substituicoes.filter((s) => noPlano.has(s.para));
-  if (relevantes.length) {
+  /** Quem, no plano, ocupa o mesmo grupo e o mesmo padrão de `nome`. */
+  const ocupantesDoPadrao = (nome: string): string[] => {
+    const c = catalogo.find((x) => x.nome === nome);
+    if (!c) return [];
+    const padrao = padraoDe(nome, c.grupo_primario);
+    return [...noPlano].filter((n) => {
+      const x = catalogo.find((y) => y.nome === n);
+      return !!x && x.grupo_primario === c.grupo_primario && padraoDe(n, c.grupo_primario) === padrao;
+    });
+  };
+
+  // ── E quando a ponte NÃO alcança o plano, o aviso diz isso ──────────────
+  //
+  // A regra de fila mudou (a ponte só fura a fila sem alternativa de carga
+  // ajustável), então o texto "entrou X no lugar" voltaria a ser a mentira que
+  // a fila existia para evitar — agora pela outra ponta. Aqui o aviso descreve
+  // o plano ENTREGUE: quem saiu, quem ocupou a vaga e por quê, com a ponte
+  // nomeada como caminho de volta em vez de como promessa não cumprida.
+  type FalaDaTroca = string | { de: string; para: string; ocupante: string };
+  const relevantes = substituicoes.flatMap<FalaDaTroca>((s) => {
+    if (noPlano.has(s.para)) return [s.motivo];
+    // ── O texto do "não entrou" vale SÓ para a barra fixa ──────────────────
+    //
+    // `ehPonte` marca os dois exercícios que a triagem do questionário
+    // pergunta por nome (`barraFixaReps`) e que têm um caminho de volta
+    // declarado em `FORCA_RELATIVA`. Só neles a ausência é notícia: a pessoa
+    // RESPONDEU quantas barras fixas faz, então ela sabe que perguntamos.
+    //
+    // Sem esta porta, o aviso voltava a ter sete parágrafos — o defeito que a
+    // linha `filter(noPlano.has)` existia para matar. Num plano de academia
+    // completa TODO padrão tem ocupante, então "flexão pique saiu e o
+    // desenvolvimento de máquina ocupou a vaga" passava a ser dito sobre
+    // exercícios que a pessoa nunca veria e sobre os quais ela nunca foi
+    // perguntada.
+    if (!s.ehPonte) return [];
+    const ocupantes = ocupantesDoPadrao(s.de).filter((n) => n !== s.de);
+    if (!ocupantes.length) return [];
+    return [{ de: s.de, para: s.para, ocupante: ocupantes[0] }];
+  });
+
+  // As duas barras fixas (pronada e supinada) saem juntas e caem no mesmo
+  // padrão, então o texto era o MESMO parágrafo duas vezes, com uma palavra
+  // diferente. Um parágrafo, com as duas nomeadas.
+  const foraPorBarra = relevantes.filter((x) => typeof x !== 'string') as {
+    de: string;
+    para: string;
+    ocupante: string;
+  }[];
+  const textos = relevantes.filter((x) => typeof x === 'string') as string[];
+  if (foraPorBarra.length) {
+    const nomes = foraPorBarra.map((x) => x.de);
+    const pontes = [...new Set(foraPorBarra.map((x) => x.para))];
+    textos.unshift(
+      `${nomes.join(' e ')} ${nomes.length > 1 ? 'pedem' : 'pede'} mais repetições limpas do que ` +
+        `você faz hoje, então ${nomes.length > 1 ? 'ficaram' : 'ficou'} fora do plano. ` +
+        `${foraPorBarra[0].ocupante} ocupou a vaga, porque ali a carga é escolhida no pino — dá ` +
+        `para dosar melhor até do que na versão assistida. ${pontes.join(' e ')} ` +
+        `${pontes.length > 1 ? 'continuam' : 'continua'} no catálogo e ${pontes.length > 1 ? 'são' : 'é'} ` +
+        `o caminho para a barra fixa em si: acrescente quando quiser treinar o movimento, e não só o músculo.`
+    );
+  }
+  if (textos.length) {
     avisos.push(
-      relevantes.map((s) => s.motivo).join(' ') +
+      textos.join(' ') +
         (p.barraFixaReps >= 1
           ? ` Quando você chegar a 6 barras fixas limpas, refaça o treino: ela volta como primeiro ` +
             `exercício do dia de costas.`
@@ -1750,7 +1919,17 @@ function aplicarVariacaoDoBloco(
   if (propagadas.length) aplicarPrescricao(dias);
 
   // ── Nível 2 — rodízio de acessórios entre as sessões do bloco ───────────
-  const rodadas = variarEntreSessoes(dias, disponiveis, trocar);
+  //
+  // A lista vai ORDENADA PELA PREFERÊNCIA. `variarEntreSessoes` escolhe a
+  // primeira alternativa que couber, e recebendo a ordem do catálogo ela
+  // ignorava por completo quem tinha marcado "prefiro máquina" — era esta a
+  // terceira causa do dia D sair como o "dia de peso livre" de quem pediu
+  // máquina, com 6 dos 12 exercícios em barra ou halter.
+  const rodadas = variarEntreSessoes(
+    dias,
+    ordenar(disponiveis, p.preferenciaEquipamento),
+    trocar
+  );
 
   if (propagadas.length || rodadas.length) {
     for (const d of dias) ordenarPorPapelNoDia(d, emFoco);
@@ -2460,6 +2639,85 @@ function trocaCabeNaSessao(
   return true;
 }
 
+/**
+ * Todo dia que treina costas puxa na HORIZONTAL pelo menos uma vez.
+ *
+ * ── A conta que obrigou esta função ──────────────────────────────────────
+ *
+ * **14 séries de empurrar horizontal contra 3 de remar**, na semana real. E
+ * nenhum aviso disparava, porque o volume total de costas (21) parecia igual ao
+ * de peito (21): o número estava certo e o conteúdo não. Duas causas somadas —
+ * o terra contava 29% do volume de costas sem puxar nada, e `costas:lombar`
+ * contava como padrão de costas coberto, então o dia PARECIA ter quatro padrões
+ * e tinha três.
+ *
+ * As duas foram corrigidas na raiz (o terra virou posterior; `NAO_COBRE` tirou
+ * o `lombar` da cobertura). Isto aqui é o piso que impede a conta de voltar por
+ * outro caminho: puxada vertical e extensão de ombro treinam o dorsal em
+ * comprimentos que a remada não treina, e vice-versa — um dia de costas sem
+ * remada é um dia sem trapézio médio, romboide e deltoide posterior, que é
+ * justamente o que a semana dele não tinha.
+ *
+ * Roda ANTES de `diversificarNaSemana` de propósito: a troca da semana precisa
+ * enxergar a remada já no lugar, senão ela conta o padrão como livre e desfaz.
+ * E usa `trocaCabeNaSessao`, a mesma régua dos três níveis de B8 — nenhuma
+ * série é acrescentada, nenhum teto é reaberto.
+ */
+function garantirRemadaEmDiaDeCostas(
+  dias: DiaGerado[],
+  disponiveis: ExercicioCat[],
+  preferencia: string,
+  equip: Equipamentos
+) {
+  for (const d of dias) {
+    const doGrupo = d.exercicios.filter((e) => e.grupo === 'costas');
+    // Com UM exercício de costas no dia, a vaga única vale mais na puxada: é o
+    // padrão de maior amplitude do dorsal, e a semana ainda tem outro dia.
+    if (doGrupo.length < 2) continue;
+    if (doGrupo.some((e) => padraoDe(e.nome, 'costas') === 'horizontal')) continue;
+
+    const noDia = new Set(d.exercicios.map((e) => e.nome));
+    const remadas = ordenar(
+      disponiveis.filter(
+        (e) =>
+          e.grupo_primario === 'costas' &&
+          !noDia.has(e.nome) &&
+          padraoDe(e.nome, 'costas') === 'horizontal'
+      ),
+      preferencia
+    );
+    if (!remadas.length) continue;
+
+    // ── E a remada de um dia não repete o PERFIL da do outro ───────────────
+    //
+    // Sem isto, esta função criava o defeito que B8 nível 2 mede: com
+    // preferência por máquina os dois dias recebiam a mesma remada de máquina —
+    // dois nomes e um estímulo. O rodízio da semana roda depois e conserta o
+    // que sobra; começar já variado é mais barato que consertar.
+    const perfisEmOutrosDias = new Set(
+      dias
+        .filter((x) => x !== d)
+        .flatMap((x) => x.exercicios)
+        .filter((e) => e.grupo === 'costas' && padraoDe(e.nome, 'costas') === 'horizontal')
+        .map((e) => perfilDeResistencia(e.nome, equip.get(e.nome)))
+    );
+    const inedita = remadas.filter(
+      (e) => !perfisEmOutrosDias.has(perfilDeResistencia(e.nome, e.equipamento))
+    );
+    const fila = inedita.length ? [...inedita, ...remadas] : remadas;
+
+    // Do último para o primeiro: a âncora do bloco alimenta o gráfico de
+    // progresso e só cede se não houver outra linha que sirva.
+    for (const alvo of [...doGrupo].reverse()) {
+      if (alvo === doGrupo[0]) continue;
+      const novo = fila.find((c) => trocaCabeNaSessao(d, alvo, c, equip));
+      if (!novo) continue;
+      d.exercicios[d.exercicios.indexOf(alvo)] = novoExercicio(novo, 'costas', alvo.series);
+      break;
+    }
+  }
+}
+
 function diversificarNaSemana(
   dias: DiaGerado[],
   disponiveis: ExercicioCat[],
@@ -2530,6 +2788,18 @@ function diversificarNaSemana(
       //
       // `trocaCabeNaSessao` continua valendo: o fallback afrouxa a heurística de
       // cobertura, nunca o teto de séries nem o de exercícios por padrão.
+      //
+      // ── E dentro do fallback, o MENOS pesado primeiro ────────────────────
+      //
+      // Entrar num padrão saturado já é o segundo melhor caminho; entrar nele
+      // com um composto PESADO é o pior. O invariante (b) mede exatamente isso
+      // e quebrou em 86 perfis quando o desenvolvimento passou a ser exigido na
+      // semana: num dia de empurrar, o ombro já recebeu 5+ séries fracionadas
+      // de deltoide anterior, e um desenvolvimento militar de barra em nona
+      // posição é o mesmo músculo pelo mesmo padrão, cansado, a 5-8 com 180 s.
+      // Um desenvolvimento de máquina no mesmo lugar entrega o padrão que
+      // faltava sem cobrar a fadiga que o dia não tem para dar.
+      cands.find((e) => cabeEnaoEstoura(e) && !ehPesado(e.nome)) ??
       cands.find((e) => cabeEnaoEstoura(e));
     if (!novo) return false;
     d.exercicios[d.exercicios.indexOf(alvo)] = novoExercicio(novo, alvo.grupo, alvo.series);
@@ -2561,9 +2831,66 @@ function diversificarNaSemana(
   // menos um puxar de verdade. Terra e hiperextensão são costas no catálogo e
   // treinam a cadeia posterior — uma semana inteira só com eles é uma semana
   // sem dorsal.
+  // ── Ombro entrou na lista, e por quê ────────────────────────────────────
+  //
+  // A semana real terminava com **zero desenvolvimento**, em 8 semanas
+  // seguidas. A causa não é escolha: em toda divisão o ombro chega DEPOIS do
+  // peito, e as séries de supino saturam o padrão `desenvolvimento` antes de o
+  // bloco de ombro abrir. A saturação é heurística de rendimento e está certa
+  // dentro do dia; o que ela não pode é apagar da SEMANA inteira o único padrão
+  // em que o deltoide recebe carga acima da cabeça. É o mesmo argumento que já
+  // valia para costas — "uma semana só com terra e hiperextensão é uma semana
+  // sem dorsal" — aplicado ao caso simétrico.
+  //
+  // O fallback abaixo (`cands.find(cabeEnaoEstoura)`) é o que faz isto
+  // funcionar: ele afrouxa a saturação, nunca o teto de séries.
+  //
+  // Com dor no ombro nada acontece: os desenvolvimentos já saíram de
+  // `disponiveis` pela contraindicação, `cands` fica vazio e a troca não ocorre.
   const ESSENCIAIS: Record<string, string[]> = {
     costas: ['vertical', 'horizontal', 'extensao_ombro'],
   };
+
+  /**
+   * Padrões que a semana precisa ter CADA UM — porque nada mais no plano treina
+   * aquele músculo.
+   *
+   * Diferente de `ESSENCIAIS`, que é "ao menos um destes": ali os três padrões
+   * de costas são intercambiáveis como prova de que a semana puxa alguma coisa.
+   * Aqui não há substituto nenhum, e é por isso que a régua é outra.
+   *
+   * **`lateral`** — a elevação lateral é o ÚNICO exercício de deltoide medial do
+   * catálogo, e ela é de halter. Assim que a preferência de equipamento passou
+   * a funcionar de verdade (`maquina` na frente de `cabo`), ela perdeu a vaga
+   * para um crucifixo inverso de máquina e o medial foi a ZERO na semana — com
+   * o posterior já recebendo meia série de cada remada. Preferência de
+   * equipamento é gosto; apagar um músculo não é.
+   *
+   * **`desenvolvimento`** — a semana real terminava com zero, em 8 semanas
+   * seguidas. Não é escolha: em toda divisão o ombro chega depois do peito, e as
+   * séries de supino saturam o padrão antes de o bloco de ombro abrir. A
+   * saturação está certa DENTRO do dia; o que ela não pode é apagar da semana o
+   * único padrão em que o deltoide recebe carga acima da cabeça.
+   *
+   * Com dor no ombro nada disto acontece: os desenvolvimentos já saíram de
+   * `disponiveis` pela contraindicação, os candidatos ficam vazios e a troca
+   * simplesmente não ocorre — a regra não ressuscita o que a dor tirou.
+   *
+   * ── A ORDEM da lista é significativa ─────────────────────────────────────
+   *
+   * Cada rodada consome uma aparição, e a mais RESTRITA vai primeiro. Um
+   * desenvolvimento é multiarticular e carrega tríceps e trapézio junto, então
+   * ele estoura o teto fracionado da sessão em dias que já têm supino e tríceps
+   * — sobram poucas vagas onde ele cabe. A elevação lateral carrega só o
+   * trapézio e cabe em quase qualquer lugar. Na ordem inversa, a lateral tomava
+   * a única vaga em que o desenvolvimento cabia e a semana terminava sem ele
+   * outra vez — medido, e é como esta linha ganhou uma ordem em vez de um
+   * conjunto.
+   */
+  const INSUBSTITUIVEIS: Record<string, string[]> = {
+    ombro: ['desenvolvimento', 'lateral'],
+  };
+
   for (const grupo of ['peito', 'costas', 'ombro', 'quadriceps', 'posterior', 'gluteo']) {
     const linhas: { d: DiaGerado; e: ExercicioGerado }[] = [];
     for (const d of dias)
@@ -2573,17 +2900,27 @@ function diversificarNaSemana(
     const padroes = new Set(linhas.map((x) => padraoDe(x.e.nome, grupo)));
     const essenciais = ESSENCIAIS[grupo];
     const faltaEssencial = essenciais && !essenciais.some((p) => padroes.has(p));
-    if (padroes.size >= 2 && !faltaEssencial) continue;
+    const faltando = (INSUBSTITUIVEIS[grupo] ?? []).filter((p) => !padroes.has(p));
+    if (padroes.size >= 2 && !faltaEssencial && !faltando.length) continue;
 
-    const proibidos = (c: ExercicioCat) => {
-      const p = padraoDe(c.nome, grupo);
-      // Proibido é o que JÁ está coberto — e, quando o grupo tem padrão
-      // essencial faltando, também tudo que não seja esse essencial. Sem a
-      // primeira metade a troca podia sair de `vertical` para `vertical` e a
-      // semana continuava com um padrão só.
-      if (padroes.has(p)) return true;
-      return essenciais ? !essenciais.includes(p) : false;
-    };
+    // Cada padrão insubstituível que falta ganha a sua própria tentativa, E a
+    // exigência genérica de variedade continua ganhando a dela — as duas, não
+    // uma OU outra. Com `faltando.length ? faltando : [null]` a rodada genérica
+    // deixava de rodar sempre que faltasse um insubstituível, e o grupo que
+    // tinha um padrão só na semana ficava com um padrão só: medido em **220
+    // perfis** da grade, todos com o ombro em `lateral` duas vezes e a troca
+    // genérica que antes o diversificava nunca sendo tentada.
+    const rodadas: (string | null)[] = [
+      ...faltando,
+      ...(padroes.size < 2 || faltaEssencial ? [null] : []),
+    ];
+
+    /** Quantas aparições cada padrão tem AGORA — vivo, porque as trocas mexem. */
+    const quantos = new Map<string, number>();
+    for (const x of linhas) {
+      const p = padraoDe(x.e.nome, grupo);
+      quantos.set(p, (quantos.get(p) ?? 0) + 1);
+    }
 
     // ── Da última para a primeira, e não só a última ────────────────────────
     //
@@ -2598,8 +2935,55 @@ function diversificarNaSemana(
     // precisa: a primeira aparição da semana só é trocada quando ela NÃO é um
     // composto pesado. É a carga do pesado que alimenta o gráfico e o e1RM;
     // trocar um crucifixo inverso de 2 séries não custa curva nenhuma.
-    const ordem = [...linhas.slice(1).reverse(), ...(ehPesado(linhas[0].e.nome) ? [] : [linhas[0]])];
-    for (const alvo of ordem) if (trocar(alvo.d, alvo.e, proibidos)) break;
+    const trocadas = new Set<ExercicioGerado>();
+    for (const exigido of rodadas) {
+      const proibidos = (c: ExercicioCat) => {
+        const p = padraoDe(c.nome, grupo);
+        // Quando um padrão insubstituível falta, só ele serve — trocar de um
+        // padrão coberto para outro coberto não devolve o músculo perdido.
+        if (exigido) return p !== exigido;
+        // Proibido é o que JÁ está coberto — e, quando o grupo tem padrão
+        // essencial faltando, também tudo que não seja esse essencial. Sem a
+        // primeira metade a troca podia sair de `vertical` para `vertical` e a
+        // semana continuava com um padrão só.
+        if (padroes.has(p)) return true;
+        return essenciais ? !essenciais.includes(p) : false;
+      };
+
+      const ordem = [
+        ...linhas.slice(1).reverse(),
+        ...(ehPesado(linhas[0].e.nome) ? [] : [linhas[0]]),
+      ].filter((x) => !trocadas.has(x.e));
+
+      for (const alvo of ordem) {
+        const meuPadrao = padraoDe(alvo.e.nome, grupo);
+        // Trocar a ÚLTIMA aparição de um padrão insubstituível para devolver
+        // outro só move o buraco de lugar. Quando o padrão aparece duas vezes,
+        // ceder uma das duas não custa nada — e era exatamente esse o caso do
+        // ombro com `lateral` nos dois dias.
+        if (
+          exigido &&
+          (INSUBSTITUIVEIS[grupo] ?? []).includes(meuPadrao) &&
+          (quantos.get(meuPadrao) ?? 0) <= 1
+        )
+          continue;
+        // A troca insubstituível não aceita composto PESADO: entrar num padrão
+        // que o dia já saturou de indireto já é o segundo melhor caminho, e
+        // fazê-lo com um pesado em nona posição é o defeito (b) — 5-8 com 180 s
+        // no mesmo deltoide anterior que o dia inteiro já gastou.
+        const filtro = exigido
+          ? (c: ExercicioCat) => proibidos(c) || ehPesado(c.nome)
+          : proibidos;
+        if (trocar(alvo.d, alvo.e, filtro)) {
+          trocadas.add(alvo.e);
+          const novoPadrao = exigido ?? meuPadrao;
+          quantos.set(meuPadrao, (quantos.get(meuPadrao) ?? 1) - 1);
+          quantos.set(novoPadrao, (quantos.get(novoPadrao) ?? 0) + 1);
+          padroes.add(novoPadrao);
+          break;
+        }
+      }
+    }
   }
 }
 
@@ -2739,8 +3123,12 @@ function aplicarPrescricao(dias: DiaGerado[]) {
       const pres = prescricaoDe(papel, e.nome, e.grupo, e.equipamento, e.tipoCarga);
       e.papel = papel;
       e.ancora = ancoras.has(e);
-      e.repsMin = e.porTempo ? 0 : pres.reps[0];
-      e.repsMax = e.porTempo ? 0 : pres.reps[1];
+      // Segundos quando a serie e por tempo. `descansoCorreto` continua
+      // recebendo `pres.reps[1]` de proposito: o desempate dele e por
+      // REPETICAO, e 60 segundos de prancha nao sao 60 repeticoes.
+      const duracao = duracaoDe(papel);
+      e.repsMin = e.porTempo ? duracao[0] : pres.reps[0];
+      e.repsMax = e.porTempo ? duracao[1] : pres.reps[1];
       e.descanso = descansoCorreto(e.nome, pres.reps[1], e.grupo, papel, e.equipamento, e.tipoCarga);
       // Série por tempo (prancha) não tem repetição em reserva: RIR é uma conta
       // de repetições que não existem ali. Dizer "RIR 2" numa prancha seria
@@ -2769,8 +3157,16 @@ function aplicarPrescricao(dias: DiaGerado[]) {
       // Uniarticular de carga alta (hip thrust, elevação pélvica com barra)
       // ENTRA: ele recebe prescrição de principal_media e é a maior carga
       // absoluta do grupo — é exatamente onde a aproximação rende.
+      //
+      // `e.ancora ||` SAIU da condição, e isto é o docblock acima passando a
+      // valer ao pé da letra ("no principal, e só nele"). As duas formas eram
+      // equivalentes até agora — todo âncora de carga ajustável e faixa curta
+      // era principal por construção — e deixaram de ser quando a remada alta
+      // ficou proibida de receber o papel: ela continua ABRINDO o bloco de
+      // ombro (posição), sem ser o exercício de referência dele (prescrição), e
+      // aproximação é prescrição.
       e.aquecimento =
-        !e.porTempo && e.tipoCarga === 'peso_reps' && pres.reps[1] <= 12 && (e.ancora || papel === 'principal')
+        !e.porTempo && e.tipoCarga === 'peso_reps' && pres.reps[1] <= 12 && papel === 'principal'
           ? 2
           : 0;
     }
@@ -3271,6 +3667,16 @@ function avisarExcessoIndireto(dias: DiaGerado[], p: PerfilDoTreino, avisos: str
     const indireto = v - (direto[g] ?? 0);
     // Só entra quando estourou de verdade E a causa é o volume indireto.
     if (v <= alvo * 1.3 || indireto < v / 2) continue;
+    // ── E nunca sobre um grupo com ZERO série direta ───────────────────────
+    //
+    // O aviso existe para explicar por que o trabalho direto ficou ENXUTO, e
+    // "enxuto" pressupõe que existe algum. Com zero, a frase "acrescentar
+    // exercício por conta aí só custa recuperação" desencoraja o usuário a
+    // treinar um músculo que ele não treina — que é literalmente o defeito B9,
+    // reaparecendo pela outra ponta assim que as remadas passaram a declarar
+    // trapézio. Zero série direta pede a conversa oposta, e enquanto ela não
+    // existir o silêncio é mais honesto que o texto errado.
+    if (!(direto[g] > 0)) continue;
     estourados.push(`${COMO_SE_FALA[g] ?? g} (${Math.round(v)}, sendo ${direto[g] ?? 0} diretas)`);
   }
 

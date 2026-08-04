@@ -290,11 +290,30 @@ export function variarEntreSessoes<
 
       for (const { d, e } of doDia) {
         if (e.ancora) continue;
-        // Só repete se o mesmo exercício está no dia de referência.
-        if (!doPrimeiro.some((x) => x.e.nome === e.nome)) continue;
 
         const padrao = padraoDe(e.nome, grupo);
         const perfilAtual = perfilDe(e.nome, e.equipamento);
+
+        // ── "Repete" é PADRÃO + PERFIL, não o nome ────────────────────────
+        //
+        // A régua era `x.e.nome === e.nome`, e ela deixava passar exatamente o
+        // que esta função existe para impedir: duas remadas de MÁQUINA
+        // diferentes, uma em cada dia, são dois nomes e um estímulo — mesmo
+        // padrão, mesma curva de carga. O invariante que mede o nível 2 sempre
+        // falou em `padrão:perfil`; era a função que falava em nome.
+        //
+        // Ficou visível quando a preferência de equipamento passou a desempatar
+        // de verdade (`maquina` na frente de `cabo`): os dois dias passaram a
+        // escolher máquinas diferentes do mesmo padrão, e o rodízio não via
+        // repetição nenhuma. Medido: 33 pares de 973 na grade.
+        if (
+          !doPrimeiro.some(
+            (x) =>
+              padraoDe(x.e.nome, grupo) === padrao &&
+              perfilDe(x.e.nome, x.e.equipamento) === perfilAtual
+          )
+        )
+          continue;
         // Todas as alternativas, não a primeira: `trocar` é quem conhece o teto
         // da sessão e o teto por padrão, e desistir na primeira recusa deixaria
         // a variedade dependendo da ordem do catálogo. Foi assim que a troca da

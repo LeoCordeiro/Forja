@@ -1,0 +1,72 @@
+
+════════════════════════════════════════════════════════════════════════════════════════════════════
+DIVISÃO: Superior / Inferior
+════════════════════════════════════════════════════════════════════════════════════════════════════
+
+── A — Superior  ·  84 min + 30 min de cardio ────────────────────────────────────────────────
+   EXERCÍCIO                         GRUPO       PADRÃO            PAPEL        SÉR  REPS    RIR   DESC  EQUIP    SECUNDÁRIOS
+ ▶ Supino máquina                    peito       horizontal        principal    4    6-10    1-2   150   maquina  triceps,ombro (+2 aprox.)
+   Supino inclinado máquina          peito       inclinado         complementar 3    8-12    1-2   150   maquina  ombro,triceps
+   Voador (peck deck)                peito       abertura          isolador     3    10-15   0-2   90    maquina  ombro
+ ▶ Puxada frontal na polia           costas      vertical          principal    4    6-10    1-2   150   maquina  biceps (+2 aprox.)
+   Remada baixa na polia             costas      horizontal        complementar 3    8-12    1-2   150   maquina  biceps,trapezio,ombro
+ ▶ Elevação lateral                  ombro       lateral           isolador     4    10-15   0-2   90    halter   trapezio
+ ▶ Tríceps testa                     triceps     acima             isolador     3    10-15   0-2   90    barra    
+   Tríceps na máquina                triceps     polia             isolador     2    10-15   0-2   90    maquina  
+ ▶ Rosca scott                       biceps      apoiada           isolador     3    10-15   0-2   90    maquina  
+   Rosca na polia alta               biceps      ombro_flexionado  finalizador  3    12-20   0-1   60    cabo     
+   Bicicleta ergométrica             cardio      outro             -            1    1800-1800s-     0     maquina  quadriceps
+
+── B — Inferior  ·  89 min + 30 min de cardio ────────────────────────────────────────────────
+   EXERCÍCIO                         GRUPO       PADRÃO            PAPEL        SÉR  REPS    RIR   DESC  EQUIP    SECUNDÁRIOS
+ ▶ Leg press                         quadriceps  prensa            principal    2    6-10    1-2   150   maquina  gluteo (+2 aprox.)
+   Agachamento no smith              quadriceps  agachamento       complementar 3    8-12    1-2   150   maquina  gluteo
+   Cadeira extensora                 quadriceps  extensao_joelho   isolador     3    10-15   0-2   90    maquina  
+ ▶ Levantamento terra                posterior   quadril           principal    3    5-8     2-3   180   barra    gluteo,quadriceps,costas,trapezio,antebraco (+2 aprox.)
+   Glute ham raise na máquina        posterior   joelho_excentrico complementar 3    8-12    1-2   150   maquina  gluteo
+   Mesa flexora                      posterior   joelho_deitado    isolador     3    10-15   0-2   90    maquina  panturrilha
+ ▶ Pull through na polia             gluteo      hinge             isolador     4    10-15   0-2   90    cabo     posterior
+ ▶ Panturrilha em pé                 panturrilha joelho_estendido  isolador     3    12-20   0-2   60    maquina  
+   Panturrilha sentado               panturrilha joelho_fletido    isolador     3    12-20   0-2   60    maquina  
+ ▶ Abdominal na polia                abdomen     supra             isolador     4    12-20   0-2   60    cabo     
+   Prancha                           abdomen     antiextensao      isolador     3    30-60s  -     60    livre    ombro
+   Bicicleta ergométrica             cardio      outro             -            1    1800-1800s-     0     maquina  quadriceps
+
+── C — Superior  ·  86 min + 30 min de cardio ────────────────────────────────────────────────
+   EXERCÍCIO                         GRUPO       PADRÃO            PAPEL        SÉR  REPS    RIR   DESC  EQUIP    SECUNDÁRIOS
+ ▶ Supino máquina                    peito       horizontal        principal    4    6-10    1-2   150   maquina  triceps,ombro (+2 aprox.)
+   Crossover na polia                peito       abertura          isolador     4    10-15   0-2   90    cabo     ombro
+ ▶ Puxada frontal na polia           costas      vertical          principal    4    6-10    1-2   150   maquina  biceps (+2 aprox.)
+   Remada curvada com barra          costas      horizontal        complementar 4    8-12    1-2   150   barra    biceps,trapezio,ombro
+ ▶ Desenvolvimento máquina           ombro       desenvolvimento   principal    4    6-10    1-2   150   maquina  triceps,trapezio (+2 aprox.)
+ ▶ Supino fechado                    triceps     composto          principal    3    5-8     2-3   180   barra    peito,ombro (+2 aprox.)
+ ▶ Rosca scott                       biceps      apoiada           isolador     3    10-15   0-2   90    maquina  
+   Rosca na máquina                  biceps      livre             finalizador  3    12-20   0-1   60    maquina  antebraco
+   Bicicleta ergométrica             cardio      outro             -            1    1800-1800s-     0     maquina  quadriceps
+
+── D — Inferior  ·  87 min ────────────────────────────────────────────────
+   EXERCÍCIO                         GRUPO       PADRÃO            PAPEL        SÉR  REPS    RIR   DESC  EQUIP    SECUNDÁRIOS
+ ▶ Levantamento terra                posterior   quadril           principal    4    5-8     2-3   180   barra    gluteo,quadriceps,costas,trapezio,antebraco (+2 aprox.)
+   Mesa flexora                      posterior   joelho_deitado    isolador     3    10-15   0-2   90    maquina  panturrilha
+ ▶ Leg press                         quadriceps  prensa            principal    3    6-10    1-2   150   maquina  gluteo (+2 aprox.)
+   Agachamento goblet                quadriceps  agachamento       complementar 3    8-12    1-2   150   halter   gluteo
+   Cadeira extensora                 quadriceps  extensao_joelho   isolador     3    10-15   0-2   90    maquina  
+ ▶ Pull through na polia             gluteo      hinge             isolador     3    10-15   0-2   90    cabo     posterior
+   Abdução na máquina                gluteo      abducao           isolador     4    10-15   0-2   90    maquina  
+ ▶ Panturrilha em pé                 panturrilha joelho_estendido  isolador     4    12-20   0-2   60    maquina  
+   Panturrilha sentado               panturrilha joelho_fletido    isolador     4    12-20   0-2   60    maquina  
+ ▶ Abdominal na polia                abdomen     supra             finalizador  4    12-20   0-2   60    cabo     
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+VOLUME SEMANAL (fracionado)
+  ombro 23.5  ·  gluteo 21.5  ·  quadriceps 20.5  ·  peito 19.5  ·  biceps 19.5  ·  posterior 19.5  ·  costas 18.5  ·  panturrilha 17  ·  triceps 15.5  ·  trapezio 11  ·  abdomen 11  ·  antebraco 5
+DIRETAS
+  peito 18  ·  quadriceps 17  ·  posterior 16  ·  costas 15  ·  panturrilha 14  ·  biceps 12  ·  gluteo 11  ·  abdomen 11  ·  ombro 8  ·  triceps 8
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+AVISOS
+  • Cardio: 3 sessões de 30 min na semana (bicicleta ergométrica, Zona 2 — dá para conversar). Esses minutos NÃO estão no tempo estimado de cada treino: a estimativa mede a musculação, que é o que você respondeu no questionário. Some 30 min ao dia em que o cardio aparece, ou faça em outro horário — zona 2 (bicicleta, elíptico ou caminhada inclinada) rende igual separado da musculação.
+  • ombro (24, sendo 8 diretas) — nesses grupos o total semanal passa do alvo por causa dos compostos, que os treinam junto. Por isso o trabalho DIRETO neles ficou enxuto: não é esquecimento, é a conta fechando. Acrescentar exercício por conta aí só custa recuperação.
+  • ombro (23,5), quadríceps (20,5), glúteo (21,5) passam do teto útil de 20 séries por semana sem você ter pedido ênfase neles. O que empurra para cima é o volume indireto dos compostos, não série que alguém prescreveu de propósito — cada série a mais ali rende cada vez menos e cobra recuperação igual.
+  • Barra fixa e Barra fixa supinada pedem mais repetições limpas do que você faz hoje, então ficaram fora do plano. Puxada frontal na polia ocupou a vaga, porque ali a carga é escolhida no pino — dá para dosar melhor até do que na versão assistida. Puxada assistida no graviton e Barra fixa negativa continuam no catálogo e são o caminho para a barra fixa em si: acrescente quando quiser treinar o movimento, e não só o músculo. Flexão nórdica exige sustentar o próprio peso e ainda não cabe. Entrou Mesa flexora no lugar, que treina o mesmo músculo com carga que você escolhe. Remada invertida exige sustentar o próprio peso e ainda não cabe. Entrou Remada baixa na polia no lugar, que treina o mesmo músculo com carga que você escolhe. Quando você chegar a 6 barras fixas limpas, refaça o treino: ela volta como primeiro exercício do dia de costas.
+
