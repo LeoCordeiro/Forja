@@ -24,7 +24,7 @@ Prescrição-alvo (o que devia sair): `prescricao-alvo.md` na mesma pasta.
 | G2 | Prescrição com papel | A5 A6 A7 A9 A10 + F8 | **feita e no ar** — commit `5374f1e`, build `f11ddcbac48c`. Reprovada por qa (3 ALTOs) E fitness-scientist (2 CRÍTICOS + 5 ALTOs) na 1ª entrega; corrigida e reverificada. Gate final conferido pelo Claude: **27 falhas contra o código em produção, 0 depois**. Ver "Validação de G2" |
 | G2.1 | Sobras do G2 | ALTO-3 (backfill de papel) + M1 M2 M3-texto + variedade semanal | **no ar** — commit `bb6babf`. Gate: 23 falhas no gerador + 5 na migração contra `63c716b`, 0 depois. **Reprovada no cross-review do qa** (2 ALTOs + 4 MÉDIOS + 4 BAIXOs) — ver "Correção do cross-review de G2.1" |
 | G2.2 | Correção do cross-review de G2.1 | ALTO-1 (chaves de local) ALTO-2 (papel congelado) M1 M2 M3 M4 + 4 BAIXOs | **feita, não commitada** — gate: **10 falhas no gerador + 2 na migração contra `bacf85c`, 0 depois** |
-| G3 | Treinador que explica e varia | execução detalhada, técnicas de intensidade, objetivo do exercício, variação entre ciclos | pendente |
+| G3 | Treinador que explica e varia | execução detalhada, técnicas de intensidade, objetivo do exercício, variação entre ciclos | **feita, não commitada** — gate: **30 falhas contra `c241562`, 0 depois**. Ver "Validação de G3" |
 | 4 | Série em 1 toque | U1 U2 U5 U6 U7 | **feita, não commitada** — gate: **33 falhas contra `bb6babf`, 0 depois**. Ver "Validação da fase 4" |
 | 5 | Segurança e nutrição | F5 N3 N6 N8 U8 | **feita, não commitada** — gate: **50 falhas contra `ee156d5`, 0 depois**. Ver "Validação da fase 5" |
 | 6 | Sobras do P2 | F7 F9 F10 N4 N10 | pendente |
@@ -137,6 +137,149 @@ estão no código (`ACSM 2026` em volume.ts, Baz-Valle/Coleman em programa.ts,
 Refalo/Nuzzo/Haugen em gerador.ts) NÃO foram verificadas — não tratar como
 evidência nem reaproveitar em texto de produto sem WebFetch antes. As 5 fontes
 verificadas estão no cabeçalho do fitness.md.
+
+## Validação de G3 — Treinador que explica e varia (04/08/2026)
+
+Working tree, sem commit. `tsc --noEmit` limpo. `testar:gerador` e
+`testar:migracao` 100%. **Sem mudança de schema** — a âncora do bloco é derivada
+de `routine_exercises.papel` (v16, já preenchida pelo backfill de G2.1) e a
+quebra de curva é reconstruída comparando a rotina ativa com a última arquivada.
+Nada a responder sobre "quem já está com o banco estragado": nenhuma coluna
+nova, nenhuma linha reescrita, e quem trocou de bloco ANTES desta fase também
+ganha a quebra, porque rotina antiga nunca é apagada (`ativa = 0`).
+
+**O gate.** As seções 36-40 foram escritas antes de qualquer correção e rodadas
+contra `c241562` num worktree com o MESMO arquivo de teste: **30 falhas**.
+Nenhuma asserção de G1/G2/G2.1/Fase 4/Fase 5 quebrou dos dois lados. Depois: **0**.
+
+| Invariante | UNIDADE | contra `c241562` | depois |
+|---|---|---|---|
+| 36. cadência, amplitude e erro derivados | **exercício** (117) | 9 | 0 |
+| 37. técnica por papel e fase (B7) | **exercício × fase** | 8 | 0 |
+| 38. objetivo específico na sessão | **exercício × sessão** | 5 | 0 |
+| 39. B8 níveis 0 e 2 | **bloco** (grade de 1.350) | 4 | 0 |
+| 40. B8 nível 1 | **transição entre blocos** | 6 | 0 |
+
+**Duas réguas nasceram erradas e foram corrigidas ANTES de virar código.** A
+primeira cobrava "mesma ÂNCORA no bloco" e media a coisa errada: no plano real o
+ombro abre o dia A com `Face pull` (nenhum principal ali) e o dia D com
+`Remada alta` (principal). Cobrar o mesmo nome obrigaria a pôr desenvolvimento
+pesado num dia de empurrar — o que A9 proíbe e o invariante (b) já testa. B8 diz
+"o **principal** de cada grupo"; a régua passou a medir o principal. A segunda
+cobrava variedade de perfil onde a única alternativa era peso do corpo (goblet →
+agachamento sem carga): variedade que custa carga é regressão com outro nome.
+
+**1. Execução — a camada de tempo, e ela é cadência.** `execucao.ts` deriva
+cadência, amplitude e erro comum de `padraoDe`/`picoDeTensao`/
+`perfilDeResistencia`/`articulacoesDe`. **117 de 117** exercícios ganharam
+cadência: **112 em 2-0-1**, **2 em 4-0-1** (excêntrico puro, protocolo próprio) e
+3 sem cadência por serem série por tempo. Amplitude: 4 textos derivados do pico
+de tensão. Erro comum: 9 textos derivados da classe mecânica.
+
+**A pausa de 1 s no fundo foi implementada, medida e REJEITADA.** Ela daria 4 s
+por repetição a 42 dos 117 exercícios (todo pico alongado). Como `duracao.ts`
+passou a consumir a cadência, o custo apareceu na grade de 1.350 perfis:
+
+| | sem pausa | com pausa |
+|---|---|---|
+| séries de força no total | 92.994 | **91.810 (−1.184)** |
+| exercícios no total | 29.212 | 28.897 (−315) |
+| sessões estourando o tempo pedido | 1.416 | **1.486 (+70)** |
+
+1,3% do volume de força do app inteiro, por algo que Krzysztofik 2019 — a única
+fonte aberta sobre tempo de fase — **não prescreve**. "Não quique no fundo" ficou
+em `amplitudeDe` e `erroComumDe`, custa zero segundo e diz o mesmo.
+
+**E a `dica` do catálogo parou de mentir.** A tela rotulava `dica` como "Erro
+mais comum", e para boa parte das linhas isso é falso ("Melhor exercício para
+peitoral superior" não é erro). O erro agora é derivado e sempre verdadeiro; a
+`dica` continua, como "Dica deste exercício".
+
+**2. Técnicas de intensidade — 1 prescrita de 7 catalogadas.**
+
+| técnica | prescrita? | por quê |
+|---|---|---|
+| drop set | **sim** | Sødal 2023: sem diferença vs tradicional (**p = 0,392**), metade a um terço do tempo. O ganho declarado é TEMPO |
+| falha momentânea | não | Refalo 2023: não é superior. E o RIR do papel já diz onde parar — dois botões para a mesma decisão |
+| rest-pause | não | sem evidência verificada; prática comum, declarada como tal |
+| **myo-reps** | **não** | **nenhuma fonte aberta**; fica descrita, nunca prescrita |
+| **pré-exaustão** | **não, CONTRAINDICADA** | Krzysztofik 2019: reduz o volume no multiarticular seguinte sem vantagem |
+| BFR / excêntrico acentuado | não | exigem pressão de oclusão medida e parceiro |
+
+Na grade (4.725 sessões × 4 fases): **831 aplicações, todas em `finalizador`,
+nunca mais de 1 por sessão, zero na readaptação e zero no deload**. A primeira
+versão aceitava qualquer isolador e prescrevia **3.169** (2.338 em isolador
+comum) — mais do que B7 autoriza, porque o único ganho medido é tempo e oferecer
+tempo a quem não precisa é vender benefício inexistente. Sem aperto de relógio,
+só o finalizador; com aperto, o teto de 2 abre.
+
+**Negativa lenta NÃO está em `tecnicas.ts`** — ela é cadência, mora em
+`execucao.ts`, e o invariante proíbe que apareça nas duas casas.
+
+**3. Objetivo específico — 29.192 linhas, 177 frases distintas, 0 repetidas
+dentro do mesmo grupo no mesmo dia.** A frase sai de `padrão + perfil de
+resistência + pico`, e a unicidade não é sorte: `cabeNoPadrao` só aceita um
+segundo exercício do mesmo padrão quando o perfil é outro. `PORQUE_PAPEL` mudou
+de `papel.ts` para `porque.ts` — duas casas para "por que este exercício está
+aqui" é como o crossover virou composto numa função e abertura em outra.
+
+**4. B8, os três níveis.**
+
+*Nível 2 — o candidato 14 fechado, medido na GRADE (não em cenário nomeado).*
+Nos 5 perfis escolhidos a dedo o número era 0 dos dois lados; na grade eram 8, e
+todos com **dor** — a régua não descontava o que a dor proíbe, exatamente o
+defeito que G2.1 achou na variedade semanal (168 que eram 114). Com a régua
+certa: **0 de 1.027 pares** repetem os acessórios, e **0** mantêm o mesmo perfil
+de resistência dentro do padrão. No dia do print (4 dias, foco peito, máquina):
+
+| | dia A | dia D |
+|---|---|---|
+| âncora | Supino máquina | **Supino máquina** (nível 0 preservado) |
+| inclinado | Supino inclinado **máquina** | Supino inclinado **com barra** |
+| abertura | Crossover **na polia** | Crucifixo **com halteres** |
+| tríceps 2º | Tríceps **na polia** | Tríceps **na máquina** |
+
+*Nível 0 — a garantia é a DECLARAÇÃO, não o zero.* "Dois principais no mesmo
+bloco" cai de **297 para 272** em 900 blocos. Prometer zero seria inatingível —
+seria pedir que o gerador violasse a variedade de padrão da semana (invariante
+(l)) e o teto de 2 aparições do mesmo pesado (invariante (i)). Na grade de 1.350
+perfis: **428 de 1.703** grupos terminam com duas referências, por
+`colapsaPadrao` (361), `pesado3x` (64) e regra da sessão (3) — e **todas as 428
+são declaradas no plano**, com a frase "compare a carga de cada exercício com ele
+mesmo, nunca entre os dois". Foi a primeira versão desta correção que quebrou o
+invariante (l) em **81 perfis** (costas com 2 dias virando só `horizontal`) e o
+(i) em **22** (`Levantamento terra` em 3 dias).
+
+*Nível 1 — a unidade que nada media.* `montarPlano` passou a aceitar
+`ancorasAnteriores` e a devolver `quebras`. Em 900 transições: **1.252 de 2.788
+grupos (44,9%) trocam de âncora**, **0 trocam de padrão**, e **1.252 quebras
+declaradas** — uma para cada troca. `regerarTreino` alimenta isso lendo a rotina
+ativa antes de arquivá-la; o onboarding não passa nada, porque não existe bloco
+anterior. A tela do exercício mostra a quebra ACIMA do gráfico, com dois textos
+("esta curva termina aqui" / "começa do zero").
+
+**Régua duplicada evitada em dois pontos:** `trocaCabeNaSessao` foi extraída de
+`diversificarNaSemana` e agora serve os quatro que trocam; `compararNoBloco` /
+`abridorDoGrupo` saíram de `ordenarPorPapelNoDia` e o harness usa a MESMA função
+para explicar recusas, em vez de uma cópia do comparador.
+
+**A trava de ordem, na segunda tentativa.** A primeira exigia o mesmo tier de
+fadiga e era grosseira nos dois sentidos: recusava 4 trocas seguras da grade
+(`Agachamento búlgaro` → `Afundo com barra` num bloco que já abre com
+`Leg press`) e não garantia nada quando o substituto do mesmo tier vencia o
+desempate por pico. A régua exata é a pergunta direta — com o substituto no
+lugar, quem abre o bloco continua sendo quem abria?
+
+**Validação no navegador: INCOMPLETA, e isto é uma falha do gate.** O app sobe e
+renderiza a 390×844 com **zero erro de console**, mas o onboarding não foi
+dirigido de ponta a ponta nesta sessão: os chips de escolha só respondem a
+`PointerEvent` sintético em JS e os botões grandes só ao mouse do CDP, e mandar
+os dois num chip marca e desmarca. Sem perfil o app redireciona toda rota para
+`/onboarding`, então **nenhuma tela nova foi vista rodando**: a camada de tempo
+na tela do exercício, o objetivo na tela do dia, a técnica no executor e a quebra
+de curva no gráfico estão cobertas só pelas asserções de fonte das seções 36-40
+(que provam que o fio está ligado, não que a tela está boa). **Conferir as quatro
+no celular, e refazer o treino duas vezes para ver a quebra de âncora.**
 
 ## Validação da fase 5 — Segurança e nutrição (04/08/2026)
 
@@ -911,6 +1054,34 @@ Da fase 2 (31/07 — fitness-scientist R1-R8 + descobertas da validação):
     par natural da readaptação, melhor custo/benefício do relatório original
     ainda não implementado (já está na fase 3 do roadmap).
 
+De G3 (04/08 — achados medidos durante a implementação, NÃO corrigidos):
+
+41. **A rotação de âncora entre blocos tem UM passo de memória, e oscila A-B-A-B.**
+    `escolherPrincipalDoBloco` recebe só a âncora do bloco anterior, então com 3+
+    exercícios no mesmo padrão ela alterna entre dois e nunca chega no terceiro.
+    Medido: **1.252 de 1.252** transições voltam ao exercício do bloco 1 no bloco
+    3. Não é errado (o padrão é preservado e a quebra é declarada nas duas
+    pontas), e tem até um efeito bom não intencional — voltar a A rejunta a curva
+    de A, que continua no banco. Fechar de verdade exige ler as N últimas rotinas
+    arquivadas, o que o schema já permite (nada é apagado).
+42. **`tecnicasDaSessao` não sabe se a sessão está apertada no relógio.**
+    `apertadoNoTempo` existe, tem o teto de 2 ligado nele, e **ninguém passa
+    `true`** — a informação existe em `estimarDuracao` vs `minutosPorDia` e não
+    chega até aqui. Consequência: a segunda aplicação de B7 é inalcançável hoje,
+    do mesmo jeito que os 180 s eram antes de A5. O invariante mede o teto, não a
+    segunda aplicação, então ele passa nos dois mundos.
+43. **`quebrasDeAncoraSalvas` compara a rotina ativa com a ÚLTIMA arquivada por
+    data.** Quem regerou o treino três vezes no mesmo dia tem três rotinas com
+    `criado_em` próximos, e a "anterior" é a penúltima regeração, não o bloco
+    anterior de verdade. O efeito é uma quebra a mais no gráfico, nunca uma a
+    menos. Fechar exige distinguir "bloco novo" de "regerei porque errei uma
+    resposta" — que é uma decisão de produto, não de código.
+44. **Nenhuma tela de G3 foi vista rodando no navegador.** Ver a seção de
+    validação: sem perfil o app redireciona tudo para `/onboarding`, e o
+    onboarding não foi dirigido de ponta a ponta. As asserções de fonte provam
+    que o fio está ligado; não provam layout, contraste nem alvo de toque das
+    linhas novas.
+
 De G1 (03/08 — achados encontrados durante a implementação, nenhum virou código):
 
 12. **A tela do dia e o gerador discordam sobre ORDEM — precisa do Leonardo.**
@@ -930,11 +1101,12 @@ De G1 (03/08 — achados encontrados durante a implementação, nenhum virou có
     duas de perna: cada grupo 2× na semana" e o split com foco superior é 3 de
     tronco + 1 de perna. Pré-existente (o split antigo também era 3+1), e agora
     fica ao lado do texto correto sobre frequência.
-14. **Peito repete os mesmos 3 exercícios nos dias A e D.** O rodízio (`rodar`)
-    funciona no nível dos candidatos, mas com preferência "máquina" o melhor de
-    cada padrão é o mesmo nos dois dias, e o teto por padrão fecha a porta para
-    o resto. É o **nível 2 de B8** (rodízio DENTRO do padrão entre sessões), que
-    é G3 — anotado, não implementado.
+14. ~~**Peito repete os mesmos 3 exercícios nos dias A e D.**~~ — **feito em
+    G3** (B8 nível 2). `variarEntreSessoes` roda o acessório DENTRO do padrão
+    trocando o perfil de resistência. Medido na grade com a régua que desconta
+    dor: **0 de 1.027 pares** repetem. O critério de aceite registrado foi
+    cumprido no dia do print: inclinado máquina → barra, crossover na polia →
+    crucifixo com halteres, com o `Supino máquina` intacto como âncora.
 15. **Panturrilha some do plano inteiro** com foco inferior em 3 dias (1 → 0
     aparições, por corte de tempo). Achado do teste de frequência; o teste
     restringe a asserção a grupo grande justamente por isso.

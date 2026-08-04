@@ -621,20 +621,16 @@ export const LABEL_PAPEL: Record<Papel, string> = {
   finalizador: 'Finalizador',
 };
 
-/**
- * Por que este exercício está aqui — em uma linha, para a tela do dia.
- *
- * O papel já é a resposta estrutural; isto só a escreve como se fala.
- */
-export const PORQUE_PAPEL: Record<Papel, string> = {
-  principal:
-    'Abre o grupo e é a carga que o app compara semana a semana. Faça descansado, com técnica limpa.',
-
-  complementar:
-    'Mesmo grupo, padrão de movimento diferente do principal — cobre o que ele não cobre.',
-  isolador: 'Um músculo só, na posição em que os compostos do dia não o carregam.',
-  finalizador: 'Fecha a sessão. É onde dá para chegar perto da falha sem custo de coordenação.',
-};
+// `PORQUE_PAPEL` MUDOU DE CASA — mora em `porque.ts`, junto com a camada
+// específica ("o que ESTE exercício acrescenta que os outros do dia não
+// acrescentam").
+//
+// Ele podia ter ficado aqui: é um texto por papel, e papel é assunto deste
+// arquivo. O motivo de mover é o mesmo que apagou `descansoLegado` vinte linhas
+// acima — duas casas para a mesma pergunta é como o app começa a se contradizer.
+// "Por que este exercício está aqui" passou a ter DUAS respostas em G3 (a
+// estrutural e a específica), e mantê-las em arquivos diferentes garantia que
+// alguém escreveria a terceira sem ver as outras duas.
 
 // ── Cobertura indireta (A9) ───────────────────────────────────────────────
 

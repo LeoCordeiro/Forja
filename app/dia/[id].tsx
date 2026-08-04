@@ -35,6 +35,8 @@ import {
   textoRir,
   type PapelDaLinha,
 } from '@/features/treino/papel';
+import { porqueEsteExercicio } from '@/features/treino/porque';
+import { execucaoDe } from '@/features/treino/execucao';
 import { analisarOrdem } from '@/features/treino/ordem';
 import { emMinutos, estimarDuracao } from '@/features/treino/duracao';
 import { buzz } from '@/shared/utils/haptics';
@@ -245,6 +247,27 @@ export default function DiaDeTreino() {
                           ? ` · ${ABRE_O_GRUPO}`
                           : ''}
                         {ex.aquecimento_series > 0 ? ` · +${ex.aquecimento_series} aproximações` : ''}
+                        {' · '}
+                        {execucaoDe(ex.nome, ex.grupo_primario, ex.equipamento, ex.tipo_carga)
+                          .cadenciaTexto}
+                      </Txt>
+                    ) : null}
+                    {/* ── O objetivo ESPECÍFICO (G3) ────────────────────────
+                        O papel acima responde a função na sessão, e responde
+                        igual para os dois isoladores de peito do mesmo dia.
+                        Esta linha responde o que ESTE acrescenta que os outros
+                        do dia não acrescentam — e por isso ela recebe a sessão
+                        inteira, não só a linha. */}
+                    {ex.grupo_primario !== 'cardio' ? (
+                      <Txt v="small" size={11} cor={colors.textDim}>
+                        {porqueEsteExercicio(
+                          { nome: ex.nome, grupo: ex.grupo_primario, equipamento: ex.equipamento },
+                          dados!.exs.map((o) => ({
+                            nome: o.nome,
+                            grupo: o.grupo_primario,
+                            equipamento: o.equipamento,
+                          }))
+                        )}
                       </Txt>
                     ) : null}
                   </Press>

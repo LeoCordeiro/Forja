@@ -125,6 +125,175 @@ const bloqueado = (ex, regiao) => {
   return (REGIOES_DOR.find((x) => x.chave === regiao)?.evitar ?? []).includes(ex.nome);
 };
 
+// ── Helpers de G3, declarados AQUI EM CIMA de propósito ───────────────────
+//
+// A seção 39 (B8 nível 2) mede na GRADE de 1.350 perfis, não em cenários
+// nomeados — a lição do cross-review de G1, em que as asserções novas passaram
+// contra o código defeituoso porque rodavam só nos 9 cenários escolhidos a dedo.
+// A grade roda na seção 16, muito acima, então o acumulador e os helpers dele
+// precisam existir antes: um `const` declarado lá embaixo estaria em zona morta
+// temporal na hora em que a seção 16 rodasse.
+
+/** Catálogo de força na forma que os módulos de G3 recebem. */
+const CAT_FORCA = TODOS.filter((e) => e.grupo_primario !== 'cardio');
+
+/** Equipamentos que o local de fato tem — chave estrita, sem o fallback mudo. */
+const equipDoLocal = (chave) => new Set(LOCAIS.find((l) => l.chave === chave)?.equipamentos ?? []);
+
+/** Perfil de resistência pelo EQUIPAMENTO do catálogo, que é a fonte do projeto. */
+const perfilResDe = (nome) => {
+  const cat = CAT_FORCA.find((e) => e.nome === nome);
+  return cat?.equipamento === 'livre' ? 'corporal' : (cat?.equipamento ?? 'corporal');
+};
+const cargaDoCatalogo = (nome) =>
+  CAT_FORCA.find((e) => e.nome === nome)?.tipo_carga ?? 'peso_reps';
+
+/**
+ * O que o gerador REALMENTE podia escolher naquele perfil.
+ *
+ * Local + `semEstes` + **dor**. A dor é a parte que faltava na primeira escrita
+ * desta régua, e ela sozinha explicava os 8 pares que apareceram "repetindo sem
+ * motivo" na grade: todos com dor no ombro, todos com a suposta alternativa
+ * (`Afundo com barra`, `Tríceps testa`, `Crucifixo inverso na máquina`) fora do
+ * catálogo daquele perfil. É exatamente o defeito que G2.1 achou na régua de
+ * variedade semanal — 168 que na verdade eram 114 porque a régua não descontava
+ * o que a dor proíbe.
+ */
+const catalogoDoPerfil = (p, grupo) => {
+  const equip = equipDoLocal(p.local);
+  const fora = foraDoLocal(p.local);
+  return CAT_FORCA.filter(
+    (e) =>
+      e.grupo_primario === grupo &&
+      !fora.has(e.nome) &&
+      (!e.equipamento || equip.has(e.equipamento)) &&
+      !(p.dores ?? []).some((r) => bloqueado(acharEx(e.nome) ?? e, r))
+  );
+};
+
+/** Acumulador do invariante de B8 nível 2, preenchido dentro da grade (seção 16). */
+const B8 = { pares: 0, comAlternativa: 0, iguais: 0, mesmoPerfil: 0, amostraIguais: '', amostraPerfil: '' };
+
+/**
+ * Acumulador do nível 0 na grade — e ele mede a EXCEÇÃO, não o zero.
+ *
+ * "Dois principais no mesmo bloco" cai de 297 para 272 na grade de blocos, e
+ * cobrar zero seria cobrar que o gerador violasse duas regras suas: a variedade
+ * de padrão por semana (invariante (l), de G2.1) e o teto de 2 aparições do
+ * mesmo composto pesado (invariante (i), de G1). Prometer zero aqui produziria
+ * um invariante inatingível — que foi exatamente o defeito M3 de G2.1, o que
+ * escondia 112 falhas reais atrás de uma asserção que não podia falhar.
+ *
+ * Então a régua cobra o que o código de fato entrega: TODA instabilidade de
+ * âncora dentro do bloco é explicada por uma das duas exceções declaradas.
+ * Instabilidade sem explicação é defeito.
+ */
+const B8_0 = { grupos: 0, instaveis: 0, naoDeclarados: 0, porMotivo: {}, amostra: '' };
+
+function medirNivel0(plano, rot) {
+  const porGrupo = {};
+  for (const d of plano.dias)
+    for (const e of d.exercicios) if (e.papel === 'principal') (porGrupo[e.grupo] ??= []).push({ d, e });
+
+  const avisoDeAncora = (plano.avisos ?? []).find((a) => /exerc[íi]cio de refer[êe]ncia/.test(a)) ?? '';
+
+  for (const [g, ls] of Object.entries(porGrupo)) {
+    if (ls.length < 2) continue;
+    B8_0.grupos++;
+    if (new Set(ls.map((x) => x.e.nome)).size === 1) continue;
+    B8_0.instaveis++;
+
+    // A GARANTIA é a declaração, não o zero. Enumerar no teste cada recusa
+    // interna do gerador (teto por padrão, teto fracionado, ordem por fadiga)
+    // seria reimplementar `trocaCabeNaSessao` aqui — régua duplicada, que é
+    // como as duas contas de volume deste projeto passaram meses discordando.
+    // O que o usuário precisa é saber que existem DUAS curvas; é isso que se
+    // cobra.
+    const nomes = [...new Set(ls.map((x) => x.e.nome))];
+    const declarado =
+      avisoDeAncora.includes(COMO_SE_FALA_T[g] ?? g) && nomes.every((n) => avisoDeAncora.includes(n));
+    if (!declarado) {
+      B8_0.naoDeclarados++;
+      B8_0.amostra ||= `${rot} | ${g}: ${nomes.join(' / ')} | aviso: ${avisoDeAncora.slice(0, 80) || '(nenhum)'}`;
+    }
+
+    // Os motivos continuam medidos — não como asserção, como NÚMERO no relatório.
+    const primeiro = ls[0].e.nome;
+    const alvo = ls.find((x) => x.e.nome !== primeiro);
+    const conta = (k) => (B8_0.porMotivo[k] = (B8_0.porMotivo[k] ?? 0) + 1);
+    let n = 0;
+    for (const d of plano.dias)
+      for (const e of d.exercicios) if ((e === alvo.e ? primeiro : e.nome) === primeiro) n++;
+    if (alvo.d.exercicios.some((e) => e.nome === primeiro)) conta('jaEstaNoDia');
+    else if (ehPesado(primeiro) && n > 2) conta('pesado3x');
+    else {
+      const se = new Set();
+      const hoje = new Set();
+      for (const d of plano.dias)
+        for (const e of d.exercicios) {
+          if (e.grupo !== g) continue;
+          hoje.add(padraoDe(e.nome, g));
+          se.add(padraoDe(e === alvo.e ? primeiro : e.nome, g));
+        }
+      if (!PEQUENOS_T.includes(g) && se.size < Math.min(2, hoje.size)) conta('colapsaPadrao');
+      else conta('regraDaSessao');
+    }
+  }
+}
+
+/** Mede o rodízio entre sessões de um plano — chamado de dentro da grade. */
+function medirNivel2(plano, p, rot) {
+  const linhas = {};
+  for (const d of plano.dias)
+    for (const e of d.exercicios) {
+      if (e.grupo === 'cardio') continue;
+      (linhas[e.grupo] ??= []).push({ dia: d.nome, e });
+    }
+  for (const [g, ls] of Object.entries(linhas)) {
+    const nomesDeDia = [...new Set(ls.map((x) => x.dia))];
+    if (nomesDeDia.length < 2) continue;
+    const doDia = (n) => ls.filter((x) => x.dia === n).map((x) => x.e);
+    const noPerfil = catalogoDoPerfil(p, g);
+    for (let k = 1; k < nomesDeDia.length; k++) {
+      const a = doDia(nomesDeDia[0]).filter((e) => !e.ancora);
+      const b = doDia(nomesDeDia[k]).filter((e) => !e.ancora);
+      if (!a.length || !b.length) continue;
+      B8.pares++;
+
+      // Alternativa REAL: mesmo padrão, perfil de resistência diferente, mesmo
+      // tipo de carga (trocar goblet por agachamento sem peso não é variedade),
+      // e ainda não em uso na semana.
+      const emUso = new Set(ls.map((x) => x.e.nome));
+      const temAlternativa = a.some((e) => {
+        const pad = padraoDe(e.nome, g);
+        return noPerfil.some(
+          (c) =>
+            c.nome !== e.nome &&
+            !emUso.has(c.nome) &&
+            padraoDe(c.nome, g) === pad &&
+            perfilResDe(c.nome) !== perfilResDe(e.nome) &&
+            cargaDoCatalogo(c.nome) === cargaDoCatalogo(e.nome)
+        );
+      });
+      if (!temAlternativa) continue;
+      B8.comAlternativa++;
+
+      const nomesA = a.map((e) => e.nome).sort().join('|');
+      const nomesB = b.map((e) => e.nome).sort().join('|');
+      if (nomesA === nomesB) {
+        B8.iguais++;
+        B8.amostraIguais ||= `${rot} | ${g} | ${nomesDeDia[0]} e ${nomesDeDia[k]}: ${nomesA}`;
+      }
+      const pa = new Set(a.map((e) => `${padraoDe(e.nome, g)}:${perfilResDe(e.nome)}`));
+      const pb = new Set(b.map((e) => `${padraoDe(e.nome, g)}:${perfilResDe(e.nome)}`));
+      if (pa.size === pb.size && [...pa].every((x) => pb.has(x))) {
+        B8.mesmoPerfil++;
+        B8.amostraPerfil ||= `${rot} | ${g} | ${nomesDeDia[0]}→${nomesDeDia[k]}: ${[...pa].join(', ')}`;
+      }
+    }
+  }
+}
+
 let falhas = 0;
 const ok = (nome, cond, detalhe = '') => {
   console.log(`${cond ? '  ok  ' : ' FALHA'} ${nome}${detalhe ? ` — ${detalhe}` : ''}`);
@@ -1020,7 +1189,12 @@ console.log('\n16. Invariantes de sessão numa grade de perfis');
 
   for (const p of grade) {
     const plano = await montarPlano(p, fonte);
-    const rot = `${p.dias}d/${p.experiencia}/${p.minutosPorDia[1]}min/${p.local}/${p.preferenciaEquipamento}/foco=${p.focos.join('+') || 'nenhum'}`;
+    const rot = `${p.dias}d/${p.experiencia}/${p.minutosPorDia[1]}min/${p.local}/${p.preferenciaEquipamento}/foco=${p.focos.join('+') || 'nenhum'}/dor=${(p.dores ?? []).join('+') || 'nenhuma'}`;
+    // G3 — o rodízio entre sessões (B8 nível 2) mede AQUI, na grade, e não nos
+    // cenários nomeados da seção 39. Foi rodando só em cenário nomeado que as
+    // asserções de G1 passaram contra o código defeituoso.
+    medirNivel2(plano, p, rot);
+    medirNivel0(plano, rot);
     const direto = {};
 
     for (const d of plano.dias) {
@@ -2975,6 +3149,691 @@ console.log('\n35. Sheet com Input reage ao teclado (U8)');
     ok(`${rotulo}: o sheet com Input é rolável`, /rolavel/.test(src),
        /rolavel/.test(src) ? 'marcado' : 'o campo continua atrás do teclado');
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// G3 — Treinador que explica e varia (B7, B8, execução, objetivo)
+//
+// DUAS UNIDADES NOVAS, e as duas foram nomeadas pelas fases anteriores como o
+// buraco de cobertura que sobrava:
+//
+//   · **bloco** — as 8 semanas em que a âncora não muda. G2.1 registrou o bloco
+//     como a unidade mais fina; a correção do cross-review fechou o que
+//     acontece DENTRO dele (semana que conta, deload que chega, modulação).
+//   · **transição entre blocos** — o que muda de exercício quando o bloco
+//     recomeça. É o nível 1 de B8, e hoje NADA mede: o gerador é determinístico
+//     e, com o mesmo perfil, o bloco 2 é byte a byte igual ao bloco 1. Ou seja,
+//     a variação entre ciclos não existe e nenhum teste percebe.
+//
+// Módulos novos por import DINÂMICO (mesmo motivo das seções 23 e 30): ausente
+// vale objeto vazio e a asserção FALHA, em vez de o processo morrer no link
+// antes da primeira asserção.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const EXEC = await carregarModulo('../src/features/treino/execucao.ts');
+const TEC = await carregarModulo('../src/features/treino/tecnicas.ts');
+const PORQUE = await carregarModulo('../src/features/treino/porque.ts');
+const VARIACAO = await carregarModulo('../src/features/treino/variacao.ts');
+
+const FONTE_DURACAO = readFileSync(
+  new URL('../src/features/treino/duracao.ts', import.meta.url),
+  'utf8'
+);
+const FONTE_TELA_EX = readFileSync(
+  new URL('../app/exercicio/[id].tsx', import.meta.url),
+  'utf8'
+);
+const FONTE_DIA = readFileSync(new URL('../app/dia/[id].tsx', import.meta.url), 'utf8');
+const FONTE_API = readFileSync(
+  new URL('../src/features/treino/api.ts', import.meta.url),
+  'utf8'
+);
+
+// ── 36. Execução: a camada de TEMPO, e ela é cadência (não intensidade) ─────
+//
+// UNIDADE: **exercício** — os 124 do catálogo, um a um.
+//
+// O catálogo tem `instrucoes` (o que fazer) e `dica` (uma frase solta). O que
+// não existe em lugar nenhum é o TEMPO: quanto dura a descida, se há pausa
+// embaixo, qual amplitude. E a armadilha está escrita na auditoria: negativa
+// lenta é CADÊNCIA, não técnica de intensidade — Krzysztofik 2019 mede
+// hipertrofia semelhante de 0,5 a 8 s, com ~2 s sendo o mais eficiente em
+// tempo. Um app que vender "desça em 5 segundos para crescer mais" está
+// mentindo com a fonte na mão.
+//
+// A segunda metade é sobre não criar DUAS definições do mesmo segundo:
+// `duracao.ts` já assume 3 s por repetição (`SEG_POR_REP`) para estimar o
+// treino inteiro. Se a cadência prescrita vier de outro lugar, o app passa a
+// dizer "desça em 3 s, pause 1" numa tela e a cobrar 3 s por repetição na
+// outra — que é exatamente como o crossover virou composto numa função e
+// abertura em outra.
+console.log('\n36. Execução detalhada: cadência, amplitude e erro comum (G3)');
+{
+  ok(
+    'existe um módulo de EXECUÇÃO com a camada de tempo',
+    typeof EXEC.execucaoDe === 'function',
+    typeof EXEC.execucaoDe === 'function' ? 'execucaoDe' : 'não existe execucao.ts'
+  );
+
+  let semCadencia = 0, semAmplitude = 0, semErro = 0, excentricaFora = 0, concentricaFora = 0;
+  let porTempoComCadencia = 0;
+  const amostraExec = { cad: '', amp: '', err: '', exc: '', con: '', tempo: '' };
+  const textosAmplitude = new Set();
+  const textosErro = new Set();
+
+  for (const e of CAT_FORCA) {
+    const x =
+      typeof EXEC.execucaoDe === 'function'
+        ? EXEC.execucaoDe(e.nome, e.grupo_primario, e.equipamento, e.tipo_carga)
+        : null;
+    if (!x?.cadencia) {
+      semCadencia++;
+      amostraExec.cad ||= e.nome;
+      continue;
+    }
+    if (!x.amplitude) { semAmplitude++; amostraExec.amp ||= e.nome; }
+    else textosAmplitude.add(x.amplitude);
+    if (!x.erroComum) { semErro++; amostraExec.err ||= e.nome; }
+    else textosErro.add(x.erroComum);
+
+    const { excentrica, concentrica } = x.cadencia;
+    // Série por TEMPO (prancha) não tem repetição: cadência por repetição ali
+    // é campo preenchido para não ficar vazio.
+    if (e.tipo_carga === 'tempo') {
+      if (excentrica > 0 || concentrica > 0) {
+        porTempoComCadencia++;
+        amostraExec.tempo ||= e.nome;
+      }
+      continue;
+    }
+    // 1 a 4 s na descida. O teto NÃO é 8: Krzysztofik mostra que 8 s rende o
+    // mesmo que 2 e custa o triplo do tempo — prescrever 8 é vender cadência
+    // como intensidade, que é o que a auditoria proíbe por escrito.
+    if (!(excentrica >= 1 && excentrica <= 4)) {
+      excentricaFora++;
+      amostraExec.exc ||= `${e.nome} = ${excentrica}s`;
+    }
+    if (!(concentrica >= 1 && concentrica <= 3)) {
+      concentricaFora++;
+      amostraExec.con ||= `${e.nome} = ${concentrica}s`;
+    }
+  }
+
+  ok('todo exercício de força tem cadência', semCadencia === 0, `${semCadencia} sem — ex.: ${amostraExec.cad}`);
+  ok('todo exercício tem amplitude escrita', semAmplitude === 0, `${semAmplitude} sem — ex.: ${amostraExec.amp}`);
+  ok('todo exercício tem o erro mais comum', semErro === 0, `${semErro} sem — ex.: ${amostraExec.err}`);
+  ok('excêntrica entre 1 e 4 s (nunca 8)', excentricaFora === 0, `${excentricaFora} fora — ex.: ${amostraExec.exc}`);
+  ok('concêntrica entre 1 e 3 s', concentricaFora === 0, `${concentricaFora} fora — ex.: ${amostraExec.con}`);
+  ok('série por TEMPO não recebe cadência por repetição', porTempoComCadencia === 0,
+     `${porTempoComCadencia} com — ex.: ${amostraExec.tempo}`);
+
+  // Derivado, não escrito exercício por exercício: a auditoria pede que o
+  // objetivo saia de `padraoDe`/`perfilDeResistencia`/`picoDeTensao`. Um texto
+  // por exercício seria 124 frases para manter e estaria errado no dia em que
+  // alguém acrescentar a 125ª.
+  ok('amplitude é DERIVADA (menos textos que exercícios)',
+     textosAmplitude.size > 1 && textosAmplitude.size < CAT_FORCA.length / 3,
+     `${textosAmplitude.size} textos para ${CAT_FORCA.length} exercícios`);
+  ok('erro comum é DERIVADO (menos textos que exercícios)',
+     textosErro.size > 1 && textosErro.size < CAT_FORCA.length / 3,
+     `${textosErro.size} textos para ${CAT_FORCA.length} exercícios`);
+
+  // ── A frase que não pode existir ────────────────────────────────────────
+  const PROIBIDO = [
+    /t[ée]cnica de intensidade/i,
+    /mais m[úu]sculo/i,
+    /mais hipertrofia/i,
+    /cresce mais/i,
+    /avan[çc]ad/i,
+  ];
+  let vendeuComoIntensidade = 0;
+  let amostraVenda = '';
+  for (const e of CAT_FORCA) {
+    const x = typeof EXEC.execucaoDe === 'function'
+      ? EXEC.execucaoDe(e.nome, e.grupo_primario, e.equipamento, e.tipo_carga)
+      : null;
+    const texto = [x?.cadenciaTexto, x?.porqueCadencia, x?.amplitude, x?.erroComum]
+      .filter(Boolean)
+      .join(' ');
+    if (PROIBIDO.some((r) => r.test(texto))) {
+      vendeuComoIntensidade++;
+      amostraVenda ||= `${e.nome}: ${texto.slice(0, 90)}`;
+    }
+  }
+  ok('nenhum texto vende cadência como técnica de intensidade',
+     vendeuComoIntensidade === 0, `${vendeuComoIntensidade} — ex.: ${amostraVenda}`);
+
+  // E o contrário precisa estar dito: mais devagar NÃO é melhor.
+  const porque = typeof EXEC.PORQUE_CADENCIA === 'string' ? EXEC.PORQUE_CADENCIA : '';
+  ok('o app DIZ que mais devagar não rende mais',
+     /0,5|meio segundo/.test(porque) && /8\s?s|oito segundo/.test(porque),
+     porque ? porque.slice(0, 80) : 'não existe PORQUE_CADENCIA');
+
+  // ── Um segundo só, não dois ─────────────────────────────────────────────
+  //
+  // `duracao.ts` cravava `SEG_POR_REP = 3`. Com a cadência nascendo em outro
+  // arquivo, ou os dois números vêm da mesma fonte, ou o app estima o treino
+  // com uma cadência e prescreve outra.
+  ok('a duração consome a cadência, em vez de cravar os 3 s',
+     /execucao/.test(FONTE_DURACAO) && !/const SEG_POR_REP = 3/.test(FONTE_DURACAO),
+     /const SEG_POR_REP = 3/.test(FONTE_DURACAO) ? 'duracao.ts ainda crava 3' : 'derivado');
+  if (typeof EXEC.tempoPorRepSeg === 'function' && typeof EXEC.execucaoDe === 'function') {
+    const x = EXEC.execucaoDe('Supino reto com barra', 'peito', 'barra', 'peso_reps');
+    ok('a cadência canônica continua valendo 3 s por repetição',
+       EXEC.tempoPorRepSeg(x.cadencia) === 3, `${EXEC.tempoPorRepSeg(x.cadencia)}s`);
+  } else {
+    ok('a cadência canônica continua valendo 3 s por repetição', false, 'sem tempoPorRepSeg');
+  }
+
+  // A tela precisa mostrar. Camada de tempo que existe só no módulo é a mesma
+  // `definirMetaCalorica` da fase 5: função certa sem chamador.
+  ok('a tela do exercício mostra a cadência',
+     /cadencia|cadência|execucaoDe/i.test(FONTE_TELA_EX),
+     /execucaoDe/.test(FONTE_TELA_EX) ? 'ligada' : 'a tela não conhece a camada de tempo');
+  ok('o executor mostra a cadência na hora de fazer a série',
+     /execucaoDe|cadenciaTexto/.test(FONTE_SESSAO),
+     /execucaoDe|cadenciaTexto/.test(FONTE_SESSAO) ? 'ligado' : 'só no detalhe do exercício');
+}
+
+// ── 37. Técnicas de intensidade por papel e fase (B7) ──────────────────────
+//
+// UNIDADE: **exercício × fase** — o mesmo tríceps na polia recebe drop set no
+// acúmulo e NÃO recebe nada na readaptação, e é essa combinação que decide.
+//
+// B7 é a seção da auditoria com mais chance de virar exatamente o que ela
+// proíbe. Três ressalvas do relatório precisam sobreviver à implementação, e
+// nenhuma delas é opinião:
+//
+//   · **Myo-reps não tem nenhuma fonte aberta.** Prescrever como se tivesse é
+//     repetir o achado de "pesquisa de IA cita fonte inventada".
+//   · **Pré-exaustão é contraindicada** — Krzysztofik 2019: reduz o volume
+//     total no multiarticular seguinte SEM vantagem de hipertrofia.
+//   · **Drop set não rende mais músculo.** Sødal 2023: sem diferença vs séries
+//     tradicionais (p = 0,392). O que ele entrega é TEMPO.
+console.log('\n37. Técnicas de intensidade por papel e fase (B7)');
+{
+  ok(
+    'existe um módulo de técnicas com a regra por papel e fase',
+    typeof TEC.tecnicasDaSessao === 'function',
+    typeof TEC.tecnicasDaSessao === 'function' ? 'tecnicasDaSessao' : 'não existe tecnicas.ts'
+  );
+
+  const FASES = ['readaptacao', 'acumulo', 'intensificacao', 'deload'];
+  const PERFIS_TEC = [
+    { ...base, focos: ['peito'], preferenciaEquipamento: 'maquina', minutosPorDia: Array(7).fill(90) },
+    { ...base, dias: 5, diasDisponiveis: [1, 2, 3, 4, 5], focos: ['inferior'] },
+    { ...base, dias: 3, diasDisponiveis: [1, 3, 5], local: 'casa_equipada', focos: [] },
+    { ...base, dias: 6, diasDisponiveis: [1, 2, 3, 4, 5, 6], focos: ['superior'], experiencia: 'avancado' },
+    { ...base, dias: 2, diasDisponiveis: [2, 5], minutosPorDia: Array(7).fill(45) },
+  ];
+
+  let noPapelErrado = 0, demaisNaSessao = 0, naVolta = 0, foraDaUltima = 0, semEvidencia = 0;
+  const amostraTec = { papel: '', demais: '', volta: '', serie: '', evid: '' };
+  let totalPrescritas = 0;
+  const porPapelContagem = {};
+
+  for (const p of PERFIS_TEC) {
+    const plano = await montarPlano(p, fonte);
+    const rot = `${p.dias}d/${p.local}/foco=${p.focos.join('+') || 'nenhum'}`;
+    for (const d of plano.dias) {
+      const forca = d.exercicios.filter((e) => e.grupo !== 'cardio');
+      for (const fase of FASES) {
+        const mapa =
+          typeof TEC.tecnicasDaSessao === 'function' ? TEC.tecnicasDaSessao(forca, fase) : new Map();
+        const aplicadas = [...(mapa instanceof Map ? mapa.entries() : [])];
+        if (fase === 'acumulo' || fase === 'intensificacao') totalPrescritas += aplicadas.length;
+
+        // 4. Zero durante readaptação e deload.
+        if ((fase === 'readaptacao' || fase === 'deload') && aplicadas.length) {
+          naVolta++;
+          amostraTec.volta ||= `${rot} | ${d.nome} | ${fase} | ${aplicadas.length} técnica(s)`;
+        }
+        // 3. Máximo 2 por sessão.
+        if (aplicadas.length > 2) {
+          demaisNaSessao++;
+          amostraTec.demais ||= `${rot} | ${d.nome} | ${fase} | ${aplicadas.length}`;
+        }
+        for (const [ex, t] of aplicadas) {
+          porPapelContagem[ex.papel] = (porPapelContagem[ex.papel] ?? 0) + 1;
+          // 1. Só em isolador ou finalizador.
+          if (ex.papel !== 'isolador' && ex.papel !== 'finalizador') {
+            noPapelErrado++;
+            amostraTec.papel ||= `${rot} | ${d.nome} | ${ex.nome} é ${ex.papel}`;
+          }
+          // 2. Só na última série.
+          if (t?.serie !== 'ultima') {
+            foraDaUltima++;
+            amostraTec.serie ||= `${rot} | ${d.nome} | ${ex.nome} | serie=${t?.serie}`;
+          }
+          // Toda técnica prescrita declara o nível de evidência dela.
+          if (!t?.evidencia) {
+            semEvidencia++;
+            amostraTec.evid ||= `${rot} | ${ex.nome} | ${t?.nome ?? '?'}`;
+          }
+        }
+      }
+    }
+  }
+
+  ok('técnica só em isolador ou finalizador', noPapelErrado === 0, `${noPapelErrado} — ex.: ${amostraTec.papel}`);
+  ok('no máximo 2 aplicações por sessão', demaisNaSessao === 0, `${demaisNaSessao} — ex.: ${amostraTec.demais}`);
+  ok('zero técnicas na readaptação e no deload', naVolta === 0, `${naVolta} — ex.: ${amostraTec.volta}`);
+  ok('sempre na ÚLTIMA série do exercício', foraDaUltima === 0, `${foraDaUltima} — ex.: ${amostraTec.serie}`);
+  ok('toda técnica prescrita declara a evidência', semEvidencia === 0, `${semEvidencia} — ex.: ${amostraTec.evid}`);
+  // A regra não pode ser cumprida por nunca prescrever nada: isso é o inverso
+  // do achado M3 de G2.1 (invariante inatingível que escondia 112 defeitos).
+  ok('e alguma técnica de fato é prescrita fora da volta', totalPrescritas > 0,
+     `${totalPrescritas} aplicações no acúmulo/intensificação, por papel: ${JSON.stringify(porPapelContagem)}`);
+
+  // ── As três ressalvas do relatório, uma asserção cada ────────────────────
+  const CAT = Array.isArray(TEC.TECNICAS) ? TEC.TECNICAS : [];
+  const acharTec = (id) => CAT.find((t) => t.id === id);
+
+  const myo = acharTec('myo_reps');
+  ok('myo-reps NUNCA é prescrita automaticamente',
+     !myo || myo.prescrever === false,
+     myo ? `prescrever=${myo.prescrever}` : 'ausente do catálogo (também vale)');
+  ok('e, se aparece, declara que não tem fonte verificada',
+     !myo || /sem fonte|nenhuma fonte|n[ãa]o verificad|pr[áa]tica comum/i.test(myo.evidencia ?? ''),
+     myo ? (myo.evidencia ?? '').slice(0, 70) : 'ausente');
+
+  const pre = acharTec('pre_exaustao');
+  ok('pré-exaustão é declarada CONTRAINDICADA (não é opção)',
+     !!pre && pre.contraindicada === true && pre.prescrever === false,
+     pre ? `contraindicada=${pre.contraindicada} prescrever=${pre.prescrever}` : 'não está no catálogo — a contraindicação some junto');
+  ok('e a contraindicação vem com o motivo medido',
+     !!pre && /volume total|volume no multi|sem vantagem/i.test(pre.evidencia ?? ''),
+     pre ? (pre.evidencia ?? '').slice(0, 70) : 'ausente');
+
+  const drop = acharTec('drop_set');
+  const textoDrop = drop ? `${drop.oQueGanha ?? ''} ${drop.evidencia ?? ''}` : '';
+  ok('drop set: o ganho declarado é TEMPO, não hipertrofia',
+     !!drop && /tempo/i.test(textoDrop) && !/mais m[úu]sculo|mais hipertrofia|rende mais/i.test(drop.oQueGanha ?? ''),
+     textoDrop.slice(0, 90) || 'drop set não está no catálogo');
+  ok('e o p = 0,392 de Sødal está escrito, não subentendido',
+     /0,392|0\.392/.test(textoDrop), textoDrop ? 'sem o número' : 'ausente');
+
+  // Negativa lenta NÃO pode estar no catálogo de técnicas: ela é cadência, e
+  // isso está na seção 36. Duas casas para a mesma ideia é como o app começa a
+  // mentir para si mesmo.
+  ok('negativa lenta NÃO está entre as técnicas de intensidade',
+     !CAT.some((t) => /negativa|exc[êe]ntrico lento|cad[êe]ncia/i.test(`${t.id} ${t.nome}`)),
+     CAT.map((t) => t.id).join(', ') || 'catálogo vazio');
+
+  // E a tela precisa mostrar — e mostrar na última série, que é onde a regra vive.
+  ok('o executor conhece a técnica da última série',
+     /tecnicasDaSessao|tecnicaDa/i.test(FONTE_SESSAO),
+     /tecnicasDaSessao/.test(FONTE_SESSAO) ? 'ligado' : 'a regra existe e ninguém chama');
+}
+
+// ── 38. "Por que este exercício está aqui", específico e derivado ──────────
+//
+// UNIDADE: **exercício × sessão** — a resposta muda com o que MAIS está no dia.
+//
+// O papel já responde a parte estrutural ("Isolador · abre o grupo"), e isso
+// está no ar desde G2. O que falta é o objetivo específico: o que AQUELE
+// exercício acrescenta que os outros do dia não acrescentam. Se a frase for a
+// mesma para os dois isoladores de peito da sessão, ela não respondeu a
+// pergunta — só repetiu o rótulo com outras palavras.
+console.log('\n38. O objetivo específico de cada exercício na sessão (G3)');
+{
+  ok(
+    'existe uma função que responde "o que este acrescenta"',
+    typeof PORQUE.porqueEsteExercicio === 'function',
+    typeof PORQUE.porqueEsteExercicio === 'function' ? 'porqueEsteExercicio' : 'não existe porque.ts'
+  );
+
+  const PERFIS_PQ = [
+    { ...base, focos: ['peito'], preferenciaEquipamento: 'maquina', minutosPorDia: Array(7).fill(90) },
+    { ...base, dias: 5, diasDisponiveis: [1, 2, 3, 4, 5], focos: ['inferior'] },
+    { ...base, dias: 6, diasDisponiveis: [1, 2, 3, 4, 5, 6], focos: ['superior'] },
+    { ...base, dias: 3, diasDisponiveis: [1, 3, 5], local: 'casa_equipada' },
+  ];
+
+  let semObjetivo = 0, repetidoNoGrupo = 0, ecoDoPapel = 0;
+  const amostraPq = { sem: '', rep: '', eco: '' };
+  const todosOsTextos = new Set();
+
+  for (const p of PERFIS_PQ) {
+    const plano = await montarPlano(p, fonte);
+    const rot = `${p.dias}d/${p.local}/foco=${p.focos.join('+') || 'nenhum'}`;
+    for (const d of plano.dias) {
+      const forca = d.exercicios.filter((e) => e.grupo !== 'cardio');
+      const porGrupo = {};
+      for (const e of forca) {
+        const texto =
+          typeof PORQUE.porqueEsteExercicio === 'function'
+            ? PORQUE.porqueEsteExercicio(e, forca)
+            : '';
+        if (!texto) {
+          semObjetivo++;
+          amostraPq.sem ||= `${rot} | ${d.nome} | ${e.nome}`;
+          continue;
+        }
+        todosOsTextos.add(texto);
+        // O objetivo não pode ser o rótulo do papel repetido: se `PORQUE_PAPEL`
+        // já dizia isso, a camada nova não acrescentou nada.
+        const doPapel = (PORQUE.PORQUE_PAPEL ?? PAPEL_NS.PORQUE_PAPEL ?? {})[e.papel] ?? '';
+        if (doPapel && texto.trim() === doPapel.trim()) {
+          ecoDoPapel++;
+          amostraPq.eco ||= `${rot} | ${e.nome}`;
+        }
+        (porGrupo[e.grupo] ??= []).push({ nome: e.nome, texto });
+      }
+      for (const [g, itens] of Object.entries(porGrupo)) {
+        if (itens.length < 2) continue;
+        const distintos = new Set(itens.map((x) => x.texto));
+        if (distintos.size !== itens.length) {
+          repetidoNoGrupo++;
+          amostraPq.rep ||= `${rot} | ${d.nome} | ${g}: ${itens.length} exercícios, ${distintos.size} frases`;
+        }
+      }
+    }
+  }
+
+  ok('todo exercício de força tem objetivo específico', semObjetivo === 0, `${semObjetivo} — ex.: ${amostraPq.sem}`);
+  ok('dois exercícios do mesmo grupo no mesmo dia nunca dizem a mesma coisa',
+     repetidoNoGrupo === 0, `${repetidoNoGrupo} — ex.: ${amostraPq.rep}`);
+  ok('e o objetivo não é o rótulo do papel repetido', ecoDoPapel === 0, `${ecoDoPapel} — ex.: ${amostraPq.eco}`);
+
+  // Derivado, não digitado: a auditoria manda derivar de `padraoDe`,
+  // `perfilDeResistencia` e `picoDeTensao`. Um mapa nome→frase seria 124
+  // entradas erradas na primeira vez que alguém acrescentar um exercício.
+  const FONTE_PORQUE = existsSync(new URL('../src/features/treino/porque.ts', import.meta.url))
+    ? readFileSync(new URL('../src/features/treino/porque.ts', import.meta.url), 'utf8')
+    : '';
+  const nomesLiterais = CAT_FORCA.filter((e) => FONTE_PORQUE.includes(`'${e.nome}'`)).length;
+  ok('o objetivo é DERIVADO de atributos, não um mapa por nome',
+     FONTE_PORQUE !== '' && nomesLiterais <= 3 && /padraoDe|perfilDeResistencia|picoDeTensao/.test(FONTE_PORQUE),
+     FONTE_PORQUE ? `${nomesLiterais} nomes literais no arquivo` : 'porque.ts não existe');
+
+  // Uma casa só para "por que": `PORQUE_PAPEL` não pode viver nos dois lugares.
+  const FONTE_PAPEL = readFileSync(
+    new URL('../src/features/treino/papel.ts', import.meta.url),
+    'utf8'
+  );
+  const casas =
+    (/export const PORQUE_PAPEL/.test(FONTE_PAPEL) ? 1 : 0) +
+    (/export const PORQUE_PAPEL/.test(FONTE_PORQUE) ? 1 : 0);
+  ok('"por que" tem UMA casa, não duas', casas === 1, `${casas} definições de PORQUE_PAPEL`);
+
+  ok('a tela do dia mostra o objetivo específico',
+     /porqueEsteExercicio/.test(FONTE_DIA),
+     /porqueEsteExercicio/.test(FONTE_DIA) ? 'ligada' : 'a tela só mostra o rótulo do papel');
+}
+
+// ── 39. B8 níveis 0 e 2: a âncora fixa e o rodízio DENTRO do padrão ────────
+//
+// UNIDADE: **bloco** — as 8 semanas em que a âncora não muda. Um plano gerado
+// é um bloco; tudo abaixo mede o bloco inteiro, não a sessão.
+//
+// O nível 0 já existe e a asserção aqui é para ele NÃO se perder: âncora na
+// posição 1 do bloco do grupo, mesma faixa de repetições, o bloco inteiro.
+//
+// O nível 2 é o candidato 14 do roadmap, medido no print do celular: peito
+// repete os mesmos três exercícios nos dias A e D. O `rodar()` funciona no
+// nível dos candidatos, mas com preferência "máquina" o melhor de cada padrão
+// é o mesmo nos dois dias e o teto por padrão fecha a porta para o resto. O
+// critério de aceite registrado é claro: **o segundo dia do mesmo grupo troca
+// o PERFIL DE RESISTÊNCIA (máquina → cabo/halter) mantendo o padrão.**
+console.log('\n39. B8 níveis 0 e 2: âncora fixa no bloco, rodízio dentro do padrão');
+{
+  const PERFIS_B8 = [
+    { ...base, focos: ['peito'], preferenciaEquipamento: 'maquina', minutosPorDia: Array(7).fill(90) },
+    { ...base, focos: ['peito'], preferenciaEquipamento: 'maquina', minutosPorDia: Array(7).fill(90), experiencia: 'iniciante', objetivo: 'recomposicao' },
+    { ...base, dias: 5, diasDisponiveis: [1, 2, 3, 4, 5], focos: ['inferior'], preferenciaEquipamento: 'maquina' },
+    { ...base, dias: 6, diasDisponiveis: [1, 2, 3, 4, 5, 6], focos: ['superior'] },
+    { ...base, dias: 4, focos: ['costas'], preferenciaEquipamento: 'livre', minutosPorDia: Array(7).fill(90) },
+    // ── O perfil que mostra o defeito de nível 0 que existe HOJE ────────────
+    //
+    // Em casa com halteres, 3 dias: o peito abre o dia A com `Supino inclinado
+    // com halteres` (principal) e abre o dia B com `Supino reto com halteres`
+    // (principal). Dois exercícios diferentes alimentando o MESMO gráfico
+    // dentro do MESMO bloco — a definição literal do que B8 nível 0 proíbe.
+    // A causa é a de sempre: o corte por tempo tira o primeiro da lista num dos
+    // dias e quem sobra vira principal, sem ninguém reavaliar o bloco.
+    { ...base, dias: 3, diasDisponiveis: [1, 3, 5], local: 'casa_equipada' },
+  ];
+
+  let ancoraFora = 0, ancoraFaixa = 0;
+  const amostraB8 = { fora: '', faixa: '' };
+  let paresMedidos = 0;
+
+  for (const p of PERFIS_B8) {
+    const plano = await montarPlano(p, fonte);
+    const rot = `${p.dias}d/${p.preferenciaEquipamento}/foco=${p.focos.join('+') || 'nenhum'}`;
+
+    // ── Nível 0: a âncora abre o bloco do grupo, no dia inteiro ────────────
+    for (const d of plano.dias) {
+      const forca = d.exercicios.filter((e) => e.grupo !== 'cardio');
+      const vistos = new Set();
+      for (const e of forca) {
+        const primeiroDoGrupo = !vistos.has(e.grupo);
+        vistos.add(e.grupo);
+        if (e.ancora !== primeiroDoGrupo) {
+          ancoraFora++;
+          amostraB8.fora ||= `${rot} | ${d.nome} | ${e.nome} ancora=${e.ancora}`;
+        }
+      }
+    }
+
+    // ── O que exatamente não pode mudar no bloco ────────────────────────────
+    //
+    // B8 diz "o PRINCIPAL de cada grupo... é a única série cuja carga alimenta
+    // o gráfico e o e1RM". A primeira escrita desta régua cobrava a ÂNCORA, e
+    // ela mediu a coisa errada: no plano real o ombro abre o dia A com
+    // `Face pull` (finalizador, nenhum principal de ombro naquele dia) e abre o
+    // dia D com `Remada alta` (principal). Cobrar o mesmo nome ali obrigaria a
+    // pôr um desenvolvimento pesado no dia de empurrar — que é exatamente o que
+    // A9 proíbe e o invariante (b) já testa. Ou seja, a régua estrita exigiria
+    // violar outra regra do próprio projeto.
+    //
+    // A régua honesta: o exercício que ALIMENTA O GRÁFICO não muda dentro do
+    // bloco. Onde o grupo não tem principal naquela sessão, não há curva para
+    // proteger, e quem abre o bloco pode ser outro — esse é o preço declarado
+    // de A9, não uma quebra de comparabilidade.
+    const porGrupo = {};
+    for (const d of plano.dias)
+      for (const e of d.exercicios) {
+        if (e.grupo === 'cardio') continue;
+        (porGrupo[e.grupo] ??= []).push({ dia: d.nome, e });
+      }
+    for (const [g, linhas] of Object.entries(porGrupo)) {
+      const principais = linhas.filter((x) => x.e.papel === 'principal');
+      if (principais.length < 2) continue;
+      const nomes = new Set(principais.map((x) => x.e.nome));
+      const faixas = new Set(principais.map((x) => `${x.e.repsMin}-${x.e.repsMax}`));
+      if (nomes.size > 1) {
+        ancoraFora++;
+        amostraB8.fora ||= `${rot} | ${g}: principais diferentes no bloco (${[...nomes].join(' / ')})`;
+      } else if (faixas.size > 1) {
+        ancoraFaixa++;
+        amostraB8.faixa ||= `${rot} | ${g}: ${[...faixas].join(' / ')}`;
+      }
+    }
+
+    // Os 5 perfis nomeados também alimentam o mesmo acumulador da grade: eles
+    // incluem o cenário do print (4 dias, foco peito, preferência máquina), que
+    // é onde o candidato 14 foi visto no celular do Leonardo.
+    const antes = B8.pares;
+    medirNivel2(plano, p, rot);
+    paresMedidos += B8.pares - antes;
+  }
+
+  ok('nível 0: quem alimenta o gráfico é o mesmo no bloco inteiro',
+     ancoraFora === 0, `${ancoraFora} — ex.: ${amostraB8.fora}`);
+  ok('nível 0: e mantém a mesma faixa de repetições no bloco',
+     ancoraFaixa === 0, `${ancoraFaixa} — ex.: ${amostraB8.faixa}`);
+
+  // ── E na GRADE, onde a régua cobra a EXCEÇÃO em vez do zero ────────────
+  //
+  // Nos 6 perfis nomeados o número é 0. Na grade inteira ele não é, e prometer
+  // zero ali seria escrever um invariante inatingível — o defeito M3 de G2.1.
+  // Toda instabilidade que sobra é explicada por uma regra do próprio projeto:
+  // a variedade de padrão da semana (l) ou o teto de 2 aparições do mesmo
+  // pesado (i). Sem explicação é defeito, e é isso que a asserção cobra.
+  ok('nível 0 na grade: quando sobram DUAS referências, o plano diz',
+     B8_0.naoDeclarados === 0,
+     `${B8_0.instaveis} de ${B8_0.grupos} grupos com 2 principais no bloco; ` +
+       `motivos: ${JSON.stringify(B8_0.porMotivo)}; não declarados: ${B8_0.naoDeclarados}` +
+       (B8_0.amostra ? ` — ex.: ${B8_0.amostra}` : ''));
+  ok('e a régua do nível 0 mediu de verdade (não passou por vacuidade)',
+     B8_0.grupos > 0 && B8_0.instaveis > 0,
+     `${B8_0.grupos} grupos medidos, ${B8_0.instaveis} instáveis`);
+
+  // ── E o nível 2 medido na GRADE de 1.350 perfis, não aqui ──────────────
+  //
+  // Os contadores vêm de `medirNivel2`, chamado dentro da seção 16. Medir só
+  // nos 5 perfis nomeados acima daria 0 e esconderia 8 pares — foi assim que as
+  // asserções de G1 passaram contra o código que gerou o bug do print.
+  ok('nível 2: o segundo dia do grupo não repete os mesmos acessórios',
+     B8.iguais === 0,
+     `${B8.iguais} de ${B8.comAlternativa} pares com alternativa — ex.: ${B8.amostraIguais}`);
+  ok('nível 2: e a troca muda o PERFIL DE RESISTÊNCIA dentro do padrão',
+     B8.mesmoPerfil === 0,
+     `${B8.mesmoPerfil} de ${B8.comAlternativa} — ex.: ${B8.amostraPerfil}`);
+  ok('e havia pares para medir (a régua não passou por vacuidade)',
+     B8.comAlternativa > 0,
+     `${B8.comAlternativa} pares com alternativa de ${B8.pares} medidos, na grade inteira`);
+  ok('os 5 perfis nomeados também têm pares (a grade não é a única cobertura)',
+     paresMedidos > 0, `${paresMedidos} pares nomeados`);
+
+  // O rodízio não pode CRIAR nem ELIMINAR padrão da sessão — é a restrição
+  // literal de B8 nível 2. Exercitada na função, não só no plano.
+  ok('existe a função de rodízio dentro do padrão',
+     typeof VARIACAO.variarEntreSessoes === 'function',
+     typeof VARIACAO.variarEntreSessoes === 'function' ? 'variarEntreSessoes' : 'não existe variacao.ts');
+}
+
+// ── 40. B8 nível 1: a TRANSIÇÃO ENTRE BLOCOS ──────────────────────────────
+//
+// UNIDADE: **transição entre blocos** — a unidade que a correção do
+// cross-review de G2.1 nomeou como a mais fina que sobrava, e que continua sem
+// nenhum invariante. Nada no app mede o que acontece ENTRE dois blocos.
+//
+// O que B8 pede no nível 1: no bloco novo o principal PODE trocar, dentro do
+// mesmo padrão, e quando troca o app **quebra a curva do gráfico
+// explicitamente** — nova âncora, nova linha de base, duas curvas separadas.
+// Fingir continuidade entre exercícios diferentes é pior que admitir a quebra.
+//
+// Hoje o gerador é determinístico e não recebe o passado: o bloco 2 sai igual
+// ao bloco 1, exercício por exercício. Não existe nem a troca nem a quebra.
+console.log('\n40. B8 nível 1: a transição entre blocos (unidade nova)');
+{
+  const PERFIS_TR = [
+    { ...base, focos: ['peito'], preferenciaEquipamento: 'maquina', minutosPorDia: Array(7).fill(90) },
+    { ...base, dias: 5, diasDisponiveis: [1, 2, 3, 4, 5], focos: ['inferior'] },
+    { ...base, dias: 4, focos: ['costas'], preferenciaEquipamento: 'livre', minutosPorDia: Array(7).fill(90) },
+    { ...base, dias: 3, diasDisponiveis: [1, 3, 5], local: 'casa_equipada' },
+  ];
+
+  // Quem alimenta o gráfico — a mesma leitura da seção 39, pelo mesmo motivo:
+  // é o PRINCIPAL que B8 protege, não quem abre o bloco.
+  const ancorasDe = (plano) => {
+    const out = {};
+    for (const d of plano.dias)
+      for (const e of d.exercicios)
+        if (e.papel === 'principal' && !out[e.grupo]) out[e.grupo] = e.nome;
+    return out;
+  };
+
+  ok('existe uma leitura de âncoras do bloco',
+     typeof VARIACAO.ancorasDoPlano === 'function',
+     typeof VARIACAO.ancorasDoPlano === 'function' ? 'ancorasDoPlano' : 'não existe');
+  ok('e uma função que nomeia a QUEBRA entre blocos',
+     typeof VARIACAO.quebrasDeAncora === 'function',
+     typeof VARIACAO.quebrasDeAncora === 'function' ? 'quebrasDeAncora' : 'não existe');
+
+  let trocouDePadrao = 0, quebraNaoDeclarada = 0, quebraSemPar = 0, blocoSemVariacao = 0;
+  let ancoraInstavelNoBloco = 0;
+  const amostraTr = { padrao: '', dec: '', par: '', sem: '', inst: '' };
+  let gruposComAlternativa = 0, gruposQueTrocaram = 0;
+
+  for (const p of PERFIS_TR) {
+    const bloco1 = await montarPlano(p, fonte);
+    const a1 = ancorasDe(bloco1);
+    const bloco2 = await montarPlano({ ...p, ancorasAnteriores: a1 }, fonte);
+    const a2 = ancorasDe(bloco2);
+    const rot = `${p.dias}d/${p.local}/${p.preferenciaEquipamento}/foco=${p.focos.join('+') || 'nenhum'}`;
+
+    // Toda âncora ou fica, ou troca DENTRO DO MESMO PADRÃO.
+    for (const [g, nome1] of Object.entries(a1)) {
+      const nome2 = a2[g];
+      if (!nome2 || nome2 === nome1) continue;
+      gruposQueTrocaram++;
+      if (padraoDe(nome1, g) !== padraoDe(nome2, g)) {
+        trocouDePadrao++;
+        amostraTr.padrao ||= `${rot} | ${g}: ${nome1} (${padraoDe(nome1, g)}) → ${nome2} (${padraoDe(nome2, g)})`;
+      }
+    }
+
+    // E toda troca é DECLARADA — estruturada, não só em prosa.
+    const quebras = Array.isArray(bloco2.quebras) ? bloco2.quebras : [];
+    const declaradas = new Set(quebras.map((q) => `${q.grupo}:${q.de}→${q.para}`));
+    for (const [g, nome1] of Object.entries(a1)) {
+      const nome2 = a2[g];
+      if (!nome2 || nome2 === nome1) continue;
+      if (!declaradas.has(`${g}:${nome1}→${nome2}`)) {
+        quebraNaoDeclarada++;
+        amostraTr.dec ||= `${rot} | ${g}: ${nome1} → ${nome2} sem quebra declarada`;
+      }
+    }
+    // Uma quebra declarada precisa ter as duas pontas e o padrão.
+    for (const q of quebras) {
+      if (!q.grupo || !q.de || !q.para || !q.padrao) {
+        quebraSemPar++;
+        amostraTr.par ||= `${rot} | ${JSON.stringify(q)}`;
+      }
+    }
+
+    // Nível 0 preservado DENTRO do bloco 2: o principal não muda entre os dias.
+    const porGrupo2 = {};
+    for (const d of bloco2.dias)
+      for (const e of d.exercicios)
+        if (e.papel === 'principal') (porGrupo2[e.grupo] ??= new Set()).add(e.nome);
+    for (const [g, nomes] of Object.entries(porGrupo2)) {
+      if (nomes.size > 1) {
+        ancoraInstavelNoBloco++;
+        amostraTr.inst ||= `${rot} | ${g}: ${[...nomes].join(' / ')}`;
+      }
+    }
+
+    // Havia alternativa de MESMO PADRÃO no local? Se havia e nada trocou, o
+    // nível 1 não existe — que é o estado de hoje.
+    let comAlternativa = 0;
+    for (const [g, nome1] of Object.entries(a1)) {
+      const pad = padraoDe(nome1, g);
+      const alt = catalogoDoPerfil(p, g).some(
+        (c) => c.nome !== nome1 && padraoDe(c.nome, g) === pad
+      );
+      if (alt) comAlternativa++;
+    }
+    gruposComAlternativa += comAlternativa;
+    if (comAlternativa > 0 && Object.entries(a1).every(([g, n]) => a2[g] === n)) {
+      blocoSemVariacao++;
+      amostraTr.sem ||= `${rot} | ${comAlternativa} grupo(s) com alternativa e nenhuma âncora trocou`;
+    }
+  }
+
+  ok('a âncora do bloco novo troca DENTRO do mesmo padrão',
+     trocouDePadrao === 0, `${trocouDePadrao} trocas de padrão — ex.: ${amostraTr.padrao}`);
+  ok('toda troca de âncora é declarada como QUEBRA da curva',
+     quebraNaoDeclarada === 0, `${quebraNaoDeclarada} — ex.: ${amostraTr.dec}`);
+  ok('e a quebra nomeia grupo, exercício antigo, novo e padrão',
+     quebraSemPar === 0, `${quebraSemPar} — ex.: ${amostraTr.par}`);
+  ok('nível 0 preservado: dentro do bloco novo a âncora continua uma só',
+     ancoraInstavelNoBloco === 0, `${ancoraInstavelNoBloco} — ex.: ${amostraTr.inst}`);
+  ok('o bloco novo de fato varia quando existe alternativa no mesmo padrão',
+     blocoSemVariacao === 0,
+     `${blocoSemVariacao} bloco(s) idênticos ao anterior; ${gruposQueTrocaram} grupos trocaram, ${gruposComAlternativa} tinham alternativa`);
+
+  // A quebra precisa chegar ONDE A CURVA MORA. Declarar no plano e desenhar
+  // uma linha contínua no gráfico seria fingir a continuidade que B8 proíbe.
+  ok('a tela que desenha a curva sabe da quebra de âncora',
+     /quebra|ancoraAnterior|trocou de âncora|trocouDeAncora/i.test(FONTE_TELA_EX),
+     /quebra/i.test(FONTE_TELA_EX) ? 'ligada' : 'o gráfico não sabe que a âncora mudou');
+  ok('e existe como descobrir a quebra a partir das rotinas já salvas',
+     /quebrasDeAncora|ancorasDaRotina/.test(FONTE_API), 'sem leitura no api.ts');
 }
 
 console.log(falhas ? `\n${falhas} falha(s)\n` : '\nTudo passou\n');

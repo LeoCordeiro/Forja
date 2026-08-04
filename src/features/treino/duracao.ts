@@ -1,5 +1,6 @@
 import type { RoutineExerciseFull } from '@/db/types';
 import { ehComposto, ehPesado } from './classificacao';
+import { cadenciaDe, TEMPO_POR_REP_PADRAO, tempoPorRepSeg } from './execucao';
 
 /**
  * Quanto tempo o treino de fato leva — e como fazê-lo caber no que você tem.
@@ -38,8 +39,30 @@ import { ehComposto, ehPesado } from './classificacao';
  * seu descanso são os últimos a serem tocados — e, se possível, nunca.
  */
 
-/** Segundos por repetição, cadência controlada. */
-const SEG_POR_REP = 3;
+/**
+ * Segundos por repetição — **e agora vindos da cadência prescrita**.
+ *
+ * O número cravado aqui era 3, e ele estava certo para a cadência canônica
+ * (2 s descendo + 1 s subindo). O problema é que G3 passou a PRESCREVER cadência
+ * por exercício: um stiff, cujo pico de tensão está na posição alongada, ganha
+ * 1 s de pausa no fundo e custa 4 s por repetição. Com o 3 cravado, o app diria
+ * "2-1-1" na tela do exercício e cobraria 3 s na conta da sessão — duas
+ * definições do mesmo segundo, que é como o crossover chegou a ser composto numa
+ * função e abertura em outra.
+ *
+ * `SEG_POR_REP` fica como o valor da cadência PADRÃO (o mesmo 3 de sempre), para
+ * quem estima sem ter o exercício na mão; quem tem o exercício usa `segPorRepDe`.
+ */
+const SEG_POR_REP = TEMPO_POR_REP_PADRAO;
+
+/** Segundos por repetição DESTE exercício, pela cadência que ele prescreve. */
+const segPorRepDe = (e: {
+  nome: string;
+  grupo_primario: string;
+  equipamento: string | null;
+  tipo_carga: string;
+}) => tempoPorRepSeg(cadenciaDe(e.nome, e.grupo_primario, e.equipamento, e.tipo_carga));
+
 /** Trocar de exercício: achar, ajustar, montar. */
 const SEG_TROCA = 90;
 /** Aquecimento geral no começo da sessão. */
@@ -85,7 +108,7 @@ export function estimarDuracao(exs: RoutineExerciseFull[]): EstimativaTreino {
 
   for (const e of forca) {
     const reps = ((e.reps_min ?? 8) + (e.reps_max ?? 12)) / 2;
-    const porSerie = e.tipo_carga === 'tempo' ? reps : reps * SEG_POR_REP;
+    const porSerie = e.tipo_carga === 'tempo' ? reps : reps * segPorRepDe(e);
     execucao += e.series_alvo * porSerie;
     // O descanso da última série não conta: você já foi para o próximo.
     descanso += Math.max(0, e.series_alvo - 1) * e.descanso_seg;
@@ -222,7 +245,7 @@ export function ajustarParaCaber(
       if (economizado >= falta) break;
       const reps = ((e.reps_min ?? 8) + (e.reps_max ?? 12)) / 2;
       economizado +=
-        e.series_alvo * reps * SEG_POR_REP +
+        e.series_alvo * reps * segPorRepDe(e) +
         Math.max(0, e.series_alvo - 1) * e.descanso_seg +
         SEG_TROCA;
       cortados.push(e);

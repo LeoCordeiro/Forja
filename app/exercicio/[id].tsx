@@ -10,7 +10,9 @@ import {
   evolucaoExercicio,
   getExercicio,
   prsDoExercicio,
+  quebraDoExercicio,
 } from '@/features/treino/api';
+import { execucaoDe, PORQUE_CADENCIA, tempoSobTensaoSeg } from '@/features/treino/execucao';
 import { nomeGrupo, num, peso } from '@/shared/utils/format';
 import {
   abrir as abrirVideo,
@@ -34,16 +36,20 @@ export default function DetalheExercicio() {
   const router = useRouter();
 
   const { dados, recarregar } = useDados(async () => {
-    const [ex, prs, evo] = await Promise.all([
+    const [ex, prs, evo, quebra] = await Promise.all([
       getExercicio(exId),
       prsDoExercicio(exId),
       evolucaoExercicio(exId),
+      quebraDoExercicio(exId),
     ]);
-    return { ex, prs, evo };
+    return { ex, prs, evo, quebra };
   }, [exId]);
 
   if (!dados?.ex) return <Tela titulo="Carregando…">{null}</Tela>;
-  const { ex, prs, evo } = dados;
+  const { ex, prs, evo, quebra } = dados;
+
+  const execucao = execucaoDe(ex.nome, ex.grupo_primario, ex.equipamento, ex.tipo_carga);
+  const repsTipicas = 10;
 
   // Dia só de séries acima de 10 reps vem com e1rm nulo (a estimativa não
   // vale em série longa) — sem ponto no gráfico, em vez de um zero mentiroso.
@@ -129,15 +135,73 @@ export default function DetalheExercicio() {
         </Animated.View>
       ) : null}
 
-      {ex.dica ? (
-        <Animated.View entering={FadeInDown.delay(100).duration(300)}>
-          <View style={s.dica}>
-            <Ionicons name="bulb" size={18} color={colors.warn} />
-            <View style={{ flex: 1, gap: 2 }}>
-              <Txt v="label" cor={colors.warn}>
-                Erro mais comum
+      {/* ── A camada de TEMPO (G3): cadência, tensão e amplitude ── */}
+      <Animated.View entering={FadeInDown.delay(80).duration(300)} style={{ gap: spacing.md }}>
+        <Txt v="label">Ritmo da série</Txt>
+        <Card>
+          <View style={s.entre}>
+            <View style={{ gap: 2 }}>
+              <Txt v="h2" cor={colors.primary}>
+                {execucao.cadenciaTexto}
               </Txt>
-              <Txt v="body" cor={colors.warn}>
+              <Txt v="small" cor={colors.textDim} size={11}>
+                descida · pausa · subida
+              </Txt>
+            </View>
+            {execucao.cadencia.excentrica > 0 ? (
+              <View style={{ alignItems: 'flex-end' }}>
+                <Txt v="h3">
+                  ~{tempoSobTensaoSeg(execucao.cadencia, repsTipicas)} s
+                </Txt>
+                <Txt v="small" cor={colors.textDim} size={11}>
+                  sob tensão em {repsTipicas} reps
+                </Txt>
+              </View>
+            ) : null}
+          </View>
+          <Txt v="small" cor={colors.textDim} style={{ marginTop: spacing.md }}>
+            {execucao.porqueCadencia}
+          </Txt>
+        </Card>
+
+        <Card padding={spacing.md}>
+          <Txt v="label" size={10}>
+            Amplitude
+          </Txt>
+          <Txt v="body">{execucao.amplitude}</Txt>
+        </Card>
+
+        <Txt v="small" cor={colors.textDim}>
+          {PORQUE_CADENCIA}
+        </Txt>
+      </Animated.View>
+
+      {/* Erro DERIVADO da mecânica do movimento — sempre existe, sempre é erro. */}
+      <Animated.View entering={FadeInDown.delay(100).duration(300)}>
+        <View style={s.dica}>
+          <Ionicons name="alert-circle" size={18} color={colors.warn} />
+          <View style={{ flex: 1, gap: 2 }}>
+            <Txt v="label" cor={colors.warn}>
+              Erro mais comum
+            </Txt>
+            <Txt v="body" cor={colors.warn}>
+              {execucao.erroComum}
+            </Txt>
+          </View>
+        </View>
+      </Animated.View>
+
+      {/* A `dica` do catálogo continua, com o rótulo certo: ela nem sempre é um
+          erro ("melhor exercício para peitoral superior" não é). */}
+      {ex.dica ? (
+        <Animated.View entering={FadeInDown.delay(120).duration(300)}>
+          <View style={s.dicaSuave}>
+            <Ionicons name="bulb" size={18} color={colors.info} />
+            <View style={{ flex: 1, gap: 2 }}>
+              <Txt v="label" cor={colors.info}>
+                Dica deste exercício
+              </Txt>
+              <Txt v="body" cor={colors.info}>
                 {ex.dica}
               </Txt>
             </View>
@@ -181,10 +245,28 @@ export default function DetalheExercicio() {
       {serie.length > 1 ? (
         <Animated.View entering={FadeInDown.delay(180).duration(300)} style={{ gap: spacing.md }}>
           <Txt v="label">Progressão de força (1RM estimado)</Txt>
+          {/* ── B8 nível 1: a curva QUEBRA, e o app diz isso antes do gráfico ──
+              Emendar a carga de dois exercícios diferentes mostraria uma queda
+              ou um salto que a pessoa não teve. */}
+          {quebra ? (
+            <View style={s.quebra}>
+              <Ionicons name="git-branch" size={18} color={colors.info} />
+              <View style={{ flex: 1, gap: 2 }}>
+                <Txt v="label" cor={colors.info}>
+                  {quebra.lado === 'antigo'
+                    ? 'Esta curva termina aqui'
+                    : 'Esta curva começa do zero'}
+                </Txt>
+                <Txt v="small" cor={colors.info}>
+                  {quebra.quebra.texto}
+                </Txt>
+              </View>
+            </View>
+          ) : null}
           <Card>
             <Linha dados={serie} sufixo="kg" cor={colors.primary} />
           </Card>
-          <Txt v="small" cor={colors.textFaint}>
+          <Txt v="small" cor={colors.textDim}>
             Estimativa por Epley: peso × (1 + reps ÷ 30). Sobe tanto ao aumentar carga quanto ao
             fazer mais repetições com o mesmo peso.
           </Txt>
@@ -242,6 +324,24 @@ const s = StyleSheet.create({
     backgroundColor: colors.warnSoft,
     borderWidth: 1,
     borderColor: `${colors.warn}44`,
+  },
+  dicaSuave: {
+    flexDirection: 'row',
+    gap: spacing.md,
+    padding: spacing.lg,
+    borderRadius: radius.lg,
+    backgroundColor: colors.infoSoft,
+    borderWidth: 1,
+    borderColor: `${colors.info}44`,
+  },
+  quebra: {
+    flexDirection: 'row',
+    gap: spacing.md,
+    padding: spacing.lg,
+    borderRadius: radius.lg,
+    backgroundColor: colors.infoSoft,
+    borderWidth: 1,
+    borderColor: `${colors.info}44`,
   },
   gridPR: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   videos: { flexDirection: 'row', gap: spacing.sm },

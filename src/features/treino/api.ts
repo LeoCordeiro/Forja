@@ -19,6 +19,7 @@ import { filtrarSubstitutos, type RecusaTroca } from './substituicao';
 import { regiaoSugeridaPara } from './contraindicacao';
 import { REGIOES_DOR } from '../perfil/diagnostico';
 import { resolverFase, type FaseEfetiva } from './fase';
+import { quebrasDeAncora, type QuebraDeAncora } from './variacao';
 import { isoDe } from '@/shared/utils/date';
 
 
@@ -237,6 +238,86 @@ export async function exerciciosDoDia(diaId: number): Promise<RoutineExerciseFul
 /** A rotina em uso. `criado_em` é a data de início do bloco de treino. */
 export async function rotinaAtiva(): Promise<Routine | null> {
   return first<Routine>('SELECT * FROM routines WHERE ativa = 1 ORDER BY criado_em DESC LIMIT 1');
+}
+
+/**
+ * O exercício de referência de cada grupo numa rotina — B8, sem coluna nova.
+ *
+ * ── E quem já está com o banco estragado? Ninguém ────────────────────────
+ *
+ * Esta fase não muda o schema. A âncora do bloco não é gravada em lugar
+ * nenhum: ela é DERIVADA de `routine_exercises.papel`, que a v16 já criou e que
+ * o backfill de G2.1 já preencheu em toda rotina antiga na primeira abertura do
+ * app. Uma coluna `ancora_do_bloco` seria mais rápida de ler e criaria
+ * exatamente o problema que `prescricaoDaRotina` teve que consertar depois —
+ * um retrato congelado que ninguém invalida quando a composição do dia muda.
+ *
+ * `MIN(ordem)` é o desempate: o principal aparece uma vez por grupo por dia, e
+ * entre dias vale o do dia que vem primeiro — a mesma regra que
+ * `ancorasDoPlano` usa do lado do gerador.
+ */
+export async function ancorasDaRotina(routineId: number): Promise<Record<string, string>> {
+  const rows = await all<{ grupo: string; nome: string }>(
+    `SELECT e.grupo_primario AS grupo, e.nome AS nome
+       FROM routine_exercises re
+       JOIN exercises e     ON e.id = re.exercise_id
+       JOIN routine_days rd ON rd.id = re.routine_day_id
+      WHERE rd.routine_id = ? AND re.papel = 'principal'
+      ORDER BY rd.ordem, re.ordem`,
+    [routineId]
+  );
+  const out: Record<string, string> = {};
+  for (const r of rows) if (!out[r.grupo]) out[r.grupo] = r.nome;
+  return out;
+}
+
+/** As âncoras do bloco em curso. Vazio quando não há rotina ativa. */
+export async function ancorasDaRotinaAtiva(): Promise<Record<string, string>> {
+  const r = await rotinaAtiva();
+  return r ? ancorasDaRotina(r.id) : {};
+}
+
+/**
+ * O que mudou de âncora entre o bloco anterior e o atual — para o GRÁFICO.
+ *
+ * O plano gerado já devolve `quebras`, mas ele é um objeto de memória: some
+ * quando a tela recarrega. A curva de progresso é consultada semanas depois, na
+ * tela do exercício, e é lá que a quebra precisa aparecer — senão o app declara
+ * a quebra uma vez, no dia da troca, e desenha continuidade para sempre.
+ *
+ * Reconstruída das rotinas que já estão no banco: a ativa e a última arquivada
+ * antes dela. Nada é apagado no app (rotina antiga fica com `ativa = 0`), então
+ * o histórico necessário já existe — inclusive para quem trocou de bloco antes
+ * desta fase existir.
+ */
+export async function quebrasDeAncoraSalvas(): Promise<QuebraDeAncora[]> {
+  const atual = await rotinaAtiva();
+  if (!atual) return [];
+  const anterior = await first<Routine>(
+    `SELECT * FROM routines
+      WHERE id <> ? AND criado_em <= ?
+      ORDER BY criado_em DESC, id DESC LIMIT 1`,
+    [atual.id, atual.criado_em]
+  );
+  if (!anterior) return [];
+  const [de, para] = await Promise.all([
+    ancorasDaRotina(anterior.id),
+    ancorasDaRotina(atual.id),
+  ]);
+  return quebrasDeAncora(de, para);
+}
+
+/** A quebra que afeta ESTE exercício — a ponta que sai ou a que entra. */
+export async function quebraDoExercicio(
+  exerciseId: number
+): Promise<{ quebra: QuebraDeAncora; lado: 'antigo' | 'novo' } | null> {
+  const ex = await first<{ nome: string }>('SELECT nome FROM exercises WHERE id = ?', [exerciseId]);
+  if (!ex) return null;
+  for (const q of await quebrasDeAncoraSalvas()) {
+    if (q.de === ex.nome) return { quebra: q, lado: 'antigo' };
+    if (q.para === ex.nome) return { quebra: q, lado: 'novo' };
+  }
+  return null;
 }
 
 /** A rotina dona do dia — o `criado_em` dela é a âncora da semana do bloco. */

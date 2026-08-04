@@ -80,12 +80,14 @@ import {
   LABEL_PAPEL,
   papeisDaRotina,
   porqueDescanso,
-  PORQUE_PAPEL,
   rirNaFase,
   textoRir,
   type Papel,
   type PapelDaLinha,
 } from '@/features/treino/papel';
+import { PORQUE_PAPEL, porqueEsteExercicio } from '@/features/treino/porque';
+import { execucaoDe, PORQUE_CADENCIA, resumoDeExecucao } from '@/features/treino/execucao';
+import { tecnicasDaSessao } from '@/features/treino/tecnicas';
 import {
   avisarFimDoDescanso,
   lerDescanso,
@@ -305,6 +307,37 @@ export default function Execucao() {
         }))
       ),
     [exercicios]
+  );
+
+  /**
+   * A técnica de intensidade de cada linha — B7, e a fase decide.
+   *
+   * O mapa é por ID de linha, não por posição: `addExercicioNoDia` insere com
+   * `MAX(ordem)+1`, ou seja depois do cardio, e indexar por posição daria a
+   * técnica ao exercício errado a partir do primeiro acréscimo manual — o mesmo
+   * motivo pelo qual `papeisDaRotina` devolve por id.
+   *
+   * `fase` entra como dependência de propósito: na readaptação e no deload o
+   * mapa é vazio, e é ele que some da tela quando a semana vira.
+   */
+  const tecnicas = useMemo(() => {
+    const linhas = exercicios.map((e) => ({
+      id: e.id,
+      nome: e.nome,
+      grupo: e.grupo_primario,
+      equipamento: e.equipamento,
+      tipoCarga: e.tipo_carga,
+      papel: papeis.get(e.id)?.papel ?? null,
+    }));
+    const mapa = tecnicasDaSessao(linhas, fase?.fase ?? null);
+    const porId = new Map<number, ReturnType<typeof tecnicasDaSessao> extends Map<infer _K, infer V> ? V : never>();
+    for (const [linha, t] of mapa) porId.set(linha.id, t);
+    return porId;
+  }, [exercicios, papeis, fase]);
+
+  const tecnicaDe = useCallback(
+    (ex: { id: number } | null) => (ex ? (tecnicas.get(ex.id) ?? null) : null),
+    [tecnicas]
   );
 
   const seriesRef = useRef(series);
@@ -1343,6 +1376,90 @@ function degrausDe(
                       .{' '}
                     </Txt>
                     {PORQUE_PAPEL[papeis.get(detalhe.id)!.papel]}
+                    {'\n\n'}
+                    {porqueEsteExercicio(
+                      {
+                        nome: detalhe.nome,
+                        grupo: detalhe.grupo_primario,
+                        equipamento: detalhe.equipamento,
+                      },
+                      exercicios.map((o) => ({
+                        nome: o.nome,
+                        grupo: o.grupo_primario,
+                        equipamento: o.equipamento,
+                      }))
+                    )}
+                  </Txt>
+                </View>
+              ) : null}
+
+              {/* ── A camada de TEMPO (G3), na hora de fazer a série ── */}
+              <View style={s.explicaDescanso}>
+                <Ionicons name="speedometer-outline" size={16} color={colors.info} />
+                <Txt v="small" cor={colors.textDim} style={{ flex: 1 }}>
+                  <Txt v="small" bold cor={colors.info}>
+                    {resumoDeExecucao(
+                      execucaoDe(
+                        detalhe.nome,
+                        detalhe.grupo_primario,
+                        detalhe.equipamento,
+                        detalhe.tipo_carga
+                      ),
+                      ((detalhe.reps_min ?? 8) + (detalhe.reps_max ?? 12)) / 2
+                    )}
+                    .{' '}
+                  </Txt>
+                  {
+                    execucaoDe(
+                      detalhe.nome,
+                      detalhe.grupo_primario,
+                      detalhe.equipamento,
+                      detalhe.tipo_carga
+                    ).amplitude
+                  }
+                  {'\n\n'}
+                  {PORQUE_CADENCIA}
+                </Txt>
+              </View>
+
+              {/* Erro derivado da mecânica — sempre presente, sempre um erro. */}
+              <View style={[s.explicaDescanso, { backgroundColor: colors.warnSoft }]}>
+                <Ionicons name="alert-circle-outline" size={16} color={colors.warn} />
+                <Txt v="small" cor={colors.textDim} style={{ flex: 1 }}>
+                  <Txt v="small" bold cor={colors.warn}>
+                    Erro mais comum.{' '}
+                  </Txt>
+                  {
+                    execucaoDe(
+                      detalhe.nome,
+                      detalhe.grupo_primario,
+                      detalhe.equipamento,
+                      detalhe.tipo_carga
+                    ).erroComum
+                  }
+                </Txt>
+              </View>
+
+              {/* ── B7: técnica de intensidade, se a fase e o papel permitirem ──
+                  A regra dura mora em `tecnicasDaSessao`: só isolador ou
+                  finalizador, só na última série, no máximo 2 por sessão, e
+                  ZERO na readaptação e no deload. A tela não decide nada — ela
+                  só mostra o que a regra devolveu, com a evidência junto. */}
+              {tecnicaDe(detalhe) ? (
+                <View style={[s.explicaDescanso, { backgroundColor: colors.successSoft }]}>
+                  <Ionicons name="flash-outline" size={16} color={colors.success} />
+                  <Txt v="small" cor={colors.textDim} style={{ flex: 1 }}>
+                    <Txt v="small" bold cor={colors.success}>
+                      {tecnicaDe(detalhe)!.nome} — só na última série.{' '}
+                    </Txt>
+                    {tecnicaDe(detalhe)!.comoFazer}
+                    {'\n\n'}
+                    <Txt v="small" bold>
+                      O que isso rende:{' '}
+                    </Txt>
+                    {tecnicaDe(detalhe)!.oQueGanha}
+                    {'\n'}
+                    {tecnicaDe(detalhe)!.evidencia}
                   </Txt>
                 </View>
               ) : null}

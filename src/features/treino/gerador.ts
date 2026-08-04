@@ -23,6 +23,14 @@ import { evitarPorDor } from './contraindicacao';
 import { PADROES } from './padroes';
 import { ALVO_SERIES, CARDIO, TETO_UTIL } from './periodizacao';
 import { estimarDuracao, emMinutos } from './duracao';
+import {
+  ancorasDoPlano,
+  escolherPrincipalDoBloco,
+  fixarPrincipalDoBloco,
+  quebrasDeAncora,
+  variarEntreSessoes,
+  type QuebraDeAncora,
+} from './variacao';
 
 /**
  * O banco entra tarde, de propósito.
@@ -554,6 +562,16 @@ export interface PerfilDoTreino {
    * companhia entram como estão, entram na versão assistida, ou saem.
    */
   barraFixaReps: number;
+  /**
+   * O exercício de referência de cada grupo no bloco ANTERIOR — B8 nível 1.
+   *
+   * Ausente (o caso normal, primeiro bloco) = nada a variar. Presente, o gerador
+   * troca o principal por outro do MESMO padrão e declara a quebra da curva em
+   * `Plano.quebras`. É o único caminho pelo qual dois blocos do mesmo perfil
+   * saem diferentes: o gerador é determinístico de propósito, e sem esta entrada
+   * o bloco 2 sai byte a byte igual ao bloco 1.
+   */
+  ancorasAnteriores?: Record<string, string>;
 }
 
 interface ExercicioCat {
@@ -626,6 +644,15 @@ export interface Plano {
   /** Séries semanais por grupo, com contagem fracionada. */
   volumeSemanal: Record<string, number>;
   avisos: string[];
+  /**
+   * Âncoras que trocaram em relação ao bloco anterior — B8 nível 1.
+   *
+   * Vazio no primeiro bloco e sempre que nada trocou. Cada item é uma curva de
+   * gráfico que TERMINA e outra que COMEÇA: o app precisa desenhar duas séries
+   * separadas, porque a carga de um exercício não continua a do outro. Fingir
+   * continuidade mostraria uma queda ou um salto que a pessoa não teve.
+   */
+  quebras: QuebraDeAncora[];
 }
 
 // ── Volume ────────────────────────────────────────────────────────────────
@@ -1515,6 +1542,22 @@ export async function montarPlano(
   // sessão fechada, e a sessão só fecha agora.
   aplicarPrescricao(dias);
 
+  // ── B8 — os três níveis de variação, e por que eles vêm DEPOIS de tudo ──
+  //
+  // Os três dependem de `papel`, e `papel` só existe depois de `aplicarPrescricao`
+  // (é propriedade da sessão fechada). Rodar antes obrigaria a deduzir o papel
+  // por conta própria — uma segunda definição de principal, que é como o
+  // executor e a tela do dia passaram a discordar em G2.
+  //
+  // A ordem entre eles não é livre:
+  //   1. nível 1 troca o PRINCIPAL (entre blocos);
+  //   2. nível 0 propaga esse principal para todos os dias do bloco;
+  //   3. nível 2 roda os acessórios, que são o que sobra depois de 1 e 2.
+  // Invertida, a propagação do nível 0 desfaria a troca do nível 1 dia sim dia
+  // não — o mesmo modo de falhar que fez `diversificarNaSemana` mudar de lugar
+  // duas vezes.
+  const quebras = aplicarVariacaoDoBloco(dias, p, disponiveis, equipDe, emFoco, avisos);
+
   for (const d of dias) {
     d.minutos = emMinutos(estimarDuracao(paraEstimativa(d)).totalSeg);
     d.minutosCardio = Math.round(
@@ -1556,7 +1599,207 @@ export async function montarPlano(
     dias,
     volumeSemanal: contarVolume(dias),
     avisos,
+    quebras,
   };
+}
+
+/**
+ * Os três níveis de B8 aplicados ao plano fechado.
+ *
+ * ── A trava que todos compartilham ───────────────────────────────────────
+ *
+ * Nenhum nível ACRESCENTA exercício ou série: os três trocam nome por nome, com
+ * o mesmo número de séries, e todos passam por `trocaCabeNaSessao`. É a lição
+ * que este pipeline já pagou três vezes — quem roda depois de
+ * `aplicarTetosDaSessao` e acrescenta reabre o teto que acabou de fechar.
+ *
+ * ── Por que a ORDEM entra na porta da troca ──────────────────────────────
+ *
+ * Depois das trocas, `ordenarPorPapelNoDia` roda de novo (a linha nova pode
+ * pedir outro lugar) — e se o substituto mudasse quem abre o bloco, ele
+ * ROUBARIA a âncora que os níveis 0 e 1 acabaram de fixar.
+ *
+ * A primeira versão desta trava exigia o MESMO tier de fadiga, e era grosseira
+ * demais nos dois sentidos: recusava 4 trocas seguras da grade (trocar
+ * `Agachamento búlgaro`, tier 0, por `Afundo com barra`, tier 1, num bloco que
+ * já abre com `Leg press` não move âncora nenhuma) e, em compensação, não
+ * garantia nada quando o substituto do MESMO tier vencia o desempate por pico.
+ *
+ * A régua exata é a pergunta direta: com o substituto no lugar, quem abre o
+ * bloco continua sendo quem abria? `abridorDoGrupo` responde com o MESMO
+ * comparador que `ordenarPorPapelNoDia` usa — não uma cópia dele.
+ */
+function aplicarVariacaoDoBloco(
+  dias: DiaGerado[],
+  p: PerfilDoTreino,
+  disponiveis: ExercicioCat[],
+  equipDe: Equipamentos,
+  emFoco: Set<string>,
+  avisos: string[]
+): QuebraDeAncora[] {
+  /** Troca `alvo` por `nomeNovo` no dia, com as travas de sessão e de ordem. */
+  const trocar = (d: DiaGerado, alvo: ExercicioGerado, nomeNovo: string): boolean => {
+    if (d.exercicios.some((e) => e.nome === nomeNovo)) return false;
+    const cand = disponiveis.find(
+      (c) => c.nome === nomeNovo && c.grupo_primario === alvo.grupo
+    );
+    if (!cand) return false;
+    if (!trocaCabeNaSessao(d, alvo, cand, equipDe)) return false;
+
+    // Quem abre o bloco não pode mudar por causa de uma troca de acessório. Se o
+    // ALVO é quem abre, então quem passa a abrir tem que ser o substituto — é o
+    // caso do nível 0 e do nível 1, em que a âncora é exatamente o que troca.
+    const abriaAntes = abridorDoGrupo(d.exercicios, alvo.grupo);
+    const depois = d.exercicios.map((x) =>
+      x === alvo ? novoExercicio(cand, alvo.grupo, alvo.series) : x
+    );
+    const abreDepois = abridorDoGrupo(depois, alvo.grupo);
+    const esperado = abriaAntes === alvo.nome ? nomeNovo : abriaAntes;
+    if (abreDepois !== esperado) return false;
+
+    d.exercicios[d.exercicios.indexOf(alvo)] = novoExercicio(cand, alvo.grupo, alvo.series);
+    return true;
+  };
+
+  // ── Nível 1 — o principal pode trocar ENTRE blocos ──────────────────────
+  const anteriores = p.ancorasAnteriores;
+  if (anteriores && Object.keys(anteriores).length) {
+    for (const [grupo, anterior] of Object.entries(anteriores)) {
+      // Só troca quem AINDA é o principal daquele grupo neste bloco. Se o plano
+      // novo já escolheu outro (mudou o local, a dor, a agenda), a variação não
+      // tem o que fazer — e a quebra é reportada do mesmo jeito lá embaixo.
+      const linhas = dias
+        .flatMap((d) => d.exercicios.map((e) => ({ d, e })))
+        .filter((x) => x.e.grupo === grupo && x.e.papel === 'principal');
+      if (!linhas.length || linhas[0].e.nome !== anterior) continue;
+
+      // Mesmo tier de fadiga: a âncora nova precisa continuar abrindo o bloco, e
+      // um substituto mais leve deixaria o complementar do dia assumir a posição
+      // 1 — trocando a curva do gráfico por outra que ninguém escolheu.
+      const novo = escolherPrincipalDoBloco(
+        disponiveis.filter((c) => tierDeFadiga(c.nome) === tierDeFadiga(anterior)),
+        grupo,
+        anterior
+      );
+      if (!novo) continue;
+      // Todas as aparições do principal trocam juntas: meia troca deixaria o
+      // bloco com dois exercícios de referência, que é o defeito do nível 0.
+      const ok = linhas.map((x) => trocar(x.d, x.e, novo));
+      if (!ok.some(Boolean)) continue;
+    }
+    aplicarPrescricao(dias);
+  }
+
+  // ── Nível 0 — dentro do bloco, o principal é UM só ──────────────────────
+  //
+  // Roda depois de tudo que remove exercício. Medido nesta rodada: num perfil de
+  // casa com halteres e 3 dias, o corte por tempo tirava o supino inclinado de
+  // um dos dias e o supino reto virava principal ali — dois exercícios
+  // alimentando o mesmo gráfico dentro do mesmo bloco.
+  //
+  // ── E a exceção, que apareceu MEDIDA e não é concessão ──────────────────
+  //
+  // A primeira versão propagava sem olhar para o resto da semana e quebrou o
+  // invariante (l) de G2.1 em **81 perfis**: com 2 dias de 45 min numa academia
+  // básica, costas tem UM exercício por sessão — remada num dia, puxada no
+  // outro. Igualar o principal deixava a semana inteira só com `horizontal`,
+  // ou seja, uma semana sem puxada nenhuma. B8 põe a variedade nos níveis 1 e 2
+  // justamente porque ela mora nos slots NÃO-âncora; quando não existe slot
+  // não-âncora, forçar o nível 0 gasta a única vaga do grupo.
+  //
+  // A régua é "não piorar", a mesma que `trocaCabeNaSessao` usa para o teto:
+  // grupo grande que tinha 2+ padrões na semana não pode terminar com 1.
+  const variedadeSobrevive = (alvo: ExercicioGerado, nomeNovo: string): boolean => {
+    if (PEQUENOS.includes(alvo.grupo as Grupo)) return true;
+    const padroes = (trocado: boolean) => {
+      const s = new Set<string>();
+      for (const dd of dias)
+        for (const e of dd.exercicios) {
+          if (e.grupo !== alvo.grupo) continue;
+          s.add(padraoDe(trocado && e === alvo ? nomeNovo : e.nome, alvo.grupo));
+        }
+      return s.size;
+    };
+    return padroes(true) >= Math.min(2, padroes(false));
+  };
+
+  /**
+   * A segunda exceção, também medida: propagar não pode pôr o mesmo COMPOSTO
+   * PESADO em três dias da semana.
+   *
+   * Apareceu em **22 perfis** assim que a trava de ordem deixou de recusar
+   * trocas seguras: com costas 3× na semana, igualar o principal punha
+   * `Levantamento terra` nos três dias. O teto de 2 aparições de pesado é regra
+   * de recuperação (`MAX_APARICOES_PESADO`, viva desde G1 com invariante
+   * próprio), e comparabilidade não compra recuperação. A terceira sessão fica
+   * com o principal dela — e essa curva é outra curva, o que é honesto.
+   */
+  const pesadoCabeNaSemana = (alvo: ExercicioGerado, nomeNovo: string): boolean => {
+    if (!ehPesado(nomeNovo)) return true;
+    let n = 0;
+    for (const dd of dias)
+      for (const e of dd.exercicios) if ((e === alvo ? nomeNovo : e.nome) === nomeNovo) n++;
+    return n <= MAX_APARICOES_PESADO;
+  };
+
+  const propagadas = fixarPrincipalDoBloco<ExercicioGerado, DiaGerado>(dias, (d, alvo, nomeNovo) =>
+    variedadeSobrevive(alvo, nomeNovo) && pesadoCabeNaSemana(alvo, nomeNovo)
+      ? trocar(d, alvo, nomeNovo)
+      : false
+  );
+  if (propagadas.length) aplicarPrescricao(dias);
+
+  // ── Nível 2 — rodízio de acessórios entre as sessões do bloco ───────────
+  const rodadas = variarEntreSessoes(dias, disponiveis, trocar);
+
+  if (propagadas.length || rodadas.length) {
+    for (const d of dias) ordenarPorPapelNoDia(d, emFoco);
+    aplicarPrescricao(dias);
+  }
+
+  // ── O que a propagação NÃO conseguiu igualar, o plano DIZ ───────────────
+  //
+  // A garantia aqui não é "nunca acontece" — é a mesma forma de garantia que o
+  // grupo apagado pelo relógio já tem: quando acontece, o plano diz. Medido na
+  // grade, 428 de 1.703 grupos com dois principais no bloco terminam assim, e as
+  // razões são todas regras do próprio projeto ganhando de B8: a variedade de
+  // padrão da semana, o teto de 2 aparições do mesmo pesado, o teto por padrão
+  // da sessão e a ordem por fadiga.
+  //
+  // Silêncio aqui seria pior que o defeito: a pessoa veria duas curvas de
+  // "costas" no app sem saber que são duas de propósito, e concluiria que o
+  // gráfico está quebrado.
+  const doisPrincipais: string[] = [];
+  const vistos = new Map<string, string>();
+  for (const d of dias)
+    for (const e of d.exercicios) {
+      if (e.papel !== 'principal') continue;
+      const anterior = vistos.get(e.grupo);
+      if (!anterior) vistos.set(e.grupo, e.nome);
+      else if (anterior !== e.nome && !doisPrincipais.includes(e.grupo))
+        doisPrincipais.push(`${COMO_SE_FALA[e.grupo] ?? e.grupo} (${anterior} e ${e.nome})`);
+    }
+  if (doisPrincipais.length) {
+    avisos.push(
+      `Nesta semana ${doisPrincipais.join(', ')} tem mais de um exercício de referência — cada dia ` +
+        `abre com um. Não é erro: igualar os dois deixaria a semana com um movimento só, ou poria o ` +
+        `mesmo composto pesado em três dias. A consequência prática é que cada um tem a PRÓPRIA ` +
+        `curva de progresso; compare a carga de cada exercício com ele mesmo, nunca entre os dois.`
+    );
+  }
+
+  // ── E a quebra da curva, declarada ──────────────────────────────────────
+  const quebras = anteriores ? quebrasDeAncora(anteriores, ancorasDoPlano(dias)) : [];
+  if (quebras.length) {
+    avisos.push(
+      `Bloco novo: ${quebras.length === 1 ? 'um exercício de referência mudou' : `${quebras.length} exercícios de referência mudaram`}. ` +
+        quebras.map((q) => `${q.de} → ${q.para}`).join('; ') +
+        `. É o mesmo padrão de movimento em cada caso, mas a carga de um não continua a do outro: ` +
+        `no gráfico de progresso as curvas aparecem separadas, e a primeira semana com o exercício ` +
+        `novo é de calibração — não compare com o número antigo.`
+    );
+  }
+  return quebras;
 }
 
 /** Adapta o dia gerado ao formato que o estimador de duração espera. */
@@ -2177,6 +2420,46 @@ function trocarPorCoberturaFinal(
  */
 const MAX_APARICOES_PESADO = 2;
 
+/**
+ * A troca cabe nesta sessão? — **uma régua só, para os quatro que trocam**.
+ *
+ * Extraída de `diversificarNaSemana`, onde nasceu, porque G3 acrescentou três
+ * consumidores: o nível 0 de B8 (fixar o principal do bloco), o nível 1 (trocar
+ * a âncora entre blocos) e o nível 2 (rodízio de acessórios entre sessões). Cada
+ * um reimplementando "cabe no padrão e não estoura o teto" seria a mesma
+ * duplicação que fez as duas contas de volume discordarem por meses.
+ *
+ * Duas condições, nesta ordem:
+ *
+ * · **Cabe no padrão** — o substituto não pode criar um terceiro exercício do
+ *   mesmo padrão nem repetir o perfil de resistência de quem já está lá.
+ * · **Não reabre o teto fracionado** — a troca mantém o número de séries, mas o
+ *   substituto tem outros `secundarios`, e meia série vezes quatro chega em
+ *   outro grupo. "Passe a estourar" é a palavra: grupo que já estava acima (a
+ *   exceção declarada do teste, com um exercício e duas séries) não vira motivo
+ *   para recusar uma troca que não piora nada.
+ */
+function trocaCabeNaSessao(
+  d: DiaGerado,
+  alvo: ExercicioGerado,
+  cand: ExercicioCat,
+  equip: Equipamentos
+): boolean {
+  const outros = d.exercicios.filter((e) => e.grupo === alvo.grupo && e !== alvo);
+  if (!cabeNoPadrao(outros, cand, alvo.grupo, equip)) return false;
+
+  const antes = fracionadoNaSessao(d);
+  const simulado = d.exercicios.map((x) =>
+    x === alvo ? novoExercicio(cand, alvo.grupo, alvo.series) : x
+  );
+  const depois = fracionadoNaSessao({ ...d, exercicios: simulado });
+  for (const [g, v] of Object.entries(depois)) {
+    if (v <= tetoDaSessao(g)) continue;
+    if (v > (antes[g] ?? 0)) return false;
+  }
+  return true;
+}
+
 function diversificarNaSemana(
   dias: DiaGerado[],
   disponiveis: ExercicioCat[],
@@ -2189,7 +2472,6 @@ function diversificarNaSemana(
     proibidos: (e: ExercicioCat) => boolean
   ): boolean => {
     const noDia = new Set(d.exercicios.map((e) => e.nome));
-    const outros = d.exercicios.filter((e) => e.grupo === alvo.grupo && e !== alvo);
     // ── A SESSÃO entra na troca da SEMANA, e é isto que fecha os 168 ────────
     //
     // A troca semanal escolhia por variedade e ignorava o que o resto do dia já
@@ -2210,8 +2492,6 @@ function diversificarNaSemana(
       ),
       preferencia
     );
-    const cabe = (e: ExercicioCat) => cabeNoPadrao(outros, e, alvo.grupo, equip);
-
     // ── E a troca não pode reabrir o teto que a sessão acabou de fechar ────
     //
     // Esta função roda por ÚLTIMO, depois de `aplicarTetosDaSessao`. Ela troca
@@ -2224,26 +2504,14 @@ function diversificarNaSemana(
     // devolver o problema para o outro lado — ele apararia justamente o
     // exercício que a variedade acabou de trazer.
     //
-    // Então a régua entra AQUI, na escolha: o candidato só serve se, com ele no
-    // lugar, nenhum grupo do dia passe a estourar o teto que já não estourava.
-    // "Passe a" é a palavra: grupo que já estava acima (a exceção declarada do
-    // teste, com um exercício e duas séries) não vira motivo para recusar uma
-    // troca que não piora nada.
-    const antes = fracionadoNaSessao(d);
-    const naoEstoura = (e: ExercicioCat) => {
-      const simulado = d.exercicios.map((x) =>
-        x === alvo ? novoExercicio(e, alvo.grupo, alvo.series) : x
-      );
-      const depois = fracionadoNaSessao({ ...d, exercicios: simulado });
-      for (const [g, v] of Object.entries(depois)) {
-        if (v <= tetoDaSessao(g)) continue;
-        if (v > (antes[g] ?? 0)) return false;
-      }
-      return true;
-    };
+    // As duas condições moram em `trocaCabeNaSessao`, que é a mesma régua que os
+    // três níveis de B8 usam desde G3.
+    const cabeEnaoEstoura = (e: ExercicioCat) => trocaCabeNaSessao(d, alvo, e, equip);
 
     const novo =
-      cands.find((e) => cabe(e) && !saturados.has(padraoDe(e.nome, alvo.grupo)) && naoEstoura(e)) ??
+      cands.find(
+        (e) => cabeEnaoEstoura(e) && !saturados.has(padraoDe(e.nome, alvo.grupo))
+      ) ??
       // ── Fallback: uma semana com UM padrão é pior que um padrão saturado ──
       //
       // A saturação é heurística de RENDIMENTO — "metade do teto do padrão já
@@ -2260,9 +2528,9 @@ function diversificarNaSemana(
       // fazer hinge nenhum (o achado registrado em `padroesQueCobre`). A troca
       // era recusada e a semana terminava só com a nórdica.
       //
-      // `cabe` e `naoEstoura` continuam valendo: o fallback afrouxa a heurística
-      // de cobertura, nunca o teto de séries nem o de exercícios por padrão.
-      cands.find((e) => cabe(e) && naoEstoura(e));
+      // `trocaCabeNaSessao` continua valendo: o fallback afrouxa a heurística de
+      // cobertura, nunca o teto de séries nem o de exercícios por padrão.
+      cands.find((e) => cabeEnaoEstoura(e));
     if (!novo) return false;
     d.exercicios[d.exercicios.indexOf(alvo)] = novoExercicio(novo, alvo.grupo, alvo.series);
     return true;
@@ -2583,17 +2851,48 @@ function avisarCardioForaDoOrcamento(dias: DiaGerado[], p: PerfilDoTreino, aviso
  * hipertrofia a mesma meta não achou efeito de ordem — então isto é sobre
  * progressão mensurável e segurança, não sobre crescer mais.
  */
-function ordenarPorPapelNoDia(d: DiaGerado, emFoco: Set<string>) {
-  const papel = (n: string) => (ehPesado(n) ? 0 : ehComposto(n) ? 1 : 2);
-  // Desempate DENTRO do bloco de isoladores: o que carrega o músculo ALONGADO
-  // vem primeiro. É a posição de maior demanda mecânica e a que os compostos do
-  // dia menos cobrem — fazê-la por último, depois de duas polias, é gastar a
-  // parte cara do exercício com o músculo já fatigado. Não mexe na ordem entre
-  // papéis (composto pesado continua abrindo), só entre iguais.
-  const pico = (n: string, g: string) => {
-    const p = picoDeTensao(n, g);
+/** Tier de fadiga sistêmica: composto pesado abre, isolador fecha (A4). */
+const tierDeFadiga = (n: string) => (ehPesado(n) ? 0 : ehComposto(n) ? 1 : 2);
+
+/**
+ * A ordem DENTRO do bloco de um grupo — **uma definição só**.
+ *
+ * Extraída de `ordenarPorPapelNoDia` porque as trocas de B8 precisam responder
+ * "quem abriria o bloco se eu trocar esta linha?" antes de trocar. Uma cópia do
+ * comparador ali seria a mesma duplicação que fez o crossover ser composto numa
+ * função e abertura em outra — e aqui a consequência seria pior: a variação
+ * roubaria a âncora que ela existe para preservar.
+ *
+ * Desempate por PICO dentro do mesmo tier: o que carrega o músculo ALONGADO vem
+ * primeiro. É a posição de maior demanda mecânica e a que os compostos do dia
+ * menos cobrem — fazê-la por último, depois de duas polias, é gastar a parte
+ * cara do exercício com o músculo já fatigado.
+ */
+function compararNoBloco(grupo: string) {
+  const pico = (n: string) => {
+    const p = picoDeTensao(n, grupo);
     return p === 'alongado' ? 0 : p === 'meio' ? 1 : 2;
   };
+  return (a: { nome: string }, b: { nome: string }) =>
+    tierDeFadiga(a.nome) - tierDeFadiga(b.nome) || pico(a.nome) - pico(b.nome);
+}
+
+/**
+ * Quem abriria o bloco deste grupo, dada uma lista de exercícios do dia.
+ *
+ * Exportada porque o harness precisa da MESMA resposta para explicar por que uma
+ * troca de âncora foi recusada. Uma cópia do comparador no teste seria régua
+ * duplicada — e régua duplicada é como as duas contas de volume deste projeto
+ * passaram meses discordando.
+ */
+export function abridorDoGrupo(exs: { nome: string; grupo: string }[], grupo: string): string | null {
+  const bloco = exs.filter((e) => e.grupo === grupo);
+  if (!bloco.length) return null;
+  return [...bloco].sort(compararNoBloco(grupo))[0].nome;
+}
+
+function ordenarPorPapelNoDia(d: DiaGerado, emFoco: Set<string>) {
+  const papel = tierDeFadiga;
   const ordem: string[] = [];
   for (const e of d.exercicios) {
     if (e.grupo !== 'cardio' && !ordem.includes(e.grupo)) ordem.push(e.grupo);
@@ -2631,9 +2930,7 @@ function ordenarPorPapelNoDia(d: DiaGerado, emFoco: Set<string>) {
   const saida: DiaGerado['exercicios'] = [];
   for (const g of ordem) {
     const bloco = d.exercicios.filter((e) => e.grupo === g);
-    bloco.sort(
-      (a, b) => papel(a.nome) - papel(b.nome) || pico(a.nome, g) - pico(b.nome, g)
-    );
+    bloco.sort(compararNoBloco(g));
     saida.push(...bloco);
   }
   // Cardio é sempre o último: antes da musculação derrubaria a força da sessão.
@@ -3179,9 +3476,24 @@ export async function perfilDoTreino(): Promise<PerfilDoTreino | null> {
   };
 }
 
-/** Refaz o treino com as respostas atuais. Um botão, sem etapas. */
+/**
+ * Refaz o treino com as respostas atuais. Um botão, sem etapas.
+ *
+ * ── E é AQUI que o nível 1 de B8 acontece ────────────────────────────────
+ *
+ * "Refazer o treino" é, na prática, começar um bloco novo: a rotina em uso vai
+ * para `ativa = 0` e uma nova nasce com `criado_em` de hoje, que é a âncora da
+ * semana do bloco. Sem passar as âncoras do bloco anterior, o gerador —
+ * determinístico de propósito — devolveria o MESMO plano, exercício por
+ * exercício, e "bloco novo" seria só uma data nova.
+ *
+ * O onboarding NÃO passa (`gerarEAplicar` direto): lá não existe bloco anterior,
+ * e inventar variação no primeiro plano seria variar em relação a nada.
+ */
 export async function regerarTreino(): Promise<Plano | null> {
   const p = await perfilDoTreino();
   if (!p) return null;
-  return gerarEAplicar(p);
+  const { ancorasDaRotinaAtiva } = await import('./api');
+  const ancorasAnteriores = await ancorasDaRotinaAtiva();
+  return gerarEAplicar({ ...p, ancorasAnteriores });
 }
