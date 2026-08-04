@@ -1,4 +1,4 @@
-import type { Genero, Macros, Objetivo } from '@/db/types';
+import type { Genero } from '@/db/types';
 
 /**
  * Recomposição corporal — ganhar músculo e perder gordura ao mesmo tempo.
@@ -90,69 +90,30 @@ export function gorduraPorImc(
   return Math.min(55, Math.max(8, Math.round(pct * 10) / 10));
 }
 
-export function proteinaPorKg(objetivo: Objetivo | 'recomposicao'): number {
-  switch (objetivo) {
-    case 'recomposicao':
-      return 2.6;
-    case 'emagrecimento':
-      return 2.4;
-    case 'hipertrofia':
-      return 1.9;
-    default:
-      return 1.8;
-  }
-}
-
 /**
- * Macros para recomposição.
+ * Massa magra em kg — medida quando existe bioimpedância, estimada quando não.
  *
- * A proteína é calculada sobre a MASSA MAGRA quando existe bioimpedância —
- * é o tecido que consome proteína. Usar o peso total superestima em quem tem
- * gordura alta: 2,6 g/kg de 88 kg dá 229 g, o que é desnecessário e caro.
+ * ── Por que a estimativa está aqui, e não um fallback para o peso total ──
+ *
+ * Porque o peso total é o erro. 2,4 g/kg de 84 kg com 42% de gordura pede
+ * 202 g de proteína para alimentar 48 kg de tecido magro; a gordura não
+ * consome proteína. A equação de Deurenberg erra alguns pontos percentuais em
+ * quem tem muito músculo — e errar alguns pontos é muito melhor do que
+ * multiplicar pela gordura inteira.
+ *
+ * `null` só quando não há como estimar (falta altura, idade ou gênero). Aí
+ * quem chama decide o que fazer, em vez de receber um número inventado.
  */
-export function macrosRecomposicao(
-  kcalAlvo: number,
+export function massaMagraDe(
   pesoKg: number,
   gorduraPct: number | null,
   estimar?: { alturaCm: number; idade: number; genero: string }
-): Macros & { baseCalculo: string } {
-  // Sem bioimpedância, ESTIMA em vez de cair no peso total.
-  //
-  // O comentário acima já dizia que 2,6 g/kg de 88 kg dá 229 g e que isso é
-  // desnecessário e caro — e o código fazia exatamente isso sempre que faltava
-  // a balança de bioimpedância, que é o caso de quase todo mundo. A conta ficava
-  // pior justamente em quem tem mais gordura: 84 kg com 42% de gordura pediam
-  // 218 g de proteína para alimentar 48 kg de tecido magro.
-  //
-  // A estimativa por IMC não substitui medir, mas erra muito menos que ignorar.
-  const pct =
-    gorduraPct ?? (estimar ? gorduraPorImc(pesoKg, estimar.alturaCm, estimar.idade, estimar.genero) : null);
-  const massaMagra = pct !== null ? pesoKg * (1 - pct / 100) : null;
-
-  // 2,4 g por kg de massa magra. A faixa defensável para déficit é 2,2 a 3,1
-  // (Helms et al., 2014), e o topo dela é de atleta muito magro em corte
-  // agressivo — não de quem está começando recomposição. 2,4 protege a massa
-  // magra sem virar meta que ninguém cumpre e sem encarecer a lista de compras.
-  const proteina_g = massaMagra
-    ? Math.round(massaMagra * 2.4)
-    : Math.round(pesoKg * proteinaPorKg('recomposicao'));
-
-  // Gordura em 25% das calorias: abaixo de ~20% começa a atrapalhar hormônio.
-  const gordura_g = Math.round((kcalAlvo * 0.25) / 9);
-
-  const restante = kcalAlvo - proteina_g * 4 - gordura_g * 9;
-  const carbo_g = Math.max(0, Math.round(restante / 4));
-
-  return {
-    kcal: kcalAlvo,
-    proteina_g,
-    carbo_g,
-    gordura_g,
-    baseCalculo: massaMagra
-      ? `2,4 g por kg de massa magra (${massaMagra.toFixed(1)} kg` +
-        `${gorduraPct === null ? ', estimada pelo IMC' : ''})`
-      : `2,6 g por kg de peso corporal`,
-  };
+): { kg: number; pct: number; estimada: boolean } | null {
+  if (gorduraPct !== null && gorduraPct !== undefined)
+    return { kg: pesoKg * (1 - gorduraPct / 100), pct: gorduraPct, estimada: false };
+  if (!estimar) return null;
+  const pct = gorduraPorImc(pesoKg, estimar.alturaCm, estimar.idade, estimar.genero);
+  return { kg: pesoKg * (1 - pct / 100), pct, estimada: true };
 }
 
 /** Massa magra e massa gorda em kg, a partir do percentual da bioimpedância. */

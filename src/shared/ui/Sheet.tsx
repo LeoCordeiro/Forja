@@ -1,9 +1,17 @@
 import { ReactNode } from 'react';
-import { Modal, Pressable, StyleSheet, View, useWindowDimensions } from 'react-native';
+import {
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  View,
+  useWindowDimensions,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { FadeIn, FadeOut, SlideInDown, SlideOutDown } from 'react-native-reanimated';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { colors, FILL, radius, spacing } from '@/theme';
+import { useTeclado } from '../hooks/useTeclado';
 import { Txt } from './Txt';
 import { Press } from './Press';
 
@@ -14,15 +22,49 @@ interface Props {
   children: ReactNode;
   /** Fração da altura da tela. 0.9 para telas de conteúdo longo. */
   altura?: number;
+  /**
+   * O conteúdo rola dentro do sheet.
+   *
+   * Opt-in de propósito: alguns sheets já trazem a própria lista rolável
+   * (`FlatList` no de registrar alimento), e uma `ScrollView` por fora criaria
+   * rolagem aninhada. Quem tem `Input` e altura fixa precisa disto — encolher
+   * o sheet para o teclado caber, sem rolagem, só esconderia o botão Salvar
+   * em vez do campo.
+   */
+  rolavel?: boolean;
 }
 
 /**
  * Bottom sheet. Sobe de baixo porque a mão já está lá — abrir do centro
  * obrigaria o polegar a viajar a tela inteira.
+ *
+ * ── O teclado (U8) ───────────────────────────────────────────────────────
+ *
+ * O sheet era `Modal` + posição absoluta no bottom, sem reação nenhuma ao
+ * teclado. O de "Nota de setup" tem altura 0,62 e um `Input` multiline: no
+ * iPhone o teclado cobria a metade inferior — o campo E o "Salvar". Anotar
+ * "banco no furo 3" no meio do treino virava digitar às cegas, e no PWA
+ * standalone é pior que no Safari, porque não existe barra do navegador para
+ * empurrar a página.
+ *
+ * A correção é a mesma que a Fase 4 usou no executor, e não um componente
+ * novo: **medir o que o teclado cobre e devolver o espaço**. Lá, o NumberPad
+ * fica ancorado com `paddingBottom: insets.bottom` e a linha em edição sobe
+ * por `scrollTo`; aqui o sheet encolhe o `maxHeight` pela altura do teclado e
+ * o rodapé sobe junto. `KeyboardAvoidingView` não serviria: no
+ * `react-native-web` ele depende de eventos que o navegador não emite — a
+ * mesma armadilha do `hitSlop`, que existia na tela e valia zero no PWA.
  */
-export function Sheet({ aberto, onFechar, titulo, children, altura = 0.75 }: Props) {
+export function Sheet({ aberto, onFechar, titulo, children, altura = 0.75, rolavel }: Props) {
   const { height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
+  const teclado = useTeclado();
+
+  // Com o teclado aberto, o espaço que existe é o da janela menos o que ele
+  // cobre. Os 24 pt são a folga para o puxador não encostar no topo da tela.
+  const maxAltura = teclado > 0
+    ? Math.max(220, height - teclado - 24)
+    : height * altura;
 
   return (
     <Modal visible={aberto} transparent animationType="none" onRequestClose={onFechar}>
@@ -35,7 +77,12 @@ export function Sheet({ aberto, onFechar, titulo, children, altura = 0.75 }: Pro
         exiting={SlideOutDown.duration(200)}
         style={[
           s.sheet,
-          { maxHeight: height * altura, paddingBottom: insets.bottom + spacing.lg },
+          {
+            maxHeight: maxAltura,
+            // O rodapé sobe para cima do teclado. Sem isto, encolher o sheet
+            // deixaria o botão de salvar exatamente debaixo dele.
+            paddingBottom: (teclado > 0 ? teclado : insets.bottom) + spacing.lg,
+          },
         ]}
       >
         <View style={s.puxador} />
@@ -49,7 +96,19 @@ export function Sheet({ aberto, onFechar, titulo, children, altura = 0.75 }: Pro
             </Press>
           </View>
         ) : null}
-        {children}
+        {rolavel ? (
+          <ScrollView
+            // O toque no botão dentro do sheet não pode ser engolido pelo
+            // fechamento do teclado: `handled` faz o filho responder primeiro.
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={{ paddingBottom: spacing.md }}
+          >
+            {children}
+          </ScrollView>
+        ) : (
+          children
+        )}
       </Animated.View>
     </Modal>
   );

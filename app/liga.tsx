@@ -250,6 +250,7 @@ export default function Liga() {
         onFechar={() => setEntrando(false)}
         titulo={criando ? 'Criar liga' : 'Entrar numa liga'}
         altura={0.8}
+        rolavel
       >
         <View style={{ gap: spacing.lg }}>
           <Input
@@ -308,6 +309,7 @@ export default function Liga() {
         onFechar={() => setConfig(false)}
         titulo="Servidor da liga"
         altura={0.9}
+        rolavel
       >
         <View style={{ gap: spacing.lg }}>
           <Card padding={spacing.md}>

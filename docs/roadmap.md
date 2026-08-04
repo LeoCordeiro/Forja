@@ -26,7 +26,7 @@ Prescrição-alvo (o que devia sair): `prescricao-alvo.md` na mesma pasta.
 | G2.2 | Correção do cross-review de G2.1 | ALTO-1 (chaves de local) ALTO-2 (papel congelado) M1 M2 M3 M4 + 4 BAIXOs | **feita, não commitada** — gate: **10 falhas no gerador + 2 na migração contra `bacf85c`, 0 depois** |
 | G3 | Treinador que explica e varia | execução detalhada, técnicas de intensidade, objetivo do exercício, variação entre ciclos | pendente |
 | 4 | Série em 1 toque | U1 U2 U5 U6 U7 | **feita, não commitada** — gate: **33 falhas contra `bb6babf`, 0 depois**. Ver "Validação da fase 4" |
-| 5 | Segurança e nutrição | F5 N3 N6 N8 U8 | pendente |
+| 5 | Segurança e nutrição | F5 N3 N6 N8 U8 | **feita, não commitada** — gate: **50 falhas contra `ee156d5`, 0 depois**. Ver "Validação da fase 5" |
 | 6 | Sobras do P2 | F7 F9 F10 N4 N10 | pendente |
 | 7 | Re-auditoria (rodada 2) | comparar com os dois consolidados | após as fases acima |
 
@@ -137,6 +137,135 @@ estão no código (`ACSM 2026` em volume.ts, Baz-Valle/Coleman em programa.ts,
 Refalo/Nuzzo/Haugen em gerador.ts) NÃO foram verificadas — não tratar como
 evidência nem reaproveitar em texto de produto sem WebFetch antes. As 5 fontes
 verificadas estão no cabeçalho do fitness.md.
+
+## Validação da fase 5 — Segurança e nutrição (04/08/2026)
+
+Working tree, sem commit. `tsc --noEmit` limpo. `testar:gerador` e
+`testar:migracao` 100%. **Sem mudança de schema** — N6 usa `body_metrics`
+(`tmb_kcal` + `peso_kg` da mesma linha, que já existem desde a v2) e F5c lê
+`substituicoes.motivo`, que era gravado e nunca lido. Nada a responder sobre
+"quem já está com o banco estragado": nenhuma coluna nova, nenhuma linha
+reescrita.
+
+**O gate, com a unidade em cada invariante.** As seções 30-35 foram escritas
+antes de qualquer correção e rodadas contra `ee156d5` num worktree com o MESMO
+arquivo de teste: **50 falhas**. Nenhuma asserção de G1/G2/G2.1/Fase 4 quebrou
+dos dois lados (408 asserções nos dois, 358 ok / 50 falhas antes; 408 ok
+depois). Depois: **0**.
+
+| Invariante | UNIDADE | contra `ee156d5` | depois |
+|---|---|---|---|
+| 30. contraindicação por dor derivada | **exercício × dor** (124 × 5 = 620 decisões) | 9 | 0 |
+| 31. troca em sessão respeita dor e local | **exercício × dor** | 6 | 0 |
+| 32. motivo `dor` lido 2× vira sugestão | **exercício × dor** | 5 | 0 |
+| 33. meta de nutrição | **dia de dieta** (672 corpos) | 11 | 0 |
+| 34. TMB medido envelhece | **dia de dieta** | 6 | 0 |
+| 35. Sheet com Input reage ao teclado | **tela** | 10 | 0 |
+
+**F5a — a contraindicação virou função, e a lista virou exemplo.**
+`src/features/treino/contraindicacao.ts` descreve cada exercício por CARGAS
+MECÂNICAS derivadas de `padraoDe` + `perfilDeResistencia` + tipo de carga, e
+cada região declara quais cargas contraindica. `REGIOES_DOR.evitar` foi
+**renomeado para `exemplos`** de propósito: lista antiga viva ao lado da regra
+nova é a que a próxima pessoa acha primeiro.
+
+| Região | bloqueava | bloqueia | entraram | saiu |
+|---|---|---|---|---|
+| ombro | 4 | **12** | +9 | `Elevação lateral` |
+| lombar | 4 | **11** | +7 | — |
+| joelho | 3 | **14** | +11 | — |
+| punho | 3 | **8** | +5 | — |
+| cotovelo | 3 | **7** | +4 | — |
+
+A única saída é a que F5 manda desfazer: abdução neutra com carga leve
+(12-20, RIR 2) era o exercício de ombro que o app tirava, enquanto mantinha a
+remada alta (abdução com rotação interna, barra pesada) e o mergulho. Entraram,
+entre outros: os 6 desenvolvimentos overhead (não só o militar), `Levantamento
+terra romeno`, `Bom dia com barra` e `Stiff com halteres` no lombar, e os 7
+padrões de flexão profunda unilateral no joelho.
+
+**Reforço nominal declarado, um só:** `Hack machine` para dor no joelho. Ele e o
+`Leg press` são o mesmo padrão, equipamento e estabilização — nenhum atributo do
+projeto os separa hoje, e derivar sem reforço DESBLOQUEARIA um exercício que
+produção já protege. O invariante cobra o motivo mecânico por escrito, justamente
+para ninguém acrescentar nome ali sem essa conta.
+
+**F5b — a proteção do gerador deixou de ser desfeita em um toque.** O filtro é
+`filtrarSubstitutos` (puro, exercitável contra catálogo × dor × local); `api.ts`
+só lê o perfil. Medido nas mesmas combinações: o mapa cru oferecia **275
+substitutos contraindicados** e **4.746 que o local não tem** — agora 0 e 0. No
+app real, com dor no ombro, trocar `Supino inclinado com halteres` oferecia
+`Supino inclinado com barra` em primeiro lugar; agora ele aparece na linha
+"Fora da lista por causa das dores do seu perfil", junto de `Mergulho no
+paralelo` e `Supino reto com barra`.
+
+**F5c — o motivo `dor` era escrita que ninguém lia.** Duas trocas por dor no
+mesmo exercício disparam a pergunta, com a região deduzida das cargas mecânicas
+dele. Uma vez só não sugere nada de propósito.
+
+**N3 — proteína de emagrecimento, medida em corpos concretos:**
+
+| perfil | antes | depois |
+|---|---|---|
+| 120 kg, 40% gordura, M | **264 g** (2.803 kcal, C 261) | **173 g** (C 352) |
+| 84 kg, 42%, F | 185 g | **117 g** |
+| 58 kg, 30%, F sedentária | 128 g | **97 g** |
+| 62 kg, 12%, M | 136 g | 131 g (e a meta subiu 2.280 → 2.451, ver N8) |
+
+O mesmo corpo em déficit passou a receber a MESMA proteína em "perder gordura" e
+em "recomposição" — a pior razão entre os dois objetivos, na grade de 672 corpos,
+é **1,00×**.
+
+**N8 — os freios existiam e não eram chamados.** `deficitMaximoSeguro` estava
+escrito com fonte no comentário e grep não achava chamador. Agora o piso é o
+maior entre o metabolismo basal e `TDEE − deficitMaximoSeguro`, e a meta manual
+passou pela escada certa (gordura cede até 20% das calorias **antes** de o carbo
+apertar). Na grade: déficit acima do teto de mobilização **62 → 0**; proteína
+fora da faixa defensável **98 → 0**. No app, meta manual de 900 kcal: gordura
+desce ao piso e aparecem os dois avisos, em vez de `carbo 0 g` gravado calado.
+
+**E `definirMetaCalorica` continuaria morta.** Ela tinha a escada e nenhum
+chamador — o sheet gravava os quatro campos crus, então baixar a meta para 1.500
+mantinha 78 g de gordura e 346 g de carbo (2.802 kcal para uma meta de 1.500). O
+sheet passou a recalcular pela escada enquanto os macros não forem tocados à mão,
+e a mostrar o que ela teve que fazer. Ligar a função sem ligar o fio teria sido
+repetir o achado.
+
+**N6 — o TMB medido envelhece por dois caminhos**, porque um só não bastava:
+desvio de peso > 3% (é o peso que move o TMB) e idade > 8 semanas (composição
+muda com o peso parado). Nada é apagado: a medição continua em `body_metrics` e a
+decisão é tomada na LEITURA — regra 6 do projeto. A tela de perfil diz por quê,
+com a data e os dois pesos na frase.
+
+**U8 — `KeyboardAvoidingView` não serviria.** No `react-native-web` ele depende
+de eventos `keyboardDidShow` que o navegador não emite: seria correto no
+simulador e inerte no PWA, a mesma armadilha do `hitSlop` da Fase 4. O hook
+`useTeclado` usa `visualViewport` no web e `Keyboard` no nativo; o `Sheet`
+encolhe o `maxHeight` e sobe o rodapé pela altura coberta. `rolavel` é opt-in
+porque o sheet de registrar alimento traz a própria `FlatList` — ele é rolável só
+no passo do `Input`.
+
+**Validado no navegador a 390×844** (Chrome headless próprio com
+`Emulation.setDeviceMetricsOverride`; o Browser pane não compõe frames e o
+clique sintético não chega ao `Pressable`): onboarding completo com 120 kg /
+"Perder gordura" → prévia da meta já com 179 g em vez de 264 → "Refazer meu
+treino" marcando **dor no ombro** → dia A com `Elevação lateral` presente
+(4 × 10-15, RIR 0-2) e **zero desenvolvimento, zero remada alta, zero mergulho**;
+peito abrindo com `Supino máquina` porque o de barra saiu → sessão iniciada →
+`Trocar` no supino inclinado com halteres, com as três recusas nomeadas na tela →
+troca por dor 1× (sem pergunta) → segunda sessão, troca por dor 2× → "Você já
+trocou Tríceps testa por dor 2×. Quer marcar cotovelo nas suas dores?" →
+aceitando, `Tríceps francês` desaparece da lista de troca na hora. Dieta com
+meta 2.803 kcal / P 179 g; perfil mostrando "Proteína: 2,4 g por kg de massa
+magra (74,4 kg, estimada pelo IMC)"; meta manual de 1.500 kcal disparando os dois
+avisos de piso. Zero erro de console.
+
+**Não validado no navegador:** o teclado em si. Chrome headless não tem teclado
+virtual, então `visualViewport` nunca encolhe e o caminho novo do `Sheet` não é
+exercitado de verdade — o que a seção 35 garante é que o fio está ligado e que
+`hitSlop`-style inércia não se repetiu (o hook usa a API que funciona no web).
+**Conferir no celular:** abrir "Nota de setup" no meio do treino e "Ajustar
+meta", com o teclado aberto, e ver o campo e o botão.
 
 ## Validação da fase 4 — Série em 1 toque (04/08/2026)
 
@@ -857,9 +986,44 @@ Dos DOIS cross-reviews de G2 (03/08 — o que ficou fora, com número):
     (`anteriores[i]` é indexado por posição da linha), sem efeito no que se
     grava — a aproximação não entra em volume nem PR. Some se `anteriores`
     passar a ser indexado pelas linhas VALENDO.
-31. **Regra por PADRÃO para dor, em vez de lista nominal** (F5). `Remada alta`
-    entrou na lista de dor no ombro como correção mínima; a correção boa é
-    derivar de padrão + atributos, e isso é fase 5.
+31. ~~**Regra por PADRÃO para dor, em vez de lista nominal**~~ (F5) — **feita na
+    fase 5**: `contraindicacao.ts` deriva de cargas mecânicas e `REGIOES_DOR.
+    evitar` virou `exemplos`. Sobrou um reforço nominal declarado (`Hack
+    machine`), com o motivo mecânico por escrito e cobrado pelo harness.
+
+Da fase 5 (04/08 — achados medidos durante a implementação, NÃO corrigidos):
+
+37. **`padroesQueCobre` atribui o hinge carregado a quem não faz hinge.**
+    `Agachamento livre sem peso` e `Ponte de glúteo` listam `posterior` como
+    secundário e caem no DEFAULT `quadril` de `padraoDe`, que é stiff/romeno/bom
+    dia. Nenhum dos dois carrega o isquiotibial por flexão de quadril com carga
+    externa, e mesmo assim os dois SATURAM esse padrão no dia — foi o que fez
+    uma semana inteira ficar só com a flexão nórdica quando a dor no joelho
+    tirou os agachamentos com carga de uma casa com halteres. Corrigir na
+    origem (`return []` quando o nome não é hinge) fecha o caso **e move a
+    composição de outros dias em cascata**: testado, um perfil de 6 dias passou
+    a receber desenvolvimento militar num dia de empurrar, quebrando (b). Trocar
+    um defeito de 1 perfil por outro de 1 perfil, num pipeline que a fase 5 não
+    veio auditar, é como as correções de meio de pipeline se desfizeram antes.
+    Ficou um **fallback declarado** em `diversificarNaSemana` (sem candidato
+    fora dos saturados, aceita um saturado — `cabe` e `naoEstoura` continuam
+    valendo), e o achado fica aqui com a conta pronta.
+38. **Proteína de hipertrofia e manutenção continua sobre o PESO TOTAL** — e em
+    corpo com gordura alta isso chega a **4,2 g/kg de massa magra** (o pior caso
+    da grade de 672 corpos, 50 de 672 em hipertrofia e 46 em manutenção acima de
+    3,1). N3 fala de emagrecimento e é só isso que a fase mudou; estender a
+    massa magra ao ganho muda a prescrição de quem está em superávit, o que é
+    decisão do dono. O invariante (f) mede os dois lados com a régua de cada um
+    (déficit: 1,6-3,1 g/kg MM; ganho: 1,4-2,0 g/kg de peso), então a mudança —
+    se vier — já nasce medida.
+39. **O piso absoluto por gênero (1.200 F / 1.500 M) é prática comum sem
+    citação.** Está declarado assim no código. O piso que morde de verdade nos
+    cálculos automáticos é o metabolismo basal; o absoluto é rede para meta
+    manual. Se virar argumento de produto, precisa de fonte aberta antes.
+40. **`avisosDaMeta` não distingue meta manual antiga de meta manual escolhida
+    hoje.** Uma meta salva à mão há três meses passa a exibir o aviso de piso
+    quando o peso muda — correto — mas o texto não diz "você escolheu isto em
+    DD/MM". `nutrition_targets.valid_from` e `origem` já existem para isso.
 
 De G2 (03/08 — achados durante a implementação, nenhum virou código):
 

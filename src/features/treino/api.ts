@@ -15,6 +15,9 @@ import { getPerfil } from '../perfil/api';
 import { darPontos, registrarAtividade } from '../gamificacao/api';
 import { ehComposto, prioridadeDe, substitutosDe } from './classificacao';
 import { descansoCorreto, prescricaoDaRotina, type Papel } from './papel';
+import { filtrarSubstitutos, type RecusaTroca } from './substituicao';
+import { regiaoSugeridaPara } from './contraindicacao';
+import { REGIOES_DOR } from '../perfil/diagnostico';
 import { resolverFase, type FaseEfetiva } from './fase';
 import { isoDe } from '@/shared/utils/date';
 
@@ -522,31 +525,123 @@ export async function reordenarPorPrioridade(diaId: number) {
   await recalcularPapeisDoDia(diaId);
 }
 
-/** Substitutos do exercício, já resolvidos para ids do catálogo local. */
-export async function substitutosDisponiveis(exercicioId: number): Promise<Exercise[]> {
+/**
+ * Substitutos do exercício, já filtrados pela dor e pelo local do perfil.
+ *
+ * ── Por que o filtro mora AQUI e não na tela ─────────────────────────────
+ *
+ * Porque a tela não pode esquecer. O gerador gasta o plano inteiro tirando o
+ * que a pessoa marcou como doloroso e o que a academia dela não tem; a lista
+ * de troca devolvia o mapa `SUBSTITUICOES` cru e desfazia isso em um toque, no
+ * pior momento possível — no meio da série, com pressa. Perfil com dor no
+ * ombro trocando o desenvolvimento com halteres recebia "Desenvolvimento
+ * militar" como PRIMEIRA opção.
+ *
+ * Quem decide é `filtrarSubstitutos`, que é pura e por isso testável contra o
+ * catálogo inteiro × cada dor × cada local. Aqui só se busca o perfil e se
+ * resolvem os nomes para linhas do banco.
+ *
+ * As recusas voltam junto de propósito: opção que some sem explicação parece
+ * bug do app.
+ */
+export interface SubstitutosDaTroca {
+  lista: Exercise[];
+  recusados: RecusaTroca[];
+}
+
+/** Quantas opções a lista mostra. Mais que isso vira rolagem no meio do treino. */
+const MAX_SUBSTITUTOS = 6;
+
+export async function substitutosDisponiveis(exercicioId: number): Promise<SubstitutosDaTroca> {
   const ex = await getExercicio(exercicioId);
-  if (!ex) return [];
+  if (!ex) return { lista: [], recusados: [] };
 
-  const nomes = substitutosDe(ex.nome);
-  const out: Exercise[] = [];
+  const perfil = await first<{ dores: string | null; local_treino: string }>(
+    'SELECT dores, local_treino FROM profile WHERE id = 1'
+  );
+  const ctx = {
+    dores: (perfil?.dores ?? '').split(',').filter(Boolean),
+    local: perfil?.local_treino ?? 'academia',
+  };
 
-  for (const nome of nomes) {
+  const candidatos: Exercise[] = [];
+  // Mapeados primeiro: são equivalentes escolhidos a dedo, não "outro do mesmo
+  // grupo". A ordem sobrevive ao filtro.
+  for (const nome of substitutosDe(ex.nome)) {
     const e = await first<Exercise>('SELECT * FROM exercises WHERE nome = ?', [nome]);
-    if (e) out.push(e);
+    if (e) candidatos.push(e);
   }
-
-  // Sem mapeamento próprio, cai para o mesmo grupo muscular e equipamento
-  // parecido — melhor que devolver lista vazia no meio do treino.
-  if (out.length === 0) {
-    return all<Exercise>(
+  // E o mesmo grupo muscular atrás deles — antes isto só entrava quando o mapa
+  // vinha vazio, e com o filtro isso deixaria a pessoa sem opção sempre que os
+  // dois ou três mapeados fossem os contraindicados.
+  candidatos.push(
+    ...(await all<Exercise>(
       `SELECT * FROM exercises
         WHERE grupo_primario = ? AND id <> ?
-        ORDER BY (equipamento = ?) DESC, nome
-        LIMIT 6`,
+        ORDER BY (equipamento = ?) DESC, nome`,
       [ex.grupo_primario, exercicioId, ex.equipamento ?? '']
-    );
-  }
-  return out;
+    ))
+  );
+
+  const { permitidos, recusados } = filtrarSubstitutos(ex.nome, candidatos, ctx);
+  return { lista: permitidos.slice(0, MAX_SUBSTITUTOS), recusados };
+}
+
+/**
+ * A dor que a pessoa já registrou duas vezes no mesmo exercício.
+ *
+ * `MOTIVOS_TROCA` tem "Senti dor ou desconforto" desde sempre, o app gravava em
+ * `substituicoes.motivo` e **nenhuma linha do repositório lia essa coluna** —
+ * não marcava o exercício, não sugeria atualizar o perfil, não mudava o plano
+ * da semana seguinte. A pessoa avisava e o app não escutava.
+ *
+ * Duas vezes, e não uma: aparelho errado, dia ruim e aquecimento curto também
+ * produzem uma troca por dor. Concluir "você tem dor no ombro" a partir de um
+ * toque é o app concluindo demais.
+ */
+export async function dorRepetida(
+  exercicioId: number
+): Promise<{ regiao: string; label: string; vezes: number; exercicio: string } | null> {
+  const ex = await getExercicio(exercicioId);
+  if (!ex) return null;
+
+  const r = await first<{ n: number }>(
+    `SELECT COUNT(*) AS n FROM substituicoes WHERE de_exercise = ? AND motivo = 'dor'`,
+    [exercicioId]
+  );
+  const vezes = r?.n ?? 0;
+
+  const perfil = await first<{ dores: string | null }>('SELECT dores FROM profile WHERE id = 1');
+  const atuais = (perfil?.dores ?? '').split(',').filter(Boolean);
+
+  const regiao = regiaoSugeridaPara(
+    { nome: ex.nome, grupo_primario: ex.grupo_primario, equipamento: ex.equipamento, tipo_carga: ex.tipo_carga },
+    vezes,
+    atuais
+  );
+  if (!regiao) return null;
+
+  return {
+    regiao,
+    label: REGIOES_DOR.find((x) => x.chave === regiao)?.label ?? regiao,
+    vezes,
+    exercicio: ex.nome,
+  };
+}
+
+/**
+ * Acrescenta a região às dores do perfil.
+ *
+ * Não regenera o plano: isso é decisão de quem treina, e "Refazer meu treino"
+ * já existe e arquiva a rotina antiga sem apagar histórico. O que muda na hora
+ * é a lista de troca da própria sessão — que passa a esconder o movimento que
+ * doeu — e o próximo plano gerado.
+ */
+export async function adicionarDorNoPerfil(regiao: string): Promise<void> {
+  const perfil = await first<{ dores: string | null }>('SELECT dores FROM profile WHERE id = 1');
+  const atuais = (perfil?.dores ?? '').split(',').filter(Boolean);
+  if (atuais.includes(regiao)) return;
+  await run('UPDATE profile SET dores = ? WHERE id = 1', [[...atuais, regiao].join(',')]);
 }
 
 // ─────────────────────────── SESSÃO ───────────────────────────

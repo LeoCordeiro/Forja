@@ -13,6 +13,7 @@ import {
   salvarMeta,
   salvarPerfil,
 } from '@/features/perfil/api';
+import { macrosParaMetaManual } from '@/features/perfil/meta';
 import { estatisticas } from '@/features/treino/api';
 import { getStats, progressoNivel } from '@/features/gamificacao/api';
 import {
@@ -156,6 +157,22 @@ export default function Perfil() {
             cor={colors.primary}
           />
         </View>
+        {/* ── Por que o metabolismo medido saiu de cena ──────────────────
+            Um número que muda sozinho e não se explica é pior que o número
+            velho: a bioimpedância continua no histórico, o que mudou é que ela
+            parou de valer para a meta de hoje. Sem esta linha o usuário só
+            veria o "medido na bioimpedância" virar "estimado por fórmula". */}
+        {r.tmbMotivo ? (
+          <Card faixa={colors.warn} padding={spacing.md}>
+            <View style={{ flexDirection: 'row', gap: spacing.sm, alignItems: 'flex-start' }}>
+              <Ionicons name="time-outline" size={16} color={colors.warn} />
+              <Txt v="small" size={12} cor={colors.textDim} style={{ flex: 1 }}>
+                {r.tmbMotivo}
+              </Txt>
+            </View>
+          </Card>
+        ) : null}
+
         <Card onPress={() => setEditandoMeta(true)}>
           <View style={s.entre}>
             <View style={{ flex: 1 }}>
@@ -163,10 +180,30 @@ export default function Perfil() {
               <Txt v="small">
                 P {r.meta.proteina_g} g · C {r.meta.carbo_g} g · G {r.meta.gordura_g} g
               </Txt>
+              {/* De onde a proteína saiu. Era o número mais consequente da
+                  tela e o único sem origem escrita. */}
+              <Txt v="small" size={11} cor={colors.textFaint}>
+                Proteína: {r.baseCalculoMeta}
+              </Txt>
             </View>
             <Ionicons name="chevron-forward" size={19} color={colors.textFaint} />
           </View>
         </Card>
+
+        {/* ── Freios que morderam ────────────────────────────────────────
+            Piso calórico, déficit acima do que a gordura entrega, carboidrato
+            espremido. As três contas existiam no código e nenhuma chegava à
+            tela — `deficitMaximoSeguro` estava escrito e nunca era chamado. */}
+        {r.avisosMeta.map((a) => (
+          <Card key={a} faixa={colors.warn} padding={spacing.md}>
+            <View style={{ flexDirection: 'row', gap: spacing.sm, alignItems: 'flex-start' }}>
+              <Ionicons name="alert-circle-outline" size={16} color={colors.warn} />
+              <Txt v="small" size={12} cor={colors.textDim} style={{ flex: 1 }}>
+                {a}
+              </Txt>
+            </View>
+          </Card>
+        ))}
       </Animated.View>
 
       {/* ── Estatísticas ── */}
@@ -469,7 +506,7 @@ function SheetEditar({
   }
 
   return (
-    <Sheet aberto={aberto} onFechar={onFechar} titulo="Editar perfil" altura={0.9}>
+    <Sheet aberto={aberto} onFechar={onFechar} titulo="Editar perfil" altura={0.9} rolavel>
       <View style={{ gap: spacing.xl }}>
         <Input rotulo="Nome" value={nome} onChangeText={setNome} maxLength={30} />
         <Input
@@ -538,6 +575,23 @@ function SheetMeta({
   const [prot, setProt] = useState(String(atual.proteina_g));
   const [carb, setCarb] = useState(String(atual.carbo_g));
   const [gord, setGord] = useState(String(atual.gordura_g));
+  /**
+   * A pessoa mexeu nos macros à mão?
+   *
+   * Enquanto NÃO mexeu, mudar a caloria refaz a divisão pela escada de
+   * `macrosParaMetaManual` — a gordura cede até 20% das calorias antes de o
+   * carboidrato apertar. Era esse o buraco: `definirMetaCalorica` tinha a
+   * escada e **nenhum chamador** (grep confirmava), e o sheet gravava os quatro
+   * campos crus. Baixar a meta para 1.500 mantinha 78 g de gordura e 346 g de
+   * carbo — três números que não somam a caloria pedida.
+   *
+   * Depois de mexer num macro, o app para de recalcular: dali em diante quem
+   * manda é a escolha da pessoa, e a incoerência (se houver) aparece na
+   * conferência logo abaixo e nos avisos da meta salva.
+   */
+  const [macrosNaMao, setMacrosNaMao] = useState(false);
+  /** Avisos da divisão atual — o que a escada teve que fazer para caber. */
+  const [avisos, setAvisos] = useState<string[]>([]);
 
   // O sheet monta uma vez e fica montado: sem re-sincronizar na abertura, ele
   // mostra a meta de quando a tela nasceu — que uma troca de objetivo pode
@@ -548,7 +602,25 @@ function SheetMeta({
     setProt(String(atual.proteina_g));
     setCarb(String(atual.carbo_g));
     setGord(String(atual.gordura_g));
+    setMacrosNaMao(false);
+    setAvisos([]);
   }, [aberto, atual]);
+
+  /** Caloria nova, macros intocados: a escada refaz a divisão na hora. */
+  function mudarKcal(v: string) {
+    setKcal(v);
+    const n = parseInt(v, 10);
+    if (macrosNaMao || !n || n < 400) return setAvisos([]);
+    const r = macrosParaMetaManual(n, {
+      kcal: n,
+      proteina_g: parseInt(prot, 10) || atual.proteina_g,
+      carbo_g: 0,
+      gordura_g: 0,
+    });
+    setCarb(String(r.meta.carbo_g));
+    setGord(String(r.meta.gordura_g));
+    setAvisos(r.avisos);
+  }
 
   // A conta mora em `metaAutomatica`, não aqui: refazer com macros() na tela
   // ignorava a massa magra e devolvia proteína sobre o peso total na
@@ -560,6 +632,8 @@ function SheetMeta({
     setProt(String(m.proteina_g));
     setCarb(String(m.carbo_g));
     setGord(String(m.gordura_g));
+    setMacrosNaMao(false);
+    setAvisos(m.avisos);
     buzz.leve();
   }
 
@@ -582,12 +656,39 @@ function SheetMeta({
   const diferenca = somaKcal - (parseInt(kcalV, 10) || 0);
 
   return (
-    <Sheet aberto={aberto} onFechar={onFechar} titulo="Ajustar meta" altura={0.88}>
+    <Sheet aberto={aberto} onFechar={onFechar} titulo="Ajustar meta" altura={0.88} rolavel>
       <View style={{ gap: spacing.lg }}>
-        <Input rotulo="Calorias (kcal)" value={kcalV} onChangeText={setKcal} keyboardType="number-pad" />
-        <Input rotulo="Proteína (g)" value={prot} onChangeText={setProt} keyboardType="number-pad" />
-        <Input rotulo="Carboidrato (g)" value={carb} onChangeText={setCarb} keyboardType="number-pad" />
-        <Input rotulo="Gordura (g)" value={gord} onChangeText={setGord} keyboardType="number-pad" />
+        <Input rotulo="Calorias (kcal)" value={kcalV} onChangeText={mudarKcal} keyboardType="number-pad" />
+        <Input
+          rotulo="Proteína (g)"
+          value={prot}
+          onChangeText={(v) => { setMacrosNaMao(true); setProt(v); }}
+          keyboardType="number-pad"
+        />
+        <Input
+          rotulo="Carboidrato (g)"
+          value={carb}
+          onChangeText={(v) => { setMacrosNaMao(true); setCarb(v); }}
+          keyboardType="number-pad"
+        />
+        <Input
+          rotulo="Gordura (g)"
+          value={gord}
+          onChangeText={(v) => { setMacrosNaMao(true); setGord(v); }}
+          keyboardType="number-pad"
+        />
+
+        {/* O que a escada teve que fazer para a caloria caber. Antes disso o
+            app gravava `carbo 0 g` calado — a conta estourando registrada como
+            se fosse prescrição. */}
+        {avisos.map((a) => (
+          <View key={a} style={[s.conferencia, { backgroundColor: colors.warnSoft }]}>
+            <Ionicons name="alert-circle" size={16} color={colors.warn} />
+            <Txt v="small" cor={colors.warn} style={{ flex: 1 }}>
+              {a}
+            </Txt>
+          </View>
+        ))}
 
         {/* Conferência: macro que não fecha com a caloria é erro silencioso. */}
         <View

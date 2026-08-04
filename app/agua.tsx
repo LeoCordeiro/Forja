@@ -248,6 +248,7 @@ export default function Agua() {
         onFechar={() => setEditandoMeta(false)}
         titulo="Meta de água"
         altura={0.7}
+        rolavel
       >
         <View style={{ gap: spacing.lg }}>
           <Card>
@@ -307,6 +308,7 @@ export default function Agua() {
         onFechar={() => setAbrindoPersonalizado(false)}
         titulo="Quanto você bebeu?"
         altura={0.62}
+        rolavel
       >
         <View style={{ gap: spacing.lg }}>
           <Input

@@ -20,17 +20,12 @@ import {
   LABEL_OBJETIVO,
   classificacaoImc,
   imc,
-  macros,
-  metaCalorica,
   tdee,
   tmb,
 } from '@/features/perfil/calculos';
 import type { Experiencia, Genero, NivelAtividade, Objetivo } from '@/db/types';
-import {
-  DESC_OBJETIVO_V2,
-  LABEL_OBJETIVO_V2,
-  macrosRecomposicao,
-} from '@/features/perfil/recomposicao';
+import { DESC_OBJETIVO_V2, LABEL_OBJETIVO_V2 } from '@/features/perfil/recomposicao';
+import { calcularMetaDetalhada } from '@/features/perfil/meta';
 import { DESC_EXPERIENCIA, LABEL_EXPERIENCIA, planoRetorno } from '@/features/treino/periodizacao';
 import { LOCAIS, type LocalTreino } from '@/features/treino/local';
 import { divisaoDe, gerarEAplicar, gruposEnfatizados, type Plano } from '@/features/treino/gerador';
@@ -167,12 +162,22 @@ export default function Onboarding() {
 
   const basal = pesoN && alturaN && idadeN ? tmb(pesoN, alturaN, idadeN, genero) : 0;
   const gasto = basal ? tdee(basal, nivel) : 0;
-  const alvo = gasto ? metaCalorica(gasto, objetivo) : 0;
-  const m = alvo
-    ? objetivo === 'recomposicao'
-      ? macrosRecomposicao(alvo, pesoN, null, { alturaCm: alturaN, idade: idadeN, genero })
-      : macros(alvo, pesoN, objetivo)
+  // Um ponto de calculo so, tambem no onboarding: a previa que a pessoa ve
+  // aqui tem que ser exatamente a meta que o app vai gravar. Refazer a conta na
+  // tela foi como a proteina sobre o peso total voltou uma vez.
+  const previa = gasto
+    ? calcularMetaDetalhada({
+        tdee: gasto,
+        basal,
+        pesoKg: pesoN,
+        objetivo,
+        gorduraPct: null,
+        estimar: { alturaCm: alturaN, idade: idadeN, genero },
+        genero,
+      })
     : null;
+  const m = previa?.meta ?? null;
+  const alvo = m?.kcal ?? 0;
 
   async function concluir() {
     setSalvando(true);

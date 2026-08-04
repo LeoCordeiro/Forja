@@ -225,8 +225,12 @@ export default function Diagnostico() {
           {dores.length > 0 ? (
             <Card faixa={colors.warn} padding={spacing.md}>
               <Txt v="small" size={11} cor={colors.warn}>
-                Saem do treino: {plano.evitar.slice(0, 6).join(', ')}
-                {plano.evitar.length > 6 ? '…' : ''}
+                {/* "por exemplo" não é modéstia: quem decide é a regra de
+                    padrão + atributo em `contraindicacao.ts`, sobre o catálogo
+                    inteiro. Listar quatro nomes como se fossem a lista fechada
+                    foi exatamente o que deixou a `Remada alta` passar. */}
+                Sai do treino tudo que carrega a região — por exemplo{' '}
+                {plano.evitar.slice(0, 4).join(', ')}.
               </Txt>
               <Txt v="small" size={11} cor={colors.textFaint} style={{ marginTop: 6 }}>
                 Dor que persiste fora do treino é assunto de fisioterapeuta. O app troca exercício,

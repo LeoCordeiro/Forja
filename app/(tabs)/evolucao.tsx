@@ -309,7 +309,7 @@ function SheetMedidas({
   }
 
   return (
-    <Sheet aberto={aberto} onFechar={onFechar} titulo="Registrar medidas" altura={0.88}>
+    <Sheet aberto={aberto} onFechar={onFechar} titulo="Registrar medidas" altura={0.88} rolavel>
       <View style={{ gap: spacing.lg }}>
         <Txt v="small">
           Preencha só o que quiser acompanhar. O registro é de {dataCurta(hoje())} e sobrescreve

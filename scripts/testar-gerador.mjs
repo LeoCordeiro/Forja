@@ -11,7 +11,23 @@
 import { EXERCICIOS } from '../src/db/seed/exercicios.ts';
 import { montarPlano, REGIOES } from '../src/features/treino/gerador.ts';
 import { indiretoPorPadrao } from '../src/features/treino/papel.ts';
-import { FORCA_RELATIVA, padraoDe, ehComposto, ehPesado } from '../src/features/treino/classificacao.ts';
+import {
+  FORCA_RELATIVA,
+  padraoDe,
+  ehComposto,
+  ehPesado,
+  substitutosDe,
+  SUBSTITUICOES,
+} from '../src/features/treino/classificacao.ts';
+// Nutrição: os módulos PUROS (sem `@/db/client`) que a grade de dia de dieta
+// consome. `perfil/api.ts` não entra aqui de propósito — ele importa o banco.
+import { macros, metaCalorica, tdee, tmb } from '../src/features/perfil/calculos.ts';
+import { DEFICIT_RECOMPOSICAO, deficitMaximoSeguro, gorduraPorImc } from '../src/features/perfil/recomposicao.ts';
+// `macrosRecomposicao` só existe no código ANTERIOR — ela virou a rota única de
+// `meta.ts`. Namespace pelo motivo de sempre: com import nomeado, rodar este
+// arquivo contra `ee156d5` OU contra a árvore atual quebraria num dos dois
+// lados no LINK, e o gate exige que ele rode nos dois e compare asserções.
+import * as RECOMP from '../src/features/perfil/recomposicao.ts';
 import { foraDoLocal, LOCAIS } from '../src/features/treino/local.ts';
 // `localConhecido` nasce nesta rodada — namespace, para o gate rodar contra o
 // código anterior e FALHAR por asserção em vez de morrer no link.
@@ -65,6 +81,48 @@ const base = {
   dores: [],
   // -1 = não perguntado, que é o estado de quem nunca respondeu.
   barraFixaReps: -1,
+};
+
+// ── Módulos da Fase 5, carregados AQUI EM CIMA de propósito ────────────────
+//
+// A seção 16 (grade de 1.350 perfis) precisa da regra de dor para saber quais
+// padrões o gerador podia escolher — e ela roda antes das seções novas. Um
+// `const` declarado lá embaixo estaria em zona morta temporal na hora que a
+// seção 16 rodasse. Import DINÂMICO pelo motivo de sempre: contra o código
+// anterior, módulo ausente vale objeto vazio e a asserção FALHA, em vez de o
+// processo morrer no link antes da primeira asserção.
+const carregarModulo = async (caminho) => {
+  try {
+    return await import(caminho);
+  } catch {
+    return {};
+  }
+};
+const CONTRA = await carregarModulo('../src/features/treino/contraindicacao.ts');
+const TROCA = await carregarModulo('../src/features/treino/substituicao.ts');
+const META = await carregarModulo('../src/features/perfil/meta.ts');
+
+/** O catálogo na forma que a regra de dor recebe (a mesma que o gerador passa). */
+const CATALOGO_DOR = TODOS.filter((e) => e.grupo_primario !== 'cardio').map((e) => ({
+  nome: e.nome,
+  grupo_primario: e.grupo_primario,
+  equipamento: e.equipamento,
+  tipo_carga: e.tipo_carga,
+}));
+const acharEx = (nome) => CATALOGO_DOR.find((e) => e.nome === nome);
+
+/**
+ * "Este exercício está bloqueado para esta dor?" — pela regra VIVA.
+ *
+ * O fallback é a regra de hoje (lista nominal em `REGIOES_DOR.evitar`), e ele
+ * existe por um motivo só: permitir rodar este mesmo arquivo contra `ee156d5` e
+ * falhar por ASSERÇÃO. No caminho vivo ele nunca é usado — e é ele, e não uma
+ * cópia da regra, que `padroesDoLocal` consulta: régua duplicada é como as duas
+ * contas de volume passaram meses discordando.
+ */
+const bloqueado = (ex, regiao) => {
+  if (typeof CONTRA.bloqueadoPorDor === 'function') return !!CONTRA.bloqueadoPorDor(ex, [regiao]);
+  return (REGIOES_DOR.find((x) => x.chave === regiao)?.evitar ?? []).includes(ex.nome);
 };
 
 let falhas = 0;
@@ -414,9 +472,15 @@ function padroesDoLocal(grupo, p) {
   // indireto dos supinos. Sobra UM padrão de ombro possível — e cobrar dois ali
   // é cobrar do gerador algo que o catálogo não tem. É o mesmo motivo do filtro
   // de força relativa logo abaixo, que já era precedente aceito.
-  const proibidos = new Set(
-    (p.dores ?? []).flatMap((d) => REGIOES_DOR.find((x) => x.chave === d)?.evitar ?? [])
-  );
+  //
+  // A régua é a FUNÇÃO da produção (`bloqueado`, no topo), não uma cópia da
+  // lista: quando a contraindicação passou a sair de padrão + atributo, uma
+  // cópia aqui continuaria concordando com a versão antiga e o invariante (l)
+  // mediria o gerador contra uma regra que não existe mais.
+  const proibidos = (nome) => {
+    const e = CATALOGO_DOR.find((x) => x.nome === nome);
+    return !!e && (p.dores ?? []).some((d) => bloqueado(e, d));
+  };
   // E o que o LOCAL não tem apesar de a etiqueta de equipamento liberar
   // (`semEstes`): a Smart Fit tem cabo e máquina, mas não tem glute ham raise
   // nem flexão nórdica. Sem isto a asserção contaria padrão que o gerador está
@@ -426,7 +490,7 @@ function padroesDoLocal(grupo, p) {
   for (const e of fonte.catalogo) {
     if (e.grupo_primario !== grupo) continue;
     if (e.equipamento && !equip.has(e.equipamento)) continue;
-    if (proibidos.has(e.nome) || semLocal.has(e.nome)) continue;
+    if (proibidos(e.nome) || semLocal.has(e.nome)) continue;
     // Mesmo filtro de força relativa que o gerador aplica: mergulho no
     // paralelo é o segundo padrão de peito em casa, e ele não existe para quem
     // ainda não sustenta o próprio peso. Contar padrão que o gerador nunca
@@ -1109,11 +1173,22 @@ console.log('\n16. Invariantes de sessão numa grade de perfis');
       // num corpo todo com UM exercício por grupo, todos são principais e uma
       // faixa só é a prescrição certa, não o defeito A6.
       const algumGrupoRepete = forca.length > new Set(forca.map((e) => e.grupo)).size;
+      // ── E só onde a sessão TEM um principal ─────────────────────────
+      //
+      // A exceção já existia por grupo ("grupo sem principal de verdade… dois
+      // isoladores na mesma faixa é a prescrição certa") e faltava no nível da
+      // sessão. O caso que faltava é real e nasceu com a regra de dor: em casa
+      // com halteres, dor no ombro e um dia "Ombro e braços", TODO exercício
+      // possível é monoarticular — elevação lateral, frontal, crucifixo
+      // inverso, rosca, tríceps. Cinco isoladores a 10-15 é a prescrição certa,
+      // não o colapso de A6, que é o composto pesado recebendo 8-12 igual ao
+      // acessório. Sem principal na sessão não existe o degrau que A6 mede.
+      const temPrincipal = forca.some((e) => e.papel === 'principal');
       // Sessão inteira de carga fixa (casa sem equipamento) tem uma faixa só
       // porque a zona não é escolhível em exercício nenhum dela — é a
       // prescrição certa, e cobrar variedade ali seria cobrar o que C1 proibiu.
       const algumaAjustavel = forca.some((e) => e.tipoCarga === 'peso_reps');
-      if ((algumGrupoRepete && algumaAjustavel && faixas.size < 2) || colapsado) {
+      if ((algumGrupoRepete && algumaAjustavel && temPrincipal && faixas.size < 2) || colapsado) {
         faixaUnica++;
         amostra.faixa ||= `${rot} | ${d.nome} | ${colapsado ?? [...faixas].join(' / ')}`;
       }
@@ -2091,6 +2166,815 @@ console.log('\n27. Descanso visivel no teclado (U6) e o aquecimento de G2');
       ? 'toque longo -> menu da linha'
       : 'o gesto de aquecimento sumiu da linha de serie'
   );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Fase 5 — Segurança e nutrição (F5, N3, N6, N8, U8)
+//
+// DUAS UNIDADES NOVAS, e nenhuma delas aparece contando série ou exercício:
+//
+//   · **exercício × dor** — a contraindicação vale ou não vale para aquele
+//     perfil. Um plano inteiro pode estar dentro de todos os tetos e ainda
+//     oferecer, no meio do treino, exatamente o movimento que dói.
+//   · **dia de dieta** — a meta de um dia para um corpo concreto. Nada disso
+//     tem a ver com o plano de treino, e por isso nada acima mede.
+//
+// Os módulos novos entram por import DINÂMICO (mesmo motivo da seção 23):
+// ausente vale objeto vazio e a asserção FALHA, em vez de o processo morrer no
+// link antes da primeira asserção.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const FONTE_SHEET = readFileSync(new URL('../src/shared/ui/Sheet.tsx', import.meta.url), 'utf8');
+
+// ── 30. Contraindicação por dor: padrão e atributo, não lista de nomes (F5a) ──
+//
+// UNIDADE: **exercício × dor** — 124 exercícios × 5 regiões = 620 decisões.
+//
+// O critério em produção é o IMPLEMENTO, não o padrão de movimento, e por isso
+// as listas têm buracos que não se enxergam lendo: lombar evita `Stiff` e
+// mantém `Levantamento terra romeno`; joelho evita `Afundo com barra` e mantém
+// `Afundo com halteres`, `Agachamento búlgaro` e `Afundo caminhando`; ombro
+// evita a `Elevação lateral` — o exercício mais benigno da abdução — e mantém a
+// `Remada alta`, que é abdução com rotação interna e ainda entra como composto
+// de barra. Esse último já mordeu em G2: tirar a elevação lateral abriu a vaga
+// do padrão para a remada alta em 23 perfis com dor no ombro.
+console.log('\n30. Contraindicação por dor derivada de padrão + atributo (F5a)');
+{
+  ok(
+    'a regra de dor é uma FUNÇÃO de atributos, não uma lista de nomes',
+    typeof CONTRA.bloqueadoPorDor === 'function',
+    typeof CONTRA.bloqueadoPorDor
+  );
+  ok(
+    'e as cargas mecânicas de cada exercício são declaradas',
+    typeof CONTRA.cargasDe === 'function',
+    typeof CONTRA.cargasDe
+  );
+  ok(
+    'toda região de dor declara QUAIS cargas ela contraindica',
+    !!CONTRA.CARGAS_POR_DOR &&
+      REGIOES_DOR.every((r) => Array.isArray(CONTRA.CARGAS_POR_DOR[r.chave]) && CONTRA.CARGAS_POR_DOR[r.chave].length),
+    CONTRA.CARGAS_POR_DOR ? Object.keys(CONTRA.CARGAS_POR_DOR).join(', ') : 'não existe'
+  );
+
+  // ── A tabela do achado, nome a nome ────────────────────────────────────
+  //
+  // Cada linha aqui é uma frase literal de F5 ou da lista que produção já
+  // tinha. `true` = tem que sair do plano; `false` = tem que continuar
+  // disponível. As três primeiras seções são os buracos citados; a quarta é a
+  // garantia de que nada que hoje protege deixou de proteger.
+  const ESPERADO = {
+    ombro: {
+      // Desenvolvimento acima da linha do olho — os SEIS, não só o de barra.
+      'Desenvolvimento militar': true,
+      'Desenvolvimento com halteres': true,
+      'Desenvolvimento Arnold': true,
+      'Desenvolvimento máquina': true,
+      'Desenvolvimento na polia': true,
+      'Flexão pique': true,
+      // Abdução com rotação interna.
+      'Remada alta': true,
+      // Ombro em extensão profunda com o peso do corpo.
+      'Mergulho no paralelo': true,
+      'Mergulho entre bancos': true,
+      // Mão travada na barra: o ombro não tem para onde escapar embaixo.
+      'Supino reto com barra': true,
+      'Supino inclinado com barra': true,
+      // PRESERVADO — é a inversão que F5 manda desfazer. Abdução neutra, carga
+      // leve, 12-20 com RIR 2: o exercício de ombro que MAIS costuma ser
+      // tolerado, e o único do padrão `lateral` no catálogo inteiro.
+      'Elevação lateral': false,
+      // Empurrar com trajetória livre continua disponível.
+      'Supino reto com halteres': false,
+      'Supino máquina': false,
+      'Supino na polia': false,
+      'Face pull': false,
+      'Crucifixo inverso': false,
+      // "Remada alta na máquina" é um HIGH ROW (grupo costas): nome parecido,
+      // movimento diferente. Bloquear por semelhança de nome seria a lista
+      // nominal de volta, com outro disfarce.
+      'Remada alta na máquina': false,
+    },
+    lombar: {
+      Stiff: true,
+      'Levantamento terra romeno': true,
+      'Bom dia com barra': true,
+      'Stiff com halteres': true,
+      'Levantamento terra': true,
+      'Agachamento livre': true,
+      'Agachamento frontal': true,
+      'Remada curvada com barra': true,
+      'Remada cavalinho': true,
+      // Hinge sem carga axial livre: o cabo e a máquina puxam na horizontal.
+      'Pull through na polia': false,
+      'Hiperextensão lombar': false,
+      'Mesa flexora': false,
+      'Cadeira flexora': false,
+      'Leg press': false,
+      'Remada baixa na polia': false,
+      'Puxada frontal na polia': false,
+    },
+    joelho: {
+      'Afundo com barra': true,
+      'Afundo com halteres': true,
+      'Agachamento búlgaro': true,
+      'Afundo caminhando': true,
+      'Afundo reverso com halteres': true,
+      'Subida no banco': true,
+      'Subida no banco com halteres': true,
+      'Agachamento livre': true,
+      'Agachamento goblet': true,
+      'Hack machine': true,
+      // Agachamento sem carga externa é o que sobra em casa — e a amplitude
+      // ali é escolhida pela pessoa, não pela barra nas costas.
+      'Agachamento livre sem peso': false,
+      'Agachamento na cadeira': false,
+      'Leg press': false,
+      'Cadeira extensora': false,
+      'Mesa flexora': false,
+    },
+    punho: {
+      'Rosca direta com barra': true,
+      'Supino fechado': true,
+      'Flexão de braço': true,
+      'Flexão inclinada': true,
+      'Flexão com pés elevados': true,
+      'Rosca alternada com halteres': false,
+      'Rosca martelo': false,
+      'Supino máquina': false,
+    },
+    cotovelo: {
+      'Tríceps testa': true,
+      'Tríceps francês': true,
+      'Rosca scott': true,
+      'Rosca concentrada': true,
+      'Mergulho no paralelo': true,
+      'Mergulho entre bancos': true,
+      'Tríceps na polia com corda': false,
+      'Rosca direta com barra': false,
+    },
+  };
+
+  let erradas = 0;
+  const amostraDor = { bloqueouDemais: '', deixouPassar: '' };
+  for (const [regiao, tabela] of Object.entries(ESPERADO)) {
+    for (const [nome, esperado] of Object.entries(tabela)) {
+      const ex = acharEx(nome);
+      if (!ex) {
+        erradas++;
+        amostraDor.deixouPassar ||= `${nome} não existe no catálogo`;
+        continue;
+      }
+      const real = bloqueado(ex, regiao);
+      if (real === esperado) continue;
+      erradas++;
+      if (real) amostraDor.bloqueouDemais ||= `${regiao}: ${nome} bloqueado e não devia`;
+      else amostraDor.deixouPassar ||= `${regiao}: ${nome} passa e não devia`;
+    }
+    const dessaRegiao = Object.entries(tabela).filter(([nome, esp]) => {
+      const ex = acharEx(nome);
+      return !ex || bloqueado(ex, regiao) !== esp;
+    });
+    ok(
+      `dor no ${regiao}: as ${Object.keys(tabela).length} decisões da tabela batem`,
+      dessaRegiao.length === 0,
+      dessaRegiao.map(([n]) => n).join(', ')
+    );
+  }
+  console.log(`   ${erradas} decisão(ões) fora da tabela — ${amostraDor.deixouPassar || amostraDor.bloqueouDemais || 'nenhuma'}`);
+
+  // ── Toda decisão de bloqueio é EXPLICÁVEL por uma carga declarada ───────
+  //
+  // É a régua genérica, e é ela que impede a lista nominal de voltar por
+  // baixo. Um bloqueio que não casa com nenhuma carga mecânica do exercício é
+  // um nome escrito à mão — e nome escrito à mão é como `Elevação lateral`
+  // saiu e `Remada alta` ficou. A ÚNICA saída é o reforço declarado, que
+  // precisa dizer o motivo mecânico por escrito.
+  const cargasDe = CONTRA.cargasDe ?? (() => []);
+  const porDor = CONTRA.CARGAS_POR_DOR ?? {};
+  const reforcos = CONTRA.REFORCOS ?? {};
+  let semExplicacao = 0;
+  let amostraSem = '';
+  for (const ex of CATALOGO_DOR) {
+    for (const r of REGIOES_DOR) {
+      if (!bloqueado(ex, r.chave)) continue;
+      const cargas = new Set(cargasDe(ex));
+      const casa = (porDor[r.chave] ?? []).some((c) => cargas.has(c));
+      const reforcado = !!reforcos[r.chave]?.[ex.nome];
+      if (casa || reforcado) continue;
+      semExplicacao++;
+      amostraSem ||= `${r.chave}: ${ex.nome}`;
+    }
+  }
+  ok(
+    'todo bloqueio é explicado por uma carga mecânica (ou por reforço declarado com motivo)',
+    semExplicacao === 0,
+    `${semExplicacao} sem explicação — ${amostraSem}`
+  );
+  const reforcoSemMotivo = Object.entries(reforcos).flatMap(([r, m]) =>
+    Object.entries(m ?? {}).filter(([, motivo]) => !motivo || String(motivo).length < 20).map(([n]) => `${r}:${n}`)
+  );
+  ok(
+    'e todo reforço nominal traz o motivo mecânico por escrito',
+    reforcoSemMotivo.length === 0,
+    reforcoSemMotivo.join(', ')
+  );
+
+  // ── A regra não pode apagar um grupo que TINHA alternativa ─────────────
+  //
+  // Contraindicação que zera um grupo com cinco opções não protege ninguém:
+  // manda a pessoa treinar sem peito. A régua é por LOCAL, porque é o local
+  // que já limitou o catálogo antes de a dor chegar.
+  //
+  // A garantia possível NÃO é "nunca zera" — é a mesma do grupo que o relógio
+  // apaga. Em casa, só com o peso do corpo, o catálogo tem UM exercício direto
+  // de ombro (`Flexão pique`, que é empurrar acima da cabeça) e UM de tríceps
+  // (`Mergulho entre bancos`, que é ombro em extensão): com dor no ombro não
+  // existe alternativa a oferecer, e fingir que existe seria pior. Aí a
+  // exigência vira outra — o plano DIZ.
+  let grupoZerado = 0;
+  const zeradosComUmaOpcao = [];
+  let amostraZero = '';
+  for (const l of LOCAIS) {
+    const equip = new Set(l.equipamentos);
+    const semLocal = foraDoLocal(l.chave);
+    for (const r of REGIOES_DOR) {
+      for (const g of GRANDES_T) {
+        const noLocal = CATALOGO_DOR.filter(
+          (e) =>
+            e.grupo_primario === g &&
+            (!e.equipamento || equip.has(e.equipamento)) &&
+            !semLocal.has(e.nome)
+        );
+        if (!noLocal.length) continue;
+        const sobrou = noLocal.filter((e) => !bloqueado(e, r.chave));
+        if (sobrou.length) continue;
+        if (noLocal.length === 1) {
+          zeradosComUmaOpcao.push(`${l.chave}/${r.chave}/${g}`);
+          continue;
+        }
+        grupoZerado++;
+        amostraZero ||= `${l.chave} + dor ${r.chave}: ${g} zerado tendo ${noLocal.length} opções`;
+      }
+    }
+  }
+  ok('nenhuma dor apaga um grupo grande que tinha alternativa no local', grupoZerado === 0,
+     `${grupoZerado} — ${amostraZero}`);
+
+  // E onde ele zera com opção única, o plano precisa declarar.
+  {
+    const plano = await montarPlano(
+      { ...base, local: 'casa_simples', dias: 4, diasDisponiveis: [1, 2, 4, 5], minutosPorDia: Array(7).fill(60), dores: ['ombro'] },
+      fonte
+    );
+    const direto = new Set(
+      plano.dias.flatMap((d) => d.exercicios.filter((e) => e.grupo !== 'cardio').map((e) => e.grupo))
+    );
+    ok(
+      'casa sem equipamento + dor no ombro: o grupo apagado vem declarado',
+      direto.has('ombro') || plano.avisos.some((a) => /não sobrou opção segura|sai do plano/i.test(a)),
+      plano.avisos.find((a) => /segura/i.test(a)) ?? `ombro no plano: ${direto.has('ombro')}`
+    );
+    console.log(`   ${zeradosComUmaOpcao.length} combinação(ões) local×dor com opção única contraindicada: ${zeradosComUmaOpcao.join(', ') || 'nenhuma'}`);
+  }
+
+  // ── E o gerador de fato consome a regra nova ───────────────────────────
+  for (const dor of ['ombro', 'joelho', 'lombar']) {
+    const plano = await montarPlano(
+      { ...base, dias: 4, diasDisponiveis: [1, 2, 4, 5], minutosPorDia: Array(7).fill(90), dores: [dor] },
+      fonte
+    );
+    const vazaram = plano.dias.flatMap((d) =>
+      d.exercicios.filter((e) => e.grupo !== 'cardio' && acharEx(e.nome) && bloqueado(acharEx(e.nome), dor))
+    );
+    ok(`plano com dor no ${dor}: nenhum exercício contraindicado no treino`, vazaram.length === 0,
+       vazaram.map((e) => e.nome).join(', '));
+  }
+}
+
+// ── 31. A troca em sessão respeita dor e local (F5b) ───────────────────────
+//
+// UNIDADE: **exercício × dor**, no ponto de maior risco — no meio do treino,
+// com pressa, com o aparelho ocupado. `substitutosDisponiveis` devolve o mapa
+// `SUBSTITUICOES` cru: com dor no ombro, o gerador tira o desenvolvimento
+// militar do plano e o sheet o oferece de volta como PRIMEIRA opção de troca do
+// desenvolvimento com halteres. A proteção inteira do gerador desfeita em um
+// toque.
+console.log('\n31. Substituto oferecido em sessão respeita dor e local (F5b)');
+{
+  ok(
+    'existe um filtro de troca, e ele é uma função pura (testável sem banco)',
+    typeof TROCA.filtrarSubstitutos === 'function',
+    typeof TROCA.filtrarSubstitutos
+  );
+
+  // O fallback é a regra de hoje: o mapa cru, sem filtro nenhum.
+  const filtrar =
+    TROCA.filtrarSubstitutos ??
+    ((atual, cands) => ({ permitidos: cands.filter((c) => c.nome !== atual), recusados: [] }));
+
+  const candidatosDe = (nome) => {
+    const ex = acharEx(nome);
+    const mapeados = substitutosDe(nome).map(acharEx).filter(Boolean);
+    const mesmoGrupo = CATALOGO_DOR.filter(
+      (e) => ex && e.grupo_primario === ex.grupo_primario && e.nome !== nome
+    );
+    const vistos = new Set();
+    return [...mapeados, ...mesmoGrupo].filter((e) => !vistos.has(e.nome) && vistos.add(e.nome));
+  };
+
+  let oferecidoComDor = 0;
+  let oferecidoForaDoLocal = 0;
+  let ofereceuOProprio = 0;
+  let semAlternativa = 0;
+  const amostraTroca = { dor: '', local: '', proprio: '', vazio: '' };
+  // Quantos contraindicados a troca oferecia ANTES — é o número do relatório.
+  let oferecidosSemFiltro = 0;
+
+  for (const nome of Object.keys(SUBSTITUICOES)) {
+    if (!acharEx(nome)) continue;
+    for (const l of LOCAIS) {
+      for (const r of [...REGIOES_DOR.map((x) => x.chave), null]) {
+        const dores = r ? [r] : [];
+        const cands = candidatosDe(nome);
+        if (r) {
+          oferecidosSemFiltro += substitutosDe(nome)
+            .map(acharEx)
+            .filter((e) => e && bloqueado(e, r)).length;
+        }
+        const saida = filtrar(nome, cands, { dores, local: l.chave });
+        const permitidos = saida?.permitidos ?? [];
+
+        for (const p of permitidos) {
+          if (p.nome === nome) {
+            ofereceuOProprio++;
+            amostraTroca.proprio ||= `${nome} oferecido como troca de si mesmo`;
+          }
+          if (r && bloqueado(p, r)) {
+            oferecidoComDor++;
+            amostraTroca.dor ||= `${nome} (dor ${r}) → ${p.nome}`;
+          }
+          const equip = new Set(l.equipamentos);
+          if ((p.equipamento && !equip.has(p.equipamento)) || foraDoLocal(l.chave).has(p.nome)) {
+            oferecidoForaDoLocal++;
+            amostraTroca.local ||= `${l.chave}: ${nome} → ${p.nome} (${p.equipamento})`;
+          }
+        }
+        // Nunca deixar a pessoa sem saída quando existe saída: se algum
+        // candidato passa nos dois filtros, ele TEM que aparecer.
+        const possiveis = cands.filter(
+          (e) =>
+            e.nome !== nome &&
+            (!e.equipamento || new Set(l.equipamentos).has(e.equipamento)) &&
+            !foraDoLocal(l.chave).has(e.nome) &&
+            !(r && bloqueado(e, r))
+        );
+        if (possiveis.length && !permitidos.length) {
+          semAlternativa++;
+          amostraTroca.vazio ||= `${l.chave}/${r ?? 'sem dor'}: ${nome} devolveu lista vazia com ${possiveis.length} possíveis`;
+        }
+      }
+    }
+  }
+
+  console.log(`   o mapa cru oferecia ${oferecidosSemFiltro} substituto(s) contraindicado(s) nas combinações medidas`);
+  ok('nenhum substituto contraindicado pela dor do perfil', oferecidoComDor === 0,
+     `${oferecidoComDor} — ${amostraTroca.dor}`);
+  ok('nenhum substituto que o local não tem', oferecidoForaDoLocal === 0,
+     `${oferecidoForaDoLocal} — ${amostraTroca.local}`);
+  ok('nunca oferece o próprio exercício como troca', ofereceuOProprio === 0,
+     `${ofereceuOProprio} — ${amostraTroca.proprio}`);
+  ok('e nunca devolve lista vazia havendo alternativa válida', semAlternativa === 0,
+     `${semAlternativa} — ${amostraTroca.vazio}`);
+
+  // O caso concreto do achado, escrito por extenso.
+  const caso = filtrar('Desenvolvimento com halteres', candidatosDe('Desenvolvimento com halteres'), {
+    dores: ['ombro'],
+    local: 'academia',
+  });
+  ok(
+    'dor no ombro: trocar o desenvolvimento com halteres NÃO oferece o militar',
+    !(caso?.permitidos ?? []).some((e) => e.nome === 'Desenvolvimento militar'),
+    (caso?.permitidos ?? []).map((e) => e.nome).slice(0, 4).join(', ') || 'lista vazia'
+  );
+  ok(
+    'e a recusa é dita, não silenciosa (a tela precisa poder explicar)',
+    (caso?.recusados ?? []).some((x) => /dor|ombro/i.test(x.motivo ?? '')),
+    (caso?.recusados ?? []).map((x) => `${x.nome}: ${x.motivo}`).slice(0, 2).join(' | ') || 'nenhuma recusa registrada'
+  );
+
+  // E a tela consome o filtro em vez do mapa cru.
+  ok(
+    'o sheet de troca deixou de dizer "Buscando alternativas…" para lista vazia de verdade',
+    !/Buscando alternativas…\s*<\/Txt>/.test(FONTE_SESSAO) || /recusados/.test(FONTE_SESSAO),
+    /recusados/.test(FONTE_SESSAO) ? 'a tela lê as recusas' : 'a tela ainda finge que está carregando'
+  );
+}
+
+// ── 32. O motivo `dor` deixa de ser escrita que ninguém lê (F5c) ───────────
+//
+// UNIDADE: **exercício × dor**. `MOTIVOS_TROCA` tem "Senti dor ou desconforto",
+// o app grava em `substituicoes.motivo` e nenhuma linha do repositório lê essa
+// coluna: não marca o exercício, não sugere atualizar o perfil, não muda nada
+// no plano da semana seguinte. Duas vezes o mesmo exercício com o mesmo motivo
+// é o app tendo a informação e não usando.
+console.log('\n32. Dor registrada 2× vira sugestão de perfil (F5c)');
+{
+  ok(
+    'existe uma regra que lê o motivo `dor` e responde',
+    typeof CONTRA.regiaoSugeridaPara === 'function',
+    typeof CONTRA.regiaoSugeridaPara
+  );
+  const sugerir = CONTRA.regiaoSugeridaPara ?? (() => null);
+
+  const militar = acharEx('Desenvolvimento militar');
+  const agacho = acharEx('Agachamento livre');
+  const testa = acharEx('Tríceps testa');
+
+  ok(
+    'uma vez só não sugere nada (troca por dor pontual acontece)',
+    sugerir(militar, 1, []) === null,
+    String(sugerir(militar, 1, []))
+  );
+  ok(
+    'duas vezes no desenvolvimento militar sugere OMBRO',
+    sugerir(militar, 2, []) === 'ombro',
+    String(sugerir(militar, 2, []))
+  );
+  ok(
+    'duas vezes no agachamento livre sugere joelho ou lombar',
+    ['joelho', 'lombar'].includes(sugerir(agacho, 2, [])),
+    String(sugerir(agacho, 2, []))
+  );
+  ok(
+    'duas vezes no tríceps testa sugere COTOVELO',
+    sugerir(testa, 2, []) === 'cotovelo',
+    String(sugerir(testa, 2, []))
+  );
+  ok(
+    'e não sugere o que o perfil já tem (aviso repetido vira ruído)',
+    sugerir(militar, 5, ['ombro']) === null,
+    String(sugerir(militar, 5, ['ombro']))
+  );
+  // Exercício que nenhuma carga mecânica liga a uma região não inventa uma.
+  const panturrilha = acharEx('Panturrilha sentado');
+  ok(
+    'exercício sem região associada não inventa uma sugestão',
+    sugerir(panturrilha, 3, []) === null || REGIOES_DOR.some((r) => r.chave === sugerir(panturrilha, 3, [])),
+    String(sugerir(panturrilha, 3, []))
+  );
+
+  ok(
+    'e o executor consome a sugestão depois da troca por dor',
+    /dorRepetida|regiaoSugeridaPara|sugestaoDor/.test(FONTE_SESSAO),
+    /dorRepetida|regiaoSugeridaPara|sugestaoDor/.test(FONTE_SESSAO) ? 'ligado' : 'o motivo continua só sendo gravado'
+  );
+}
+
+// ── 33. Nutrição: a unidade é o DIA DE DIETA ───────────────────────────────
+//
+// UNIDADE: **dia de dieta** — a meta de UM dia para UM corpo. A grade varre
+// peso 50-140 kg, gordura 8-45%, os quatro objetivos, homem e mulher, com e sem
+// bioimpedância: 2.688 corpos. Nenhum invariante do arquivo inteiro mediu isso
+// até agora, e é onde moram N3 (proteína de emagrecimento sobre o peso total,
+// 264 g/dia para 120 kg com 40% de gordura) e N8 (sem piso calórico, carbo
+// podendo ir a 0 g em silêncio, `deficitMaximoSeguro` definido e nunca chamado).
+console.log('\n33. Meta de nutrição por dia de dieta (N3, N8)');
+{
+  ok(
+    'o cálculo de meta mora num módulo puro (sem banco), com aviso junto do número',
+    typeof META.calcularMetaDetalhada === 'function',
+    typeof META.calcularMetaDetalhada
+  );
+  ok('e o piso calórico é uma função declarada', typeof META.pisoCalorico === 'function',
+     typeof META.pisoCalorico);
+
+  // Fallback = o caminho de hoje, replicado só para o GATE poder rodar contra
+  // `ee156d5`: recomposição pela massa magra, todo o resto pelo peso total.
+  const legado = (gasto, pesoKg, objetivo, gorduraPct, estimar) =>
+    objetivo === 'recomposicao'
+      ? RECOMP.macrosRecomposicao(Math.round(gasto * DEFICIT_RECOMPOSICAO), pesoKg, gorduraPct, estimar)
+      : macros(metaCalorica(gasto, objetivo), pesoKg, objetivo);
+  const calcular =
+    META.calcularMetaDetalhada ??
+    ((e) => ({ meta: legado(e.tdee, e.pesoKg, e.objetivo, e.gorduraPct, e.estimar), avisos: [] }));
+
+  const PESOS = [50, 62, 75, 88, 105, 120, 140];
+  const GORDURAS = [8, 15, 22, 30, 38, 45];
+  const OBJETIVOS = ['emagrecimento', 'recomposicao', 'hipertrofia', 'manutencao'];
+  const GENEROS = ['masculino', 'feminino'];
+  const ALTURAS = [158, 172, 186];
+  const NIVEIS = ['sedentario', 'moderado', 'intenso'];
+
+  const corpos = [];
+  let n = 0;
+  for (const pesoKg of PESOS)
+    for (const gordura of GORDURAS)
+      for (const objetivo of OBJETIVOS)
+        for (const genero of GENEROS)
+          for (const medida of [true, false]) {
+            const alturaCm = ALTURAS[n % ALTURAS.length];
+            const idadeAnos = [22, 34, 47, 58][n % 4];
+            const nivel = NIVEIS[n % NIVEIS.length];
+            corpos.push({
+              pesoKg, gorduraReal: gordura, objetivo, genero, alturaCm, idadeAnos, nivel,
+              // Sem bioimpedância a massa magra é estimada — o mesmo caminho
+              // que `macrosRecomposicao` já usa.
+              gorduraPct: medida ? gordura : null,
+            });
+            n++;
+          }
+
+  let semPiso = 0, deficitDemais = 0, carboZeroCalado = 0, gorduraBaixa = 0;
+  let naoFecha = 0, proteinaForaDaFaixa = 0, incoerenteObjetivo = 0;
+  const am = { piso: '', deficit: '', carbo: '', gord: '', fecha: '', prot: '', coerente: '' };
+  const porObjetivo = {};
+
+  for (const c of corpos) {
+    const basal = tmb(c.pesoKg, c.alturaCm, c.idadeAnos, c.genero);
+    const gasto = tdee(basal, c.nivel);
+    const estimar = { alturaCm: c.alturaCm, idade: c.idadeAnos, genero: c.genero };
+    const entrada = {
+      tdee: gasto, basal, pesoKg: c.pesoKg, objetivo: c.objetivo,
+      gorduraPct: c.gorduraPct, estimar, genero: c.genero,
+    };
+    const r = calcular(entrada) ?? {};
+    const meta = r.meta ?? {};
+    const avisos = r.avisos ?? [];
+    const rot = `${c.pesoKg}kg/${c.gorduraReal}%/${c.objetivo}/${c.genero}/${c.gorduraPct === null ? 'sem bio' : 'com bio'}`;
+
+    const massaMagra = c.pesoKg * (1 - (c.gorduraPct ?? gorduraPorImc(c.pesoKg, c.alturaCm, c.idadeAnos, c.genero)) / 100);
+    (porObjetivo[c.objetivo] ??= []).push({ ...c, meta, massaMagra });
+
+    // (a) PISO: meta automática nunca abaixo do metabolismo basal.
+    if (meta.kcal < Math.round(basal)) {
+      semPiso++;
+      am.piso ||= `${rot}: meta ${meta.kcal} < TMB ${Math.round(basal)}`;
+    }
+    // (b) déficit dentro do que a gordura corporal entrega (~31 kcal/kg/dia).
+    const gPct = c.gorduraPct ?? gorduraPorImc(c.pesoKg, c.alturaCm, c.idadeAnos, c.genero);
+    const teto = deficitMaximoSeguro(c.pesoKg, gPct);
+    const deficit = Math.round(gasto) - meta.kcal;
+    if (deficit > teto + 1) {
+      deficitDemais++;
+      am.deficit ||= `${rot}: déficit ${deficit} > teto ${teto}`;
+    }
+    // (c) carboidrato em 0 g nunca em silêncio.
+    if (meta.carbo_g <= 0 && !avisos.length) {
+      carboZeroCalado++;
+      am.carbo ||= `${rot}: carbo 0 g sem aviso`;
+    }
+    // (d) gordura nunca abaixo de 20% das calorias (questão hormonal, e é o
+    //     piso que o próprio comentário do código promete).
+    if (meta.gordura_g * 9 < meta.kcal * 0.199) {
+      gorduraBaixa++;
+      am.gord ||= `${rot}: gordura ${Math.round((meta.gordura_g * 9 * 100) / meta.kcal)}% das kcal`;
+    }
+    // (e) os macros fecham a caloria — senão a tela mostra três barras que não
+    //     somam o anel do meio.
+    const soma = meta.proteina_g * 4 + meta.carbo_g * 4 + meta.gordura_g * 9;
+    if (Math.abs(soma - meta.kcal) > Math.max(40, meta.kcal * 0.03)) {
+      naoFecha++;
+      am.fecha ||= `${rot}: macros somam ${soma} para meta ${meta.kcal}`;
+    }
+    // (f) proteína dentro da faixa que a evidência aberta sustenta, medida
+    //     onde ela é medida: por kg de MASSA MAGRA (Helms 2014: 2,3-3,1 em
+    //     déficit).
+    //
+    // UNIDADE E ESCOPO: os objetivos de DÉFICIT, que são os que N3 unificou.
+    // Hipertrofia e manutenção continuam sobre o peso total (1,9 e 1,8 g/kg) e
+    // isso está medido logo abaixo, em (f2), em vez de escondido: mudar a
+    // proteína do bulking não é o que o achado pede, e a consequência (quem
+    // tem gordura alta em "ganhar massa" recebe até 4,2 g/kg de massa magra)
+    // está registrada para o Leonardo decidir.
+    const gPorKgMM = meta.proteina_g / massaMagra;
+    if (['emagrecimento', 'recomposicao'].includes(c.objetivo) && (gPorKgMM > 3.1 || gPorKgMM < 1.6)) {
+      proteinaForaDaFaixa++;
+      am.prot ||= `${rot}: ${meta.proteina_g} g = ${gPorKgMM.toFixed(2)} g/kg de massa magra`;
+    }
+    // (f2) e onde a régua é o peso total, ela é a da ISSN: 1,4-2,0 g/kg/dia.
+    if (['hipertrofia', 'manutencao'].includes(c.objetivo)) {
+      const gPorKgPeso = meta.proteina_g / c.pesoKg;
+      if (gPorKgPeso > 2.0 || gPorKgPeso < 1.4) {
+        proteinaForaDaFaixa++;
+        am.prot ||= `${rot}: ${meta.proteina_g} g = ${gPorKgPeso.toFixed(2)} g/kg de peso`;
+      }
+    }
+  }
+
+  // (g) o MESMO corpo em déficit não pode receber duas proteínas muito
+  //     diferentes só porque marcou "perder gordura" em vez de "recomposição".
+  //     É a incoerência de modelo que N3 descreve: 264 g contra 173 g.
+  const chaveCorpo = (c) => `${c.pesoKg}/${c.gorduraReal}/${c.genero}/${c.alturaCm}/${c.idadeAnos}/${c.nivel}/${c.gorduraPct === null}`;
+  const porCorpo = new Map();
+  for (const o of ['emagrecimento', 'recomposicao'])
+    for (const c of porObjetivo[o] ?? []) {
+      const k = chaveCorpo(c);
+      if (!porCorpo.has(k)) porCorpo.set(k, {});
+      porCorpo.get(k)[o] = c;
+    }
+  let piorRazao = 1;
+  for (const [, par] of porCorpo) {
+    if (!par.emagrecimento || !par.recomposicao) continue;
+    const a = par.emagrecimento.meta.proteina_g;
+    const b = par.recomposicao.meta.proteina_g;
+    const razao = Math.max(a, b) / Math.max(1, Math.min(a, b));
+    if (razao > 1.15) {
+      incoerenteObjetivo++;
+      am.coerente ||= `${par.emagrecimento.pesoKg}kg/${par.emagrecimento.gorduraReal}%: emagrecimento ${a} g x recomposição ${b} g`;
+    }
+    piorRazao = Math.max(piorRazao, razao);
+  }
+
+  console.log(`   grade: ${corpos.length} corpos (peso 50-140, gordura 8-45%, 4 objetivos, 2 gêneros, com/sem bio)`);
+  ok('(a) meta automática nunca abaixo do metabolismo basal', semPiso === 0, `${semPiso} — ${am.piso}`);
+  ok('(b) déficit nunca acima do que a gordura corporal entrega', deficitDemais === 0, `${deficitDemais} — ${am.deficit}`);
+  ok('(c) carboidrato em 0 g nunca em silêncio', carboZeroCalado === 0, `${carboZeroCalado} — ${am.carbo}`);
+  ok('(d) gordura nunca abaixo de 20% das calorias', gorduraBaixa === 0, `${gorduraBaixa} — ${am.gord}`);
+  ok('(e) os macros sempre fecham a caloria da meta', naoFecha === 0, `${naoFecha} — ${am.fecha}`);
+  ok('(f) déficit: proteína entre 1,6 e 3,1 g/kg de MASSA MAGRA; ganho: 1,4-2,0 g/kg de peso',
+     proteinaForaDaFaixa === 0, `${proteinaForaDaFaixa} — ${am.prot}`);
+  ok('(g) o mesmo corpo em déficit recebe a mesma proteína nos dois objetivos',
+     incoerenteObjetivo === 0, `${incoerenteObjetivo} — ${am.coerente} (pior razão ${piorRazao.toFixed(2)}×)`);
+
+  // ── A meta MANUAL, que é onde o carbo ia a zero em silêncio ────────────
+  //
+  // `definirMetaCalorica` mantém proteína e gordura como pisos e joga o ajuste
+  // inteiro no carboidrato com `Math.max(0, ...)`: uma meta de 1.200 kcal para
+  // quem tem P+G = 1.180 grava carbo 0 g e nenhuma tela diz nada. Zero grama
+  // de carboidrato não é dieta baixa em carbo — é uma conta que estourou.
+  ok('existe a regra da meta manual, com a escada de ajuste', typeof META.macrosParaMetaManual === 'function',
+     typeof META.macrosParaMetaManual);
+  const manual =
+    META.macrosParaMetaManual ??
+    ((kcal, b) => ({
+      meta: { kcal, proteina_g: b.proteina_g, gordura_g: b.gordura_g, carbo_g: Math.max(0, Math.round((kcal - b.proteina_g * 4 - b.gordura_g * 9) / 4)) },
+      avisos: [],
+    }));
+  {
+    // Base real de déficit apertado: 190 g de proteína (760 kcal) + 70 g de
+    // gordura (630 kcal) = 1.390 kcal só de piso, contra uma meta de 1.300.
+    // Pela regra de hoje sobra −90 kcal e o carbo é gravado como 0 g.
+    const b = { kcal: 2400, proteina_g: 190, carbo_g: 100, gordura_g: 70 };
+    const folgado = manual(1300, b);
+    const mf = folgado?.meta ?? {};
+    ok('meta manual: a gordura acompanha a caloria nova, não fica na da meta antiga',
+       mf.gordura_g < b.gordura_g && mf.gordura_g * 9 >= Math.round(1300 * 0.199),
+       `${mf.gordura_g} g = ${Math.round((mf.gordura_g * 9 * 100) / 1300)}% das kcal (a base tinha ${b.gordura_g} g)`);
+    ok('e o carboidrato não é zerado para pagar a conta', mf.carbo_g >= 30, `${mf.carbo_g} g de carbo`);
+
+    // 1.150 kcal: nem 25% de gordura deixa carboidrato utilizável. É onde a
+    // escada tem que agir — a gordura desce ao piso de 20% ANTES de o carbo
+    // secar, que é a ordem que `Math.max(0, ...)` nunca teve.
+    const apertado = manual(1150, b);
+    const ma = apertado?.meta ?? {};
+    ok('meta manual apertada: a gordura desce ao piso de 20% antes de o carbo secar',
+       Math.abs(ma.gordura_g * 9 - 1150 * 0.2) <= 9 && ma.carbo_g >= 30,
+       `${ma.gordura_g} g de gordura (${Math.round((ma.gordura_g * 9 * 100) / 1150)}%), ${ma.carbo_g} g de carbo`);
+    ok('e a escada é dita, não silenciosa',
+       (apertado?.avisos ?? []).length > 0, (apertado?.avisos ?? []).join(' | ') || 'nenhum aviso');
+    // Abaixo disso não existe divisão possível: proteína + o piso de gordura
+    // já passam da meta. Aí o único caminho honesto é falar.
+    const impossivel = manual(900, b);
+    ok('e meta aritmeticamente impossível avisa em vez de gravar calada',
+       (impossivel?.avisos ?? []).length > 0 && (impossivel?.meta?.carbo_g ?? -1) >= 0,
+       `carbo ${impossivel?.meta?.carbo_g} g, ${(impossivel?.avisos ?? []).length} aviso(s)`);
+  }
+
+  // ── E a meta JÁ SALVA (inclusive manual) é auditada na leitura ──────────
+  ok('existe a auditoria da meta salva', typeof META.avisosDaMeta === 'function', typeof META.avisosDaMeta);
+  {
+    const auditar = META.avisosDaMeta ?? (() => []);
+    const basal = tmb(58, 160, 41, 'feminino');
+    const avisos = auditar(
+      { kcal: 1100, proteina_g: 120, carbo_g: 40, gordura_g: 35 },
+      { basal, tdee: tdee(basal, 'sedentario'), pesoKg: 58, gorduraPct: 30, genero: 'feminino', objetivo: 'emagrecimento' }
+    );
+    ok('meta salva abaixo do metabolismo basal vira aviso na tela',
+       avisos.length > 0 && avisos.some((a) => /basal|piso/i.test(a)),
+       avisos.join(' | ') || 'nenhum aviso');
+  }
+
+  // O caso literal do achado N3.
+  {
+    const basal = tmb(120, 178, 38, 'masculino');
+    const r = calcular({
+      tdee: tdee(basal, 'moderado'), basal, pesoKg: 120, objetivo: 'emagrecimento',
+      gorduraPct: 40, estimar: { alturaCm: 178, idade: 38, genero: 'masculino' }, genero: 'masculino',
+    });
+    const p = r?.meta?.proteina_g ?? 0;
+    ok('120 kg com 40% de gordura em "perder gordura" não recebe 264 g de proteína',
+       p > 0 && p < 200, `${p} g (massa magra 72 kg)`);
+  }
+}
+
+// ── 34. O TMB medido envelhece (N6) ────────────────────────────────────────
+//
+// UNIDADE: **dia de dieta**, de novo — mas a pergunta é outra: com que número o
+// dia é calculado. Depois de uma bioimpedância, `usa_tmb_medido = 1` para
+// sempre. Recomposição funcionando = peso caindo = TMB real caindo; com o TMB
+// de três meses atrás o TDEE fica superestimado e o "déficit de 15%" vira 8-10%
+// real. O progresso trava e nada na tela explica.
+console.log('\n34. TMB medido tem validade e ela é dita (N6)');
+{
+  ok('existe uma regra de vigência para o TMB medido', typeof META.tmbVigente === 'function',
+     typeof META.tmbVigente);
+  const vigente =
+    META.tmbVigente ??
+    // Fallback = a regra de hoje: medido ganha da estimativa, sempre.
+    ((e) => ({ valor: e.medidoKcal ?? e.estimado, medido: e.medidoKcal != null, motivo: null }));
+
+  const cenario = (extra) =>
+    vigente({
+      medidoKcal: 1980, medidoEm: '2026-06-01', pesoNaMedicao: 88,
+      pesoAtual: 88, estimado: 1850, hojeIso: '2026-06-15', ...extra,
+    });
+
+  const fresco = cenario({});
+  ok('medição recente e peso igual: o medido vale', fresco.medido === true && fresco.valor === 1980,
+     `${fresco.valor} (medido=${fresco.medido})`);
+
+  const magrou = cenario({ pesoAtual: 82 });
+  ok('peso 6,8% abaixo do dia da medição: volta para a estimativa',
+     magrou.medido === false && magrou.valor === 1850, `${magrou.valor} (medido=${magrou.medido})`);
+  ok('e o motivo diz o peso da medição e o de hoje',
+     typeof magrou.motivo === 'string' && /88/.test(magrou.motivo) && /82/.test(magrou.motivo),
+     magrou.motivo ?? 'sem motivo');
+
+  const velho = cenario({ hojeIso: '2026-09-20' });
+  ok('medição de mais de 8 semanas atrás expira', velho.medido === false && velho.valor === 1850,
+     `${velho.valor} (medido=${velho.medido})`);
+  ok('e o motivo diz a data da medição',
+     typeof velho.motivo === 'string' && /01\/06|2026-06-01/.test(velho.motivo),
+     velho.motivo ?? 'sem motivo');
+
+  const engordou = cenario({ pesoAtual: 95 });
+  ok('desvio para cima também expira (o TMB medido subiu junto)',
+     engordou.medido === false, `${engordou.valor} (medido=${engordou.medido})`);
+
+  const quase = cenario({ pesoAtual: 86.5 });
+  ok('desvio pequeno (1,7%) não joga fora uma medição boa', quase.medido === true,
+     `${quase.valor} (medido=${quase.medido})`);
+
+  const semMedida = vigente({
+    medidoKcal: null, medidoEm: null, pesoNaMedicao: null,
+    pesoAtual: 88, estimado: 1850, hojeIso: '2026-06-15',
+  });
+  ok('sem bioimpedância nenhuma, usa a estimativa sem inventar motivo',
+     semMedida.medido === false && semMedida.valor === 1850 && !semMedida.motivo,
+     `${semMedida.valor} / ${semMedida.motivo ?? 'sem motivo'}`);
+
+  // E a tela de perfil diz. Um número que mudou sozinho e não se explica é
+  // pior que o número velho.
+  const FONTE_PERFIL = readFileSync(new URL('../app/(tabs)/perfil.tsx', import.meta.url), 'utf8');
+  ok('a tela de perfil mostra por que o TMB medido saiu de cena',
+     /tmbMotivo|motivoTmb|tmbAviso/.test(FONTE_PERFIL),
+     /tmbMotivo|motivoTmb|tmbAviso/.test(FONTE_PERFIL) ? 'exibe' : 'o número muda sozinho e ninguém explica');
+}
+
+// ── 35. O teclado nativo não cobre o campo do Sheet (U8) ───────────────────
+//
+// UNIDADE: a TELA — o mesmo da seção 27. `Sheet` é `Modal` + posição absoluta
+// no bottom, sem reação nenhuma ao teclado: o sheet "Nota de setup" (altura
+// 0,62, Input multiline) abre o teclado do iOS, que cobre a metade inferior —
+// onde estão o campo e o "Salvar". Anotar "banco no furo 3" no meio do treino
+// vira digitar às cegas, e no standalone é pior que no Safari.
+console.log('\n35. Sheet com Input reage ao teclado (U8)');
+{
+  const HOOK = '../src/shared/hooks/useTeclado.ts';
+  const temHook = existsSync(new URL(HOOK, import.meta.url));
+  ok('existe um hook de altura do teclado', temHook, temHook ? 'sim' : 'não existe');
+  const fonteHook = temHook ? readFileSync(new URL(HOOK, import.meta.url), 'utf8') : '';
+  // No PWA (que é como o app roda no iPhone) o `Keyboard` do react-native-web
+  // não emite nada: quem sabe a altura é `visualViewport`. Um hook que só
+  // ouvisse `Keyboard` seria correto no simulador e inerte no aparelho real —
+  // o mesmo modo de falhar do `hitSlop` na Fase 4.
+  ok('e ele usa visualViewport (no PWA o Keyboard do RN-web não emite)',
+     /visualViewport/.test(fonteHook), /visualViewport/.test(fonteHook) ? 'usa' : 'só ouviria Keyboard');
+  ok('e também o Keyboard nativo, para o app compilado',
+     /Keyboard/.test(fonteHook), /Keyboard/.test(fonteHook) ? 'usa' : 'só web');
+
+  ok('o Sheet consome a altura do teclado', /useTeclado|alturaTeclado/.test(FONTE_SHEET),
+     /useTeclado|alturaTeclado/.test(FONTE_SHEET) ? 'ligado' : 'Sheet não reage ao teclado');
+  ok('e encolhe a altura máxima quando o teclado está aberto',
+     /maxHeight[\s\S]{0,160}teclado/.test(FONTE_SHEET),
+     /maxHeight[\s\S]{0,160}teclado/.test(FONTE_SHEET) ? 'encolhe' : 'maxHeight ignora o teclado');
+  ok('e o conteúdo pode rolar (sem isso, encolher só corta o botão Salvar)',
+     /rolavel/.test(FONTE_SHEET), /rolavel/.test(FONTE_SHEET) ? 'tem modo rolável' : 'children renderizados crus');
+
+  // Os sheets que a auditoria cita, um a um: nota de setup (executor), ajustar
+  // meta e editar perfil, registrar medidas, registrar alimento.
+  const ROLAVEIS = [
+    ['app/sessao/[id].tsx', 'nota de setup'],
+    ['app/(tabs)/perfil.tsx', 'ajustar meta / editar perfil'],
+    ['app/(tabs)/evolucao.tsx', 'registrar medidas'],
+    ['app/(tabs)/dieta.tsx', 'registrar alimento'],
+  ];
+  for (const [caminho, rotulo] of ROLAVEIS) {
+    const src = readFileSync(new URL(`../${caminho}`, import.meta.url), 'utf8');
+    ok(`${rotulo}: o sheet com Input é rolável`, /rolavel/.test(src),
+       /rolavel/.test(src) ? 'marcado' : 'o campo continua atrás do teclado');
+  }
 }
 
 console.log(falhas ? `\n${falhas} falha(s)\n` : '\nTudo passou\n');

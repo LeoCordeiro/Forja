@@ -125,6 +125,22 @@ export default function Dieta() {
             </Txt>
           </View>
         </Card>
+
+        {/* ── Quando um freio da meta mordeu ─────────────────────────────
+            Piso calórico, teto de mobilização de gordura e carboidrato
+            espremido. É a tela onde a meta é vivida todo dia, e era ela que
+            mostrava "1.326 kcal" sem nenhuma sinalização de que o número tinha
+            sido limitado (ou de que não fecha). */}
+        {r.avisosMeta.map((a) => (
+          <Card key={a} faixa={colors.warn} padding={spacing.md} style={{ marginTop: spacing.md }}>
+            <View style={{ flexDirection: 'row', gap: spacing.sm, alignItems: 'flex-start' }}>
+              <Ionicons name="alert-circle-outline" size={16} color={colors.warn} />
+              <Txt v="small" size={12} cor={colors.textDim} style={{ flex: 1 }}>
+                {a}
+              </Txt>
+            </View>
+          </Card>
+        ))}
       </Animated.View>
 
       {/* ── Cardápio do dia ── */}
@@ -338,6 +354,10 @@ function SheetAdicionar({
       onFechar={onFechar}
       titulo={tipo ? nomeRefeicao(tipo) : ''}
       altura={0.88}
+      // Rolável SÓ no passo de digitar a quantidade: o passo de busca traz a
+      // própria FlatList, e uma ScrollView por fora criaria rolagem aninhada —
+      // a lista pararia de responder ao arrasto.
+      rolavel={!!escolhido}
     >
       {escolhido ? (
         <View style={{ gap: spacing.lg }}>

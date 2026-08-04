@@ -137,22 +137,52 @@ export const DESISTENCIAS = [
 
 // ── Dores por região ──────────────────────────────────────────────────────
 
+/**
+ * As regiões que o app pergunta — e o que ele faz com cada resposta.
+ *
+ * ── `exemplos` NÃO é a regra ─────────────────────────────────────────────
+ *
+ * Era. O campo se chamava `evitar`, o gerador filtrava por ele e o critério
+ * que escreveu os nomes foi o implemento: lombar evitava `Stiff` e mantinha
+ * `Levantamento terra romeno`; joelho evitava `Afundo com barra` e mantinha o
+ * afundo com halteres; ombro evitava a `Elevação lateral` — 12-20 repetições,
+ * RIR 2 — e mantinha a `Remada alta`, que é abdução com rotação interna feita
+ * com barra pesada. Em G2 isso mordeu: tirar a elevação lateral abriu a vaga
+ * do padrão e a remada alta entrou no lugar dela em 23 perfis.
+ *
+ * A regra agora sai de padrão de movimento + atributos, em
+ * `src/features/treino/contraindicacao.ts`, e vale para o catálogo inteiro.
+ * O que sobrou aqui são **exemplos para a tela** — os nomes conhecidos que a
+ * pessoa reconhece ao ler "saem do treino". Renomeado de propósito: lista
+ * antiga viva ao lado da regra nova não é neutra, é a que a próxima pessoa
+ * acha primeiro.
+ */
 export const REGIOES_DOR = [
-  // `Remada alta` entrou depois, e por incoerência interna: com dor no ombro o
-  // app tirava a ELEVAÇÃO LATERAL e a vaga do padrão era preenchida pela remada
-  // alta — que não estava na lista e, por ser composta de barra, ainda subia
-  // para a prescrição pesada (5-8, RIR 2-3, 180 s). O usuário perdia o
-  // exercício mais benigno da abdução e ganhava abdução com rotação interna,
-  // com mais carga. Medido: 23 aparições em perfis com dor no ombro.
-  //
-  // A correção certa é regra por PADRÃO e atributo em vez de lista nominal —
-  // isso é F5 e está anotado no roadmap. Esta é a correção mínima que fecha a
-  // contradição.
-  { chave: 'ombro', label: 'Ombro', evitar: ['Desenvolvimento militar', 'Supino reto com barra', 'Elevação lateral', 'Remada alta'] },
-  { chave: 'lombar', label: 'Lombar', evitar: ['Levantamento terra', 'Agachamento livre', 'Remada curvada com barra', 'Stiff'] },
-  { chave: 'joelho', label: 'Joelho', evitar: ['Agachamento livre', 'Afundo com barra', 'Hack machine'] },
-  { chave: 'punho', label: 'Punho', evitar: ['Rosca direta com barra', 'Supino fechado', 'Flexão de braço'] },
-  { chave: 'cotovelo', label: 'Cotovelo', evitar: ['Tríceps testa', 'Rosca scott', 'Mergulho no paralelo'] },
+  {
+    chave: 'ombro',
+    label: 'Ombro',
+    exemplos: ['Desenvolvimento militar', 'Remada alta', 'Mergulho no paralelo', 'Supino reto com barra'],
+  },
+  {
+    chave: 'lombar',
+    label: 'Lombar',
+    exemplos: ['Levantamento terra', 'Agachamento livre', 'Stiff', 'Bom dia com barra'],
+  },
+  {
+    chave: 'joelho',
+    label: 'Joelho',
+    exemplos: ['Agachamento livre', 'Afundo com halteres', 'Agachamento búlgaro', 'Hack machine'],
+  },
+  {
+    chave: 'punho',
+    label: 'Punho',
+    exemplos: ['Rosca direta com barra', 'Supino fechado', 'Flexão de braço'],
+  },
+  {
+    chave: 'cotovelo',
+    label: 'Cotovelo',
+    exemplos: ['Tríceps testa', 'Rosca scott', 'Mergulho no paralelo'],
+  },
 ];
 
 // ── Resposta do app ao diagnóstico ────────────────────────────────────────
@@ -172,7 +202,13 @@ export interface PlanoDoDiagnostico {
   realidade: string;
   /** O que o app vai fazer, item a item. Nada vago. */
   acoes: string[];
-  /** Exercícios que saem por causa de dor relatada. */
+  /**
+   * Exemplos de exercícios que saem por causa de dor relatada.
+   *
+   * Exemplos, e não a lista fechada: quem decide é `contraindicacao.ts`, sobre
+   * o catálogo inteiro. Esta tela roda no onboarding, antes de existir plano —
+   * ela mostra o que a pessoa reconhece, não o resultado do filtro.
+   */
   evitar: string[];
   /** Meta diária de passos, quando faz parte do plano. */
   passosAlvo: number | null;
@@ -181,9 +217,9 @@ export interface PlanoDoDiagnostico {
 }
 
 export function planoPara(d: Diagnostico, pesoKg: number): PlanoDoDiagnostico {
-  const evitar = d.doresRegioes.flatMap(
-    (r) => REGIOES_DOR.find((x) => x.chave === r)?.evitar ?? []
-  );
+  const evitar = [
+    ...new Set(d.doresRegioes.flatMap((r) => REGIOES_DOR.find((x) => x.chave === r)?.exemplos ?? [])),
+  ];
 
   if (d.incomodo === 'barriga') {
     // Passos: base de 8 mil, subindo se a pessoa já anda pouco. É a variável
@@ -237,7 +273,7 @@ export function planoPara(d: Diagnostico, pesoKg: number): PlanoDoDiagnostico {
         'Dor persistente é assunto de fisioterapeuta, não de app.',
       acoes: [
         evitar.length
-          ? `Saem do treino: ${evitar.slice(0, 4).join(', ')}${evitar.length > 4 ? '…' : ''}`
+          ? `Sai do treino tudo que carrega a região — ${evitar.slice(0, 3).join(', ')} e o que se move igual`
           : 'Marque a região que dói para o app trocar os exercícios',
         'Amplitude completa com carga menor antes de voltar a subir peso',
         'Mobilidade da região dolorida em todo aquecimento',

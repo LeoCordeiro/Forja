@@ -47,6 +47,8 @@ import {
   seriesDaSessao,
   notasDoDia,
   salvarNota,
+  adicionarDorNoPerfil,
+  dorRepetida,
   substituirExercicio,
   substitutosDisponiveis,
   ultimaExecucao,
@@ -59,6 +61,7 @@ import {
   type Progressao,
 } from '@/features/treino/progressao';
 import { MOTIVOS_TROCA } from '@/features/treino/classificacao';
+import type { RecusaTroca } from '@/features/treino/substituicao';
 import { aquecimento, type SerieAquecimento } from '@/features/treino/anilhas';
 import { SEG_DESCANSO_APROXIMACAO } from '@/features/treino/duracao';
 import { hidratarSeries, inserirAproximacoes, type LinhaDeSerie } from '@/features/treino/series';
@@ -208,7 +211,31 @@ export default function Execucao() {
   const [salvando, setSalvando] = useState(false);
   const [trocando, setTrocando] = useState<RoutineExerciseFull | null>(null);
   const [substitutos, setSubstitutos] = useState<Exercise[]>([]);
+  /**
+   * O que ficou de fora da lista de troca, e por quê.
+   *
+   * A lista passou a ser filtrada por dor e por local: sem dizer o motivo, uma
+   * lista curta (ou vazia) no meio do treino parece o app quebrado. "O militar
+   * não está aqui porque você marcou dor no ombro" é a diferença entre confiar
+   * na lista e sair procurando exercício na mão.
+   */
+  const [recusados, setRecusados] = useState<RecusaTroca[]>([]);
+  /** `null` até a lista chegar — é o que distingue "carregando" de "não tem". */
+  const [buscandoTroca, setBuscandoTroca] = useState(false);
   const [motivoTroca, setMotivoTroca] = useState('ocupado');
+  /**
+   * "Você já trocou este por dor 2×. Quer marcar no perfil?"
+   *
+   * O motivo `dor` era gravado e nunca lido. Agora ele volta como pergunta —
+   * uma vez, com o número de vezes na frase, e só quando a região ainda não
+   * está no perfil.
+   */
+  const [sugestaoDor, setSugestaoDor] = useState<{
+    regiao: string;
+    label: string;
+    vezes: number;
+    exercicio: string;
+  } | null>(null);
   const [detalhe, setDetalhe] = useState<RoutineExerciseFull | null>(null);
   /** "Banco no furo 3", "pino 7" — o que se perde ao voltar de férias. */
   const [notas, setNotas] = useState<Record<number, string>>({});
@@ -984,11 +1011,20 @@ function degrausDe(
     setDetalhe(null);
     setTrocando(ex);
     setSubstitutos([]);
-    setSubstitutos(await substitutosDisponiveis(ex.exercise_id));
+    setRecusados([]);
+    setBuscandoTroca(true);
+    try {
+      const r = await substitutosDisponiveis(ex.exercise_id);
+      setSubstitutos(r.lista);
+      setRecusados(r.recusados);
+    } finally {
+      setBuscandoTroca(false);
+    }
   }
 
   async function confirmarTroca(novoId: number) {
     if (!trocando) return;
+    const saiuDaqui = trocando.exercise_id;
     try {
       // `trocando.exercise_id` é o efetivo na tela (pós-overlay): numa cadeia
       // de trocas, o log registra de onde a pessoa saiu de verdade.
@@ -1033,6 +1069,19 @@ function degrausDe(
           contextoDe(alvo, fase, sug)
         ),
       }));
+    }
+
+    // ── O motivo `dor` passa a ser LIDO ──────────────────────────────────
+    //
+    // Não bloqueia nada e não regenera plano: pergunta. E só depois da troca
+    // estar gravada — perguntar antes seria condicionar a troca à resposta,
+    // que é o oposto de "resolve o treino de hoje".
+    if (motivoTroca === 'dor') {
+      try {
+        setSugestaoDor(await dorRepetida(saiuDaqui));
+      } catch {
+        /* a troca já valeu; a sugestão é um extra e não pode derrubá-la */
+      }
     }
   }
 
@@ -1482,6 +1531,7 @@ function degrausDe(
         onFechar={() => setEditandoNota(null)}
         titulo={editandoNota?.nome ?? ''}
         altura={0.62}
+        rolavel
       >
         <View style={{ gap: spacing.lg }}>
           <Txt v="small" cor={colors.textFaint}>
@@ -1569,9 +1619,18 @@ function degrausDe(
 
           <View style={{ gap: spacing.sm }}>
             <Txt v="label">Trocar por</Txt>
-            {substitutos.length === 0 ? (
+            {buscandoTroca ? (
               <Txt v="small" cor={colors.textFaint}>
                 Buscando alternativas…
+              </Txt>
+            ) : substitutos.length === 0 ? (
+              // Lista vazia de verdade. Antes a tela dizia "Buscando
+              // alternativas…" para sempre — e agora que o filtro de dor e de
+              // local pode esvaziar a lista, fingir carregamento seria mentir
+              // exatamente onde a pessoa precisa entender.
+              <Txt v="small" cor={colors.warn}>
+                Não sobrou alternativa segura aqui: tudo que treina o mesmo músculo neste local
+                entra em alguma dor que você marcou. Melhor pular do que forçar.
               </Txt>
             ) : (
               substitutos.map((sub) => (
@@ -1604,7 +1663,69 @@ function degrausDe(
                 </Card>
               ))
             )}
+
+            {/* ── O que ficou de fora por causa de dor ──────────────────
+                Só as recusas por DOR: as de equipamento a pessoa já sabe (é a
+                academia dela). Sem esta linha, a proteção parece um app com
+                menos opções que os outros. */}
+            {recusados.some((r) => r.tipo === 'dor') ? (
+              <View style={s.recusaDor}>
+                <Ionicons name="medkit-outline" size={15} color={colors.warn} />
+                <Txt v="small" size={11} cor={colors.textDim} style={{ flex: 1 }}>
+                  Fora da lista por causa das dores do seu perfil:{' '}
+                  {recusados
+                    .filter((r) => r.tipo === 'dor')
+                    .slice(0, 3)
+                    .map((r) => r.nome)
+                    .join(', ')}
+                  .
+                </Txt>
+              </View>
+            ) : null}
           </View>
+        </View>
+      </Sheet>
+
+      {/* ── Trocou por dor de novo ────────────────────────────────────────
+          O motivo `dor` era gravado e nunca lido. Agora ele vira uma pergunta,
+          depois da troca já gravada — e só quando a região ainda não está no
+          perfil, senão vira ruído a cada troca. */}
+      <Sheet
+        aberto={!!sugestaoDor}
+        onFechar={() => setSugestaoDor(null)}
+        titulo="Isso já aconteceu antes"
+        altura={0.5}
+      >
+        <View style={{ gap: spacing.lg }}>
+          <Txt v="small" cor={colors.textDim}>
+            Você já trocou <Txt v="small" bold>{sugestaoDor?.exercicio}</Txt> por dor{' '}
+            {sugestaoDor?.vezes}×. Quer marcar{' '}
+            <Txt v="small" bold>{sugestaoDor?.label.toLowerCase()}</Txt> nas suas dores? A partir
+            daí o app para de sugerir os movimentos que carregam essa região — no plano e aqui na
+            troca.
+          </Txt>
+          <Txt v="small" size={11} cor={colors.textFaint}>
+            Isso não muda o treino de hoje e não apaga nada. Dor que persiste fora do treino é
+            assunto de fisioterapeuta — o app troca exercício, não diagnostica.
+          </Txt>
+          <Button
+            titulo={`Marcar dor no ${sugestaoDor?.label.toLowerCase() ?? ''}`}
+            full
+            tam="lg"
+            onPress={async () => {
+              const r = sugestaoDor;
+              setSugestaoDor(null);
+              if (!r) return;
+              try {
+                await adicionarDorNoPerfil(r.regiao);
+                buzz.ok();
+              } catch {
+                buzz.erro();
+                setFalha({ mensagem: 'Não consegui salvar no perfil' });
+              }
+            }}
+          />
+          <Button titulo="Agora não" variante="fantasma" full onPress={() => setSugestaoDor(null)} />
         </View>
       </Sheet>
 
@@ -2617,6 +2738,14 @@ const s = StyleSheet.create({
     backgroundColor: colors.infoSoft,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  recusaDor: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+    padding: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: colors.warnSoft,
   },
   resumoFim: { flexDirection: 'row', gap: spacing.md },
   sensacoes: { flexDirection: 'row', gap: spacing.sm },

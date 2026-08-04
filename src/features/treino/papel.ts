@@ -671,6 +671,24 @@ function padroesQueCobre(nome: string, grupo: string): string[] {
   // frontal. Sem esta linha, "restrito aos padrões não cobertos" liberava
   // justamente a elevação frontal num dia com 19 séries de supino.
   if (grupo === 'ombro' && p === 'desenvolvimento') return [p, 'frontal'];
+  // ── ATENÇÃO, achado medido e NÃO corrigido nesta fase ──────────────────
+  //
+  // O aviso do bloco acima ("o valor devolvido nesse caso é o default do grupo,
+  // não uma informação") tem uma segunda vítima: `Agachamento livre sem peso` e
+  // `Ponte de glúteo` listam `posterior` como secundário e caem no default
+  // `quadril`, que é o hinge CARREGADO (stiff, romeno, bom dia). Nenhum dos
+  // dois carrega o isquiotibial por flexão de quadril com carga externa, e
+  // mesmo assim os dois "saturam" esse padrão no dia.
+  //
+  // Corrigir aqui (`return []` quando o nome não é um hinge de verdade) fecha o
+  // caso — e move a composição de OUTROS dias em cascata: testado nesta rodada,
+  // um perfil de 6 dias passou a receber desenvolvimento militar num dia de
+  // empurrar, quebrando o invariante (b) de A9. Trocar um defeito de 1 perfil
+  // por outro de 1 perfil, num pipeline que esta fase não veio auditar, é como
+  // as correções de meio de pipeline se desfizeram nas fases anteriores.
+  //
+  // Fica registrado como candidato, com a conta pronta. Quem sofre disso hoje é
+  // a troca da SEMANA, e ela ganhou um fallback declarado em `gerador.ts`.
   return [p];
 }
 

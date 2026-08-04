@@ -19,7 +19,7 @@ import {
   type Papel,
 } from './papel';
 import { equipamentosDe, foraDoLocal, limitacaoDoLocal } from './local';
-import { REGIOES_DOR } from '@/features/perfil/diagnostico';
+import { evitarPorDor } from './contraindicacao';
 import { PADROES } from './padroes';
 import { ALVO_SERIES, CARDIO, TETO_UTIL } from './periodizacao';
 import { estimarDuracao, emMinutos } from './duracao';
@@ -832,14 +832,6 @@ function provisorio(
 
 // ── Seleção de exercícios ─────────────────────────────────────────────────
 
-function evitarPorDor(dores: string[]): Set<string> {
-  const fora = new Set<string>();
-  for (const r of dores) {
-    for (const nome of REGIOES_DOR.find((x) => x.chave === r)?.evitar ?? []) fora.add(nome);
-  }
-  return fora;
-}
-
 /**
  * Ordena os candidatos de um grupo.
  *
@@ -1139,12 +1131,47 @@ export async function montarPlano(
     ));
 
   const equipamentos = new Set(equipamentosDe(p.local));
-  const proibidos = evitarPorDor(p.dores);
+  // A contraindicação sai de padrão + atributo (`contraindicacao.ts`), não da
+  // lista de nomes por região: com o critério antigo, lombar tirava `Stiff` e
+  // deixava `Levantamento terra romeno`, e ombro tirava a `Elevação lateral`
+  // deixando a `Remada alta` entrar na vaga do padrão. Aqui o resultado
+  // continua sendo um conjunto de nomes porque é assim que o resto do pipeline
+  // já filtra — quem decide é a regra, aplicada ao catálogo uma vez por plano.
+  const proibidos = evitarPorDor(p.dores, catalogo);
   const avisos: string[] = [];
 
   // Duas exclusões diferentes: `proibidos` sai por causa de dor, `semLocal` sai
   // porque o aparelho não existe naquela academia.
   const semLocal = foraDoLocal(p.local);
+
+  // ── Quando a dor apaga um grupo inteiro naquele local ──────────────────
+  //
+  // Em casa, só com o peso do corpo, o catálogo tem UM exercício direto de
+  // ombro (`Flexão pique`) e UM de tríceps (`Mergulho entre bancos`) — e os
+  // dois são exatamente o que dor no ombro contraindica. Não existe alternativa
+  // a oferecer, e inventar uma seria pior que a falta.
+  //
+  // A garantia é a mesma do grupo que o relógio apaga: quando some, o plano
+  // DIZ. Silêncio aqui é o app parecendo ter esquecido do ombro.
+  if (p.dores?.length) {
+    const apagados: string[] = [];
+    for (const g of new Set(catalogo.map((e) => e.grupo_primario))) {
+      const noLocal = catalogo.filter(
+        (e) =>
+          e.grupo_primario === g &&
+          (!e.equipamento || equipamentos.has(e.equipamento)) &&
+          !semLocal.has(e.nome)
+      );
+      if (!noLocal.length || noLocal.some((e) => !proibidos.has(e.nome))) continue;
+      apagados.push(COMO_SE_FALA[g] ?? g);
+    }
+    if (apagados.length)
+      avisos.push(
+        `Onde você treina, todo exercício direto de ${apagados.join(' e ')} entra na sua dor — ` +
+          `então ele sai do plano e recebe só o trabalho indireto dos outros movimentos. ` +
+          `Não é esquecimento: é que ali não sobrou opção segura.`
+      );
+  }
 
   // Força relativa: exercício em que a carga é o próprio corpo sai da lista
   // quando a pessoa ainda não sustenta o peso dela, e no lugar entra a ponte
@@ -2215,9 +2242,27 @@ function diversificarNaSemana(
       return true;
     };
 
-    const novo = cands.find(
-      (e) => cabe(e) && !saturados.has(padraoDe(e.nome, alvo.grupo)) && naoEstoura(e)
-    );
+    const novo =
+      cands.find((e) => cabe(e) && !saturados.has(padraoDe(e.nome, alvo.grupo)) && naoEstoura(e)) ??
+      // ── Fallback: uma semana com UM padrão é pior que um padrão saturado ──
+      //
+      // A saturação é heurística de RENDIMENTO — "metade do teto do padrão já
+      // veio de graça, a vaga rende mais em outro lugar". Quando não há outro
+      // lugar, ela deixa de ser um argumento: a alternativa vira o grupo fazer
+      // o mesmo movimento a semana inteira, que é justamente o que esta função
+      // existe para impedir.
+      //
+      // O caso que obrigou o fallback: com dor no joelho, numa casa só com
+      // halteres, o posterior fica com dois exercícios possíveis (`Stiff com
+      // halteres` e `Flexão nórdica`) — e o padrão `quadril` do stiff aparece
+      // "saturado" por `Agachamento livre sem peso` e `Ponte de glúteo`, que
+      // listam posterior como secundário e caem no DEFAULT de `padraoDe` sem
+      // fazer hinge nenhum (o achado registrado em `padroesQueCobre`). A troca
+      // era recusada e a semana terminava só com a nórdica.
+      //
+      // `cabe` e `naoEstoura` continuam valendo: o fallback afrouxa a heurística
+      // de cobertura, nunca o teto de séries nem o de exercícios por padrão.
+      cands.find((e) => cabe(e) && naoEstoura(e));
     if (!novo) return false;
     d.exercicios[d.exercicios.indexOf(alvo)] = novoExercicio(novo, alvo.grupo, alvo.series);
     return true;
