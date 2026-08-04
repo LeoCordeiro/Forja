@@ -21,7 +21,7 @@ Prescrição-alvo (o que devia sair): `prescricao-alvo.md` na mesma pasta.
 | 1 | Nada se perde | F1 U3 U4 N1 N2 | **feita** — commit `97f480f`, verificação independente 30/07 |
 | 2 | Motor de treino | F2 F3 F4 F6 | **feita** — commit `890ec16`. Cross-review duplo (qa reprovou a 1ª rodada com 1 ALTO, corrigido e re-aprovado; fitness-scientist aprovou os 4 com ressalvas → candidatos abaixo). Ver "Validação da fase 2" |
 | **G1** | **Estrutura e seleção** | A2, A1+A11, A4, A3, A8 | **feita e no ar** — commits `ee543d2` + `8c68ef1` (correção do cross-review), build `1e725e2c2d8d`. Gate reverificado pelo Claude 2×: 32 falhas contra o código pré-G1, 9 contra o `ee543d2`, 0 depois. Ver "Validação de G1" |
-| G2 | Prescrição com papel | A5 A6 A7 A9 A10 + F8 | **feita** — working tree, sem commit. Gate: 30 falhas contra `8c68ef1` (worktree, mesmo arquivo de teste), 0 depois. Ver "Validação de G2" |
+| G2 | Prescrição com papel | A5 A6 A7 A9 A10 + F8 | **feita e no ar** — commit `5374f1e`, build `f11ddcbac48c`. Reprovada por qa (3 ALTOs) E fitness-scientist (2 CRÍTICOS + 5 ALTOs) na 1ª entrega; corrigida e reverificada. Gate final conferido pelo Claude: **27 falhas contra o código em produção, 0 depois**. Ver "Validação de G2" |
 | G3 | Treinador que explica e varia | execução detalhada, técnicas de intensidade, objetivo do exercício, variação entre ciclos | pendente |
 | 4 | Série em 1 toque | U1 U2 U5 U6 U7 | pendente — validar no celular, não só navegador |
 | 5 | Segurança e nutrição | F5 N3 N6 N8 U8 | pendente |
