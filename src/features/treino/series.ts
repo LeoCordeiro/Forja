@@ -31,6 +31,16 @@ export interface LinhaDeSerie {
   /** id em `set_logs`. Presente = já existe linha no banco para esta posição. */
   salvaId?: number;
   aquecimento?: boolean;
+  /**
+   * O valor veio da última sessão, não do dedo de hoje.
+   *
+   * Existe para a tela conseguir dizer as duas coisas ao mesmo tempo: "isto é
+   * o que vou gravar se você marcar" e "isto ainda é a semana passada". Sem a
+   * marca, pré-preencher trocaria um defeito (placeholder que não é estado)
+   * por outro (número que parece digitado e não foi). Some na primeira edição
+   * e na conclusão — ver `registro.ts`.
+   */
+  herdado?: boolean;
 }
 
 /** O que a reabertura lê do banco. */

@@ -24,7 +24,7 @@ Prescrição-alvo (o que devia sair): `prescricao-alvo.md` na mesma pasta.
 | G2 | Prescrição com papel | A5 A6 A7 A9 A10 + F8 | **feita e no ar** — commit `5374f1e`, build `f11ddcbac48c`. Reprovada por qa (3 ALTOs) E fitness-scientist (2 CRÍTICOS + 5 ALTOs) na 1ª entrega; corrigida e reverificada. Gate final conferido pelo Claude: **27 falhas contra o código em produção, 0 depois**. Ver "Validação de G2" |
 | G2.1 | Sobras do G2 | ALTO-3 (backfill de papel) + M1 M2 M3-texto + variedade semanal | **feita, não commitada** — gate: **23 falhas no gerador + 5 na migração contra `63c716b`, 0 depois**. Ver "Validação de G2.1" |
 | G3 | Treinador que explica e varia | execução detalhada, técnicas de intensidade, objetivo do exercício, variação entre ciclos | pendente |
-| 4 | Série em 1 toque | U1 U2 U5 U6 U7 | pendente — validar no celular, não só navegador |
+| 4 | Série em 1 toque | U1 U2 U5 U6 U7 | **feita, não commitada** — gate: **33 falhas contra `bb6babf`, 0 depois**. Ver "Validação da fase 4" |
 | 5 | Segurança e nutrição | F5 N3 N6 N8 U8 | pendente |
 | 6 | Sobras do P2 | F7 F9 F10 N4 N10 | pendente |
 | 7 | Re-auditoria (rodada 2) | comparar com os dois consolidados | após as fases acima |
@@ -136,6 +136,95 @@ estão no código (`ACSM 2026` em volume.ts, Baz-Valle/Coleman em programa.ts,
 Refalo/Nuzzo/Haugen em gerador.ts) NÃO foram verificadas — não tratar como
 evidência nem reaproveitar em texto de produto sem WebFetch antes. As 5 fontes
 verificadas estão no cabeçalho do fitness.md.
+
+## Validação da fase 4 — Série em 1 toque (04/08/2026)
+
+Working tree, sem commit. `tsc --noEmit` limpo. `testar:gerador` e
+`testar:migracao` 100%. **Sem mudança de schema** — U7 é só estado de tela.
+
+**O gate, com a unidade em cada invariante.** As seções 23-27 foram escritas
+antes e rodadas contra `bb6babf`: **33 falhas**. Nenhuma asserção de G1/G2/G2.1
+quebrou. Depois: **0**.
+
+| Invariante | UNIDADE | contra `bb6babf` | depois |
+|---|---|---|---|
+| 23. registrar uma série (13 asserções) | **toque** | 11 | 0 |
+| 24. alvo da linha de série | **alvo (pt)** | 6 | 0 |
+| 25. contraste da coluna "Anterior" | **par cor/fundo composto** | 1 | 0 |
+| 26. remover série adicionada por engano | **linha, depois de reabrir** | 8 | 0 |
+| 27. descanso com o teclado aberto | **tela** | 3 | 0 |
+
+**Toques por série, medidos no app real a 390×844** (não no modelo): repetir a
+carga de sempre **5 → 1** (2 teclados → 0); subir 2,5 kg e registrar **6 → 4**.
+A auditoria dizia 4 toques; o número real era 5 porque o pulo automático
+peso → reps abria o campo VAZIO — a herança só existia no toque direto no
+campo. Eram duas regras de herança para a mesma informação, e a pior estava no
+caminho automático. Agora é uma só, em `src/features/treino/registro.ts`.
+
+**Alvos, medidos com `getBoundingClientRect` no app real** (antes → depois):
+check da série 36×34 → **52×52**; campos 74×44 / 58×44 → **70×52 / 54×52**;
+bolinha da trilha 30×30 → **44×52**; "Pular" 58×30 → **58×44**; "Concluir"
+86×38 → **86×44**; voltar/info 36×36 → **44×44**; "Trocar" 82×30 → **82×44**;
+"Adicionar série" 340×32 → **340×52**; "Anterior/Próximo" 175×43 → **175×52**;
+"Fotos" 116×27 → **116×44**. Nenhum alvo da tela abaixo de 44×44.
+
+**`hitSlop` não funciona no PWA — e era nele que o alvo de 44 pt de G2 se
+apoiava.** `react-native-web` só implementa `hitSlop` no `Touchable` legado; o
+`Pressable` (que o `Press` embrulha) descarta a prop. Conferido em
+`node_modules/react-native-web/dist`: três arquivos citam `hitSlop`, os três de
+`Touchable`. Medido no navegador, o toggle de aquecimento tinha **24×18**, não
+44. Todo alvo desta fase é caixa de verdade; o teste proíbe `hitSlop=` na tela.
+
+**A tensão aquecimento × toque, resolvida por contagem.** Concluir série
+acontece ~20×/treino; marcar aquecimento e remover linha, 0-2×. O check ficou
+com o alvo primário (52 pt, borda direita) e os dois gestos raros saíram para o
+**toque longo em qualquer ponto da linha** → sheet com as duas ações rotuladas.
+Custo: aquecimento vai de 1 para 2 toques. Ganho: −80 toques por treino de 20
+séries. O toque longo não custa largura, funciona no web (ao contrário de
+`hitSlop`) e ganhou o que o toggle não tinha: rótulo escrito e espaço para
+EXPLICAR a recusa. A seção 19 (fluxo da aproximação) não mudou — ela exercita
+`inserirAproximacoes`/`hidratarSeries`, que continuam iguais; o gesto novo é
+coberto pela seção 27.
+
+**Contraste da coluna "Anterior", medido no pixel composto** (não no token):
+`textFaint` 12 px = **3,00:1** → `textDim` 13 px = **7,00:1** na linha normal,
+**5,42:1** na linha concluída (successSoft sobre surface) e **5,34:1** na de
+aquecimento. Os três estados de fundo são compostos com alpha, e o teste mede os
+três. De quebra, na mesma tela: cabeçalho da tabela 3,00 → 7,00; números da
+trilha 2,73 → 6,37; contagem da trilha → 7,24; posição "1 de 10" e o
+"duração · séries · volume" do cabeçalho → 7,00.
+
+**U7: a remoção respeita o que a reabertura devolve.** `removerSerie` recusa em
+três casos, com frase: série já gravada (desmarcar é o caminho, e ele recalcula
+PR), série gravada DEPOIS desta (`serie_index` é posição — renumerar faria tela
+e banco discordarem em silêncio) e abaixo do piso de `hidratarSeries` (a linha
+voltaria no próximo carregamento). Sem a terceira, o conserto trocaria o defeito
+"não dá para remover" pelo defeito que a própria auditoria descreve ao lado:
+"o mesmo treino tem dois estados dependendo de reabrir".
+
+**Validado no navegador a 390×844**, no app real, com histórico real, pelo
+fluxo inteiro: iniciar treino → 3 séries (1 toque, 1 toque, 4 toques com +2,5)
+→ corrigir uma já gravada (82,5 → 80, volume recalculado) → desmarcar (3 → 2
+séries, trilha 1/10 → 0/10) → remarcar (1 toque) → adicionar série extra
+(trilha cai para 0/10) → toque longo → "Remover série" (trilha volta a 1/10) →
+concluir. Recusas conferidas na tela: remover gravada e remover no piso, as
+duas com o motivo escrito no banner. Aquecimento pelo menu marca, renumera as
+valendo e desmarca. Cancelar em 2 estágios e as 5 abas seguem sem erro de
+console.
+
+**Conferir no celular:** o toque longo foi exercitado com ponteiro de mouse
+(`mousePressed` + 800 ms). No iOS o mesmo gesto disputa com o menu de seleção do
+Safari — o `PressResponder` do `react-native-web` dá `preventDefault` no
+`contextmenu` quando existe `onLongPress` e o ponteiro é toque, mas isso não foi
+verificado no aparelho. Se o menu do Safari aparecer por cima, a saída é
+`user-select: none` na linha, não abandonar o gesto.
+
+**Fora do navegador:** o Browser pane não compõe frames (`rAF = 0`,
+`visibilityState: hidden`), então as animações do reanimated congelam no estado
+inicial e `getBoundingClientRect` mede o meio da animação — o botão "Continuar"
+media 40×60 num contêiner de 32 pt. Toda medição desta fase foi feita num Chrome
+headless próprio, com `Emulation.setDeviceMetricsOverride` (o `--window-size=390`
+do Windows renderiza 500×748, como a memória já registrava).
 
 ## Validação de G2.1 (03/08/2026)
 
@@ -573,6 +662,28 @@ Dos DOIS cross-reviews de G2 (03/08 — o que ficou fora, com número):
     em G2.1**, e em duas telas: o chip do executor (`RIR 3-4` / `RIR 4-5`) e a
     tag da tela do programa (`parar a 3 da falha`), que era o mesmo defeito
     ainda não catalogado.
+34. **`textFaint` continua reprovando AA fora da tela de sessão.** O token
+    (`#5C6373`) dá **3,00:1** sobre `surface`, **3,30:1** sobre `bg` e
+    **2,73:1** sobre `surfaceAlt`, e é o padrão de `type.label` — ou seja, todo
+    rótulo de seção do app. A fase 4 trocou os usos INFORMATIVOS da sessão para
+    `textDim`; subir o token em si não foi feito porque não resolve com um
+    valor só: `#6E7688` (a sugestão da auditoria) mede **4,32:1** sobre `bg` —
+    ainda reprova — e para passar sobre `surfaceAlt` seria preciso luminância
+    relativa ≥ 0,237, que é praticamente `textDim`. Ou o token vira `textDim`
+    (e a hierarquia de 3 níveis do design system vira 2), ou cada fundo ganha o
+    seu. É decisão de design system, não de tela, e muda 49 arquivos.
+35. **O executor conclui a série mas não pode concluí-la pelo teclado.** Testado
+    e descartado nesta fase: confirmar as repetições gravaria a série, o que
+    tiraria mais 1 toque do caminho de edição (4 → 3). Não entrou porque o
+    teclado também é usado para PREPARAR a próxima série durante o descanso
+    ("na próxima ponho 85") — gravaria uma série que ninguém fez. Se um dia
+    entrar, precisa de rótulo próprio no botão, não do "Confirmar" genérico.
+36. **A coluna "Anterior" das linhas de aproximação mostra a série anterior da
+    posição, não a do exercício.** Com 2 aproximações no topo, a linha de
+    aquecimento 1 exibe o "80 × 8" que era da série 1 valendo. Pré-existente
+    (`anteriores[i]` é indexado por posição da linha), sem efeito no que se
+    grava — a aproximação não entra em volume nem PR. Some se `anteriores`
+    passar a ser indexado pelas linhas VALENDO.
 31. **Regra por PADRÃO para dor, em vez de lista nominal** (F5). `Remada alta`
     entrou na lista de dor no ombro como correção mínima; a correção boa é
     derivar de padrão + atributos, e isso é fase 5.

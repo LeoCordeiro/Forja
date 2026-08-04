@@ -1450,5 +1450,441 @@ console.log('\n19. Fluxo da aproximacao: criar, gravar, reabrir');
   ok('as linhas nao foram tocadas', !recusado.linhas);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Fase 4 — Serie em 1 toque (U1, U2, U5, U6, U7)
+//
+// As tres unidades novas desta fase sao TOQUE, ALVO e PAR COR/FUNDO. Nenhuma
+// delas aparece contando exercicio ou serie, que e o que todo o resto do
+// arquivo faz — por isso as secoes abaixo medem outra coisa.
+//
+// ── Por que import DINAMICO, e nao estatico ───────────────────────────────
+//
+// A secao 16 ja explica por que os simbolos novos entram por namespace: com
+// import nomeado, rodar o arquivo contra o codigo anterior morre no link e o
+// gate nao pode ser cumprido. Um MODULO novo tem o mesmo problema um nivel
+// acima — `import * as X from './registro.ts'` tambem explode se o arquivo
+// ainda nao existe. Com import dinamico dentro de try, ausente vale objeto
+// vazio e a assercao FALHA, que e o que o gate pede.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import { readFileSync, existsSync } from 'node:fs';
+
+const carregar = async (caminho) => {
+  try {
+    return await import(caminho);
+  } catch {
+    return {};
+  }
+};
+const REGISTRO = await carregar('../src/features/treino/registro.ts');
+const TOKENS = await carregar('../src/theme/tokens.ts');
+
+const FONTE_SESSAO = readFileSync(new URL('../app/sessao/[id].tsx', import.meta.url), 'utf8');
+const FONTE_PAD = readFileSync(new URL('../src/shared/ui/NumberPad.tsx', import.meta.url), 'utf8');
+
+// ── 23. O gesto central: quantos TOQUES custa registrar uma serie ─────────
+//
+// UNIDADE: o TOQUE. Nao "ficou mais rapido": quantos vezes o dedo encosta na
+// tela, do primeiro toque ate a serie estar no banco. Leonardo faz isso ~20
+// vezes por treino, de pe, com a mao suada — e a auditoria mediu 4 toques e 2
+// teclados para o caminho mais comum de todos ("fiz a mesma carga de sempre").
+//
+// O simulador abaixo NAO reimplementa a tela: ele chama as mesmas funcoes que
+// `app/sessao/[id].tsx` chama. Se o componente parar de chamar, a secao 24
+// pega (assercao de "fio ligado") e o navegador confirma a contagem.
+console.log('\n23. Toques para registrar uma serie (U1)');
+{
+  const ANTERIOR = [
+    { serie_index: 0, peso_kg: 80, reps: 8, registrado_em: 1000 },
+    { serie_index: 1, peso_kg: 80, reps: 8, registrado_em: 1001 },
+    { serie_index: 2, peso_kg: 80, reps: 8, registrado_em: 1002 },
+  ];
+  const CTX = { porTempo: false, readaptacao: null, pesoSugerido: null };
+
+  // Fallbacks em vez de try/catch em volta do bloco: com try/catch, o modulo
+  // ausente vira UMA falha e as outras dez assercoes nunca rodam — o gate
+  // perderia justamente a granularidade que ele existe para ter.
+  //
+  // O fallback e a tela ANTIGA: nao pre-preenche nada (identidade) e nao sabe
+  // dizer qual campo falta. Por isso toda contagem de toque abaixo so vale se
+  // a heranca de fato aconteceu (`herdou`) — senao "1 toque" passaria com o
+  // check marcando uma linha vazia, que e o defeito, nao a correcao.
+  const temMotor = typeof REGISTRO.prePreencher === 'function';
+  const prePreencher = REGISTRO.prePreencher ?? ((linhas) => linhas);
+  const precisaTeclado = REGISTRO.precisaTeclado ?? (() => null);
+  const campoDepoisDeConfirmar = REGISTRO.campoDepoisDeConfirmar ?? (() => null);
+
+  const bancada = (linhas, ctx) => {
+    const st = { linhas: linhas.map((l) => ({ ...l })), foco: null, buffer: '', toques: 0, teclados: 0 };
+    return {
+      st,
+      check(i) {
+        st.toques++;
+        const falta = precisaTeclado(st.linhas[i], ctx.porTempo);
+        if (falta) {
+          st.foco = { i, campo: falta };
+          st.buffer = st.linhas[i]?.[falta] ?? '';
+          st.teclados++;
+          return;
+        }
+        st.linhas[i] = { ...st.linhas[i], concluida: true, herdado: false };
+      },
+      campo(i, c) {
+        st.toques++;
+        st.foco = { i, campo: c };
+        st.buffer = st.linhas[i]?.[c] ?? '';
+        st.teclados++;
+      },
+      tecla(d) {
+        st.toques++;
+        st.buffer = st.buffer + d;
+      },
+      incremento(delta) {
+        st.toques++;
+        st.buffer = String((parseFloat(st.buffer.replace(',', '.')) || 0) + delta).replace('.', ',');
+      },
+      confirmar() {
+        st.toques++;
+        const { i, campo } = st.foco;
+        st.linhas[i] = { ...st.linhas[i], [campo]: st.buffer, herdado: false };
+        const prox = campoDepoisDeConfirmar(campo, st.linhas[i]);
+        if (prox) {
+          st.foco = { i, campo: prox };
+          st.buffer = st.linhas[i]?.[prox] ?? '';
+        } else st.foco = null;
+      },
+    };
+  };
+
+  {
+    const vazias = Array.from({ length: 3 }, () => ({ peso: '', reps: '', concluida: false }));
+    const prontas = prePreencher(vazias, ANTERIOR, CTX);
+
+    ok(
+      'a sessao nasce com a carga da ultima vez NO ESTADO, nao no placeholder',
+      prontas.length === 3 && prontas.every((l) => l.peso === '80' && l.reps === '8'),
+      prontas.map((l) => `${l.peso || '-'}x${l.reps || '-'}`).join(' ')
+    );
+    ok(
+      'e herdado se distingue de digitado (senao a tela mente sobre o que vai gravar)',
+      prontas.length === 3 && prontas.every((l) => l.herdado === true),
+      `${prontas.filter((l) => l.herdado).length} de ${prontas.length}`
+    );
+
+    // Toda contagem daqui para baixo so conta se a linha carrega a carga:
+    // marcar linha vazia tambem custaria 1 toque, e seria o bug.
+    const herdou = prontas.length === 3 && prontas.every((l) => l.peso && l.reps && l.herdado);
+
+    const a = bancada(prontas, CTX);
+    a.check(0);
+    ok('repetir a carga de sempre custa 1 TOQUE', herdou && a.st.toques === 1, `${a.st.toques} toque(s)`);
+    ok('e zero teclado', herdou && a.st.teclados === 0, `${a.st.teclados} teclado(s)`);
+    ok('e a serie fica pronta para gravar com a carga certa',
+       herdou && a.st.linhas[0]?.concluida === true && a.st.linhas[0]?.peso === '80',
+       `${a.st.linhas[0]?.peso}x${a.st.linhas[0]?.reps}`);
+
+    const b = bancada(prontas, CTX);
+    b.campo(0, 'peso');
+    b.incremento(2.5);
+    b.confirmar();
+    b.check(0);
+    ok('subir 2,5 kg e registrar custa 4 toques', herdou && b.st.toques === 4, `${b.st.toques} toque(s)`);
+    ok('e o peso novo entrou', herdou && b.st.linhas[0]?.peso === '82,5', b.st.linhas[0]?.peso);
+    ok(
+      'confirmar o peso NAO pula para reps quando reps ja tem valor',
+      herdou && b.st.linhas[0]?.reps === '8' && b.st.teclados === 1,
+      `reps=${b.st.linhas[0]?.reps} teclados=${b.st.teclados}`
+    );
+
+    const semHistorico = prePreencher(vazias, [], CTX);
+    ok(
+      'sem historico nada e herdado — o toque no check abre o teclado, como sempre',
+      temMotor &&
+        semHistorico.length === 3 &&
+        semHistorico.every((l) => !l.peso && !l.reps && !l.herdado) &&
+        precisaTeclado(semHistorico[0], false) === 'peso',
+      precisaTeclado(semHistorico[0], false) ?? 'nao pediu teclado'
+    );
+
+    const porTempo = prePreencher(vazias, ANTERIOR, { ...CTX, porTempo: true });
+    ok(
+      'exercicio por tempo nao herda carga (o campo peso ali guarda segundos)',
+      temMotor && porTempo.length === 3 && porTempo.every((l) => !l.peso),
+      porTempo.map((l) => l.peso || '-').join(' ')
+    );
+
+    const comSugestao = prePreencher(vazias, ANTERIOR, { ...CTX, pesoSugerido: 82.5 });
+    ok(
+      'a heranca respeita a progressao dupla: herda o peso do selo, nao o antigo',
+      comSugestao.length === 3 && comSugestao.every((l) => l.peso === '82,5'),
+      comSugestao[0]?.peso
+    );
+
+    const naVolta = prePreencher(vazias, ANTERIOR, {
+      ...CTX,
+      readaptacao: { cargaPct: 70, retomadaEmMs: 5000 },
+    });
+    ok(
+      'e a readaptacao: herda a carga reduzida sobre a serie PRE-pausa',
+      naVolta.length === 3 && naVolta.every((l) => l.peso === '56'),
+      naVolta[0]?.peso
+    );
+
+    const jaGravada = [
+      { peso: '75', reps: '9', concluida: true, salvaId: 4 },
+      { peso: '', reps: '', concluida: false },
+    ];
+    const preservado = prePreencher(jaGravada, ANTERIOR, CTX);
+    ok(
+      'serie ja gravada nunca e sobrescrita pela heranca',
+      temMotor && preservado[0]?.peso === '75' && preservado[0]?.reps === '9' && preservado[0]?.salvaId === 4,
+      `${preservado[0]?.peso}x${preservado[0]?.reps}`
+    );
+  }
+}
+
+// ── 24. O alvo do gesto central (U2) ──────────────────────────────────────
+//
+// UNIDADE: o ALVO — largura x altura da area que o dedo acerta, em pt.
+//
+// Duas armadilhas aqui, e as duas ja foram pagas neste projeto:
+//
+// 1. Constante definida e ignorada. `HIT = 52` existe em `src/theme` desde
+//    sempre e a tela mais tocada do app usa 34. Um teste que so conferisse a
+//    constante passaria com o defeito inteiro na tela — por isso as assercoes
+//    tambem leem `app/sessao/[id].tsx` e cobram que o fio esteja LIGADO.
+// 2. hitSlop no web e enfeite. `react-native-web` so implementa `hitSlop` no
+//    `Touchable` legado; o `Pressable` (que o `Press` do projeto embrulha)
+//    joga a prop no lixo. Medido em node_modules: `hitSlop` aparece em
+//    dist/exports/Touchable e em nenhum outro lugar. Como o app REAL do
+//    Leonardo e o PWA, um alvo que so cresce por hitSlop nao cresceu.
+console.log('\n24. Alvo de toque na linha de serie (U2)');
+{
+  const MINIMO = 44; // Apple HIG
+  ok('o theme publica o minimo absoluto de alvo', TOKENS.HIT_MIN === MINIMO, String(TOKENS.HIT_MIN));
+  ok('e o alvo confortavel do projeto continua 52', TOKENS.HIT === 52, String(TOKENS.HIT));
+
+  const alvos = TOKENS.ALVO_TOQUE ?? {};
+  const nomes = Object.keys(alvos);
+  ok('a linha de serie declara seus alvos em um lugar so', nomes.length >= 4, nomes.join(', '));
+  const pequenos = nomes.filter((n) => {
+    const a = alvos[n];
+    const l = typeof a === 'number' ? a : a?.largura;
+    const h = typeof a === 'number' ? a : a?.altura;
+    return !(l >= MINIMO && h >= MINIMO);
+  });
+  ok(
+    'nenhum alvo declarado abaixo de 44x44',
+    nomes.length >= 4 && pequenos.length === 0,
+    nomes.length ? pequenos.join(', ') : 'nenhum alvo declarado'
+  );
+  ok(
+    'o gesto de 20x por treino (concluir) fica no alvo confortavel',
+    !!TOKENS.HIT &&
+      (typeof alvos.check === 'number' ? alvos.check : alvos.check?.altura) === TOKENS.HIT,
+    JSON.stringify(alvos.check ?? null)
+  );
+
+  ok(
+    'a tela de sessao consome as constantes (fio ligado, nao so declarado)',
+    /ALVO_TOQUE/.test(FONTE_SESSAO),
+    `ALVO_TOQUE citado ${(FONTE_SESSAO.match(/ALVO_TOQUE/g) ?? []).length}x`
+  );
+  ok(
+    'o check nao e mais um quadrado de 34',
+    !/checkBox:\s*\{[\s\S]{0,60}width:\s*34/.test(FONTE_SESSAO),
+    /checkBox:\s*\{[\s\S]{0,60}width:\s*34/.test(FONTE_SESSAO) ? 'continua 34 pt' : 'sai de ALVO_TOQUE.check'
+  );
+  // A PROP em JSX, nao a palavra: o comentario que explica por que hitSlop
+  // nao serve e exatamente o que precisa sobreviver no arquivo — cobrar a
+  // palavra apagaria a explicacao junto com o defeito.
+  ok(
+    'nenhum alvo depende de hitSlop (no PWA ele nao faz nada)',
+    !/hitSlop\s*=\s*\{/.test(FONTE_SESSAO),
+    /hitSlop\s*=\s*\{/.test(FONTE_SESSAO) ? 'ainda existe hitSlop ativo' : 'nenhum'
+  );
+}
+
+// ── 25. A cor que decide a carga (U5) ─────────────────────────────────────
+//
+// UNIDADE: o PAR cor/fundo, medido sobre a cor COMPOSTA.
+//
+// A coluna "Anterior" e a informacao que a pessoa le agachada na frente do
+// aparelho para decidir quanto poe na barra. Ela e pintada com `textFaint` em
+// 12 px, e a linha muda de fundo tres vezes (normal, concluida, aquecimento) —
+// as duas ultimas com alpha por cima. Medir o token contra o fundo do app e
+// concluir que passa e o erro que este projeto ja cometeu: aprovado no olho
+// duas vezes, 3,75:1 no pixel.
+console.log('\n25. Contraste da coluna que decide a carga (U5)');
+{
+  const AA = 4.5; // texto pequeno
+  const arquivoCores = existsSync(new URL('../src/theme/tokens.ts', import.meta.url))
+    ? '../src/theme/tokens.ts'
+    : '../src/theme/index.ts';
+  const fonteCores = readFileSync(new URL(arquivoCores, import.meta.url), 'utf8');
+  const cor = (nome) => {
+    const m = fonteCores.match(new RegExp(`\\b${nome}:\\s*'([^']+)'`));
+    return m?.[1] ?? null;
+  };
+  const canal = (c) => {
+    const x = c / 255;
+    return x <= 0.04045 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4);
+  };
+  const lum = ([r, g, b]) => 0.2126 * canal(r) + 0.7152 * canal(g) + 0.0722 * canal(b);
+  const contraste = (a, b) => {
+    const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p);
+    return (x + 0.05) / (y + 0.05);
+  };
+  const ler = (v) => {
+    if (v.startsWith('#'))
+      return [parseInt(v.slice(1, 3), 16), parseInt(v.slice(3, 5), 16), parseInt(v.slice(5, 7), 16), 1];
+    const p = v.match(/\(([^)]+)\)/)[1].split(',').map((x) => parseFloat(x));
+    return [p[0], p[1], p[2], p[3] ?? 1];
+  };
+  const compor = (frenteV, fundoV) => {
+    const f = ler(frenteV);
+    const b = ler(fundoV);
+    const a = f[3];
+    return [f[0] * a + b[0] * (1 - a), f[1] * a + b[1] * (1 - a), f[2] * a + b[2] * (1 - a)];
+  };
+
+  const surface = ler(cor('surface')).slice(0, 3);
+  const fundos = {
+    'linha normal': surface,
+    'linha concluida': compor(cor('successSoft'), cor('surface')),
+    'linha de aquecimento': compor(cor('warnSoft'), cor('surface')),
+  };
+  const alvo = cor('textDim');
+  for (const [nome, fundo] of Object.entries(fundos)) {
+    const c = contraste(ler(alvo).slice(0, 3), fundo);
+    ok(`Anterior passa AA na ${nome}`, c >= AA, `${c.toFixed(2)}:1`);
+  }
+  // O numero que a auditoria achou, medido de novo aqui para o relatorio nao
+  // depender de memoria: e ele que a mudanca precisa substituir.
+  const antes = contraste(ler(cor('textFaint')).slice(0, 3), surface);
+  ok(
+    'a cor antiga da coluna REPROVA (e por isso ela nao pode continuar la)',
+    antes < AA,
+    `textFaint sobre surface = ${antes.toFixed(2)}:1`
+  );
+  ok(
+    'e a tela parou de usar textFaint na coluna Anterior',
+    !/cor=\{colors\.textFaint\}[^>]*>\s*\{anterior\?\.peso_kg/.test(FONTE_SESSAO),
+    /cor=\{colors\.textFaint\}[^>]*>\s*\{anterior\?\.peso_kg/.test(FONTE_SESSAO)
+      ? 'ainda sai em textFaint'
+      : 'a coluna sai em textDim'
+  );
+}
+
+// ── 26. Serie adicionada por engano sai (U7) ──────────────────────────────
+//
+// UNIDADE: a LINHA, e o estado dela DEPOIS de reabrir o app.
+//
+// A auditoria achou dois defeitos no mesmo lugar: a linha extra nao tem gesto
+// de remocao (e trava o auto-avanco, porque `completoDe` exige todas
+// concluidas), e ela some sozinha ao reabrir — "o mesmo treino tem dois
+// estados dependendo de reabrir". Consertar so o primeiro deixaria o segundo
+// de pe, entao a remocao e cobrada CONTRA o que `hidratarSeries` devolveria.
+console.log('\n26. Remover serie adicionada por engano (U7)');
+{
+  const pisoDeLinhas = REGISTRO.pisoDeLinhas ?? (() => -1);
+  const removerSerie = REGISTRO.removerSerie ?? (() => ({}));
+  {
+    const alvoDaSemana = 3;
+    const base = [
+      { peso: '80', reps: '8', concluida: true, salvaId: 1 },
+      { peso: '80', reps: '8', concluida: true, salvaId: 2 },
+      { peso: '80', reps: '8', concluida: true, salvaId: 3 },
+      { peso: '', reps: '', concluida: false },
+    ];
+    const piso = pisoDeLinhas(base, alvoDaSemana);
+    ok('o piso e o que a reabertura devolveria', piso === 3, String(piso));
+
+    const r = removerSerie(base, 3, piso);
+    ok('a linha extra vazia sai', !!r.linhas && r.linhas.length === 3, r.recusa ?? '');
+    ok(
+      'e o exercicio fecha (o auto-avanco destrava)',
+      (r.linhas ?? []).length === 3 && r.linhas.every((l) => l.concluida),
+      `${(r.linhas ?? []).filter((l) => !l.concluida).length} pendente(s)`
+    );
+
+    const reaberta = hidratarSeries(
+      base.slice(0, 3).map((l, i) => ({
+        id: l.salvaId,
+        serie_index: i,
+        peso_kg: 80,
+        reps: 8,
+        tipo: 'normal',
+      })),
+      alvoDaSemana
+    );
+    ok(
+      'o estado depois de remover e o MESMO que reabrir o app devolve',
+      !!r.linhas && reaberta.length === r.linhas.length,
+      `tela ${(r.linhas ?? []).length} x reabertura ${reaberta.length}`
+    );
+
+    const gravada = removerSerie(base, 0, piso);
+    ok('remover serie ja gravada e recusado', !!gravada.recusa, gravada.recusa ?? 'permitiu');
+    ok(
+      'e a recusa ensina o caminho certo (desmarcar apaga o set_log)',
+      /desmarq/i.test(gravada.recusa ?? ''),
+      gravada.recusa ?? ''
+    );
+
+    const meio = [
+      { peso: '', reps: '', concluida: false },
+      { peso: '80', reps: '8', concluida: true, salvaId: 9 },
+      { peso: '', reps: '', concluida: false },
+    ];
+    const embaralha = removerSerie(meio, 0, 0);
+    ok(
+      'remover linha com serie GRAVADA depois e recusado (serie_index e posicao)',
+      !!embaralha.recusa,
+      embaralha.recusa ?? 'permitiu — o banco e a tela ficariam em indices diferentes'
+    );
+
+    // Linhas NAO gravadas de proposito: senao a recusa que responde e a de
+    // "ja gravada" e a regra do piso nunca chega a ser exercitada.
+    const tresVazias = Array.from({ length: 3 }, () => ({ peso: '', reps: '', concluida: false }));
+    const abaixoDoPiso = removerSerie(tresVazias, 2, 3);
+    ok(
+      'remover abaixo do piso e recusado, com o motivo escrito',
+      !!abaixoDoPiso.recusa && /voltaria/i.test(abaixoDoPiso.recusa),
+      abaixoDoPiso.recusa ?? 'permitiu — e a linha voltaria na proxima abertura'
+    );
+  }
+}
+
+// ── 27. O que some quando o teclado abre (U6) e para onde foi o aquecimento ──
+//
+// UNIDADE: a TELA — o que continua visivel durante o gesto.
+//
+// O cronometro de descanso e a segunda funcao mais usada da sessao e ele
+// desaparecia exatamente no momento em que orienta: com o NumberPad aberto,
+// preparando o peso da proxima serie. E o toggle de aquecimento de G2 morava
+// no numero da serie, disputando largura com o alvo de 52 pt do check — a
+// segunda assercao cobra que ele nao tenha simplesmente sumido junto.
+console.log('\n27. Descanso visivel no teclado (U6) e o aquecimento de G2');
+{
+  ok(
+    'o NumberPad aceita o descanso',
+    /descanso\?:/.test(FONTE_PAD),
+    /descanso\?:/.test(FONTE_PAD) ? 'prop declarada' : 'NumberPad nao tem prop de descanso'
+  );
+  ok(
+    'e a sessao passa o descanso para ele',
+    /<NumberPad[\s\S]{0,1200}descanso=\{/.test(FONTE_SESSAO),
+    /<NumberPad[\s\S]{0,1200}descanso=\{/.test(FONTE_SESSAO) ? 'passa' : 'monta o pad sem descanso'
+  );
+  ok(
+    'o aquecimento continua alcancavel por gesto na linha',
+    /onLongPress/.test(FONTE_SESSAO) && /marcarAquecimento/.test(FONTE_SESSAO),
+    /onLongPress/.test(FONTE_SESSAO) && /marcarAquecimento/.test(FONTE_SESSAO)
+      ? 'toque longo -> menu da linha'
+      : 'o gesto de aquecimento sumiu da linha de serie'
+  );
+}
+
 console.log(falhas ? `\n${falhas} falha(s)\n` : '\nTudo passou\n');
 process.exit(falhas ? 1 : 0);

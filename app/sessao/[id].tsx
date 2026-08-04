@@ -21,7 +21,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { colors, radius, spacing } from '@/theme';
+import { ALVO_TOQUE, colors, HIT, HIT_MIN, radius, spacing } from '@/theme';
 import {
   Button,
   Card,
@@ -62,6 +62,15 @@ import { MOTIVOS_TROCA } from '@/features/treino/classificacao';
 import { aquecimento, type SerieAquecimento } from '@/features/treino/anilhas';
 import { SEG_DESCANSO_APROXIMACAO } from '@/features/treino/duracao';
 import { hidratarSeries, inserirAproximacoes, type LinhaDeSerie } from '@/features/treino/series';
+import {
+  campoDepoisDeConfirmar,
+  pisoDeLinhas,
+  precisaTeclado,
+  prePreencher,
+  removerSerie,
+  valorHerdado,
+  type ContextoHeranca,
+} from '@/features/treino/registro';
 import {
   ABRE_O_GRUPO,
   descansoCorreto,
@@ -121,9 +130,52 @@ type Serie = LinhaDeSerie;
 
 type Foco = { exId: number; serie: number; campo: 'peso' | 'reps' } | null;
 
-/** Diâmetro da bolinha da trilha + o traço que liga uma na outra. */
+/**
+ * Diâmetro DESENHADO da bolinha da trilha, o traço que liga uma na outra, e o
+ * passo do scroll.
+ *
+ * O círculo continua com 30 (a densidade da trilha é proposital: com 10
+ * exercícios ela precisa caber na largura), mas a área clicável é
+ * `ALVO_TOQUE.bola` — 44×52. O passo do scroll é a área, não o círculo: era
+ * `BOLA + traço` e virou `alvo + traço`, senão a trilha centraliza no lugar
+ * errado depois do salto.
+ */
 const BOLA = 30;
-const PASSO = BOLA + 16;
+const TRACO = 16;
+
+/**
+ * Largura da coluna do número da série.
+ *
+ * Não está em `ALVO_TOQUE` de propósito: desde esta fase ela não é alvo de
+ * toque nenhum, é só rótulo. Os 22 pt que sobraram da caixa de 44 que o
+ * toggle de aquecimento tentava ter foram para a coluna "Anterior".
+ */
+const COL_NUMERO = 22;
+const PASSO = ALVO_TOQUE.bola.largura + TRACO;
+
+/**
+ * O que o contexto da sessão empresta para a herança de carga.
+ *
+ * Uma função só, consumida pelo pré-preenchimento (na abertura), pelo campo
+ * que se toca (`abrirCampo`) e pela troca de exercício. Enquanto a regra
+ * estava escrita em dois lugares, o caminho automático herdava diferente do
+ * caminho manual — e era o automático que estava errado.
+ */
+function contextoDe(
+  ex: RoutineExerciseFull,
+  fase: FaseEfetiva | null,
+  sug: Progressao | null
+): ContextoHeranca {
+  const pesoReps = ex.tipo_carga === 'peso_reps';
+  return {
+    porTempo: ex.tipo_carga === 'tempo',
+    readaptacao:
+      pesoReps && fase?.fase === 'readaptacao' && fase.cargaPct != null && fase.retomadaEmMs != null
+        ? { cargaPct: fase.cargaPct, retomadaEmMs: fase.retomadaEmMs }
+        : null,
+    pesoSugerido: pesoReps && sug?.acao === 'subir' ? sug.pesoSugerido : null,
+  };
+}
 
 export default function Execucao() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -170,6 +222,29 @@ export default function Execucao() {
   // recusa que precisa ser EXPLICADA. Recusar em silêncio (só uma vibração) é
   // como o app ensina que o toque não funciona.
   const [falha, setFalha] = useState<{ mensagem: string; retry?: () => void } | null>(null);
+  /**
+   * A linha cujo menu está aberto — os dois gestos secundários da série.
+   *
+   * ── A tensão que esta fase teve que resolver ────────────────────────────
+   *
+   * G2 pôs o toggle de aquecimento NO NÚMERO da série, com `hitSlop` para
+   * chegar a 44 pt. Duas coisas quebraram isso: (1) `hitSlop` é ignorado pelo
+   * `Pressable` do react-native-web, e o PWA é o app real — medido, o alvo
+   * tinha 24×18; (2) a linha tem 326 pt úteis a 390 de tela, e o check
+   * precisava crescer de 34 para 52. Não cabiam os dois.
+   *
+   * A conta que decidiu: concluir série acontece ~20×/treino; marcar
+   * aquecimento e remover linha, 0-2×/treino. Então o check fica com o alvo
+   * primário (52 pt, borda direita, onde o polegar está) e os dois gestos
+   * raros saem para o toque longo em QUALQUER ponto da linha — que não custa
+   * largura nenhuma, funciona no web (`onLongPress` é implementado, ao
+   * contrário de `hitSlop`) e ainda ganha o que não tinha: rótulo escrito e
+   * espaço para EXPLICAR quando a ação é recusada.
+   *
+   * Saldo medido por treino de 20 séries: −80 toques no gesto principal,
+   * +2 no secundário.
+   */
+  const [menuLinha, setMenuLinha] = useState<{ exId: number; idx: number } | null>(null);
   /** Cancelar com série registrada pede dois toques; o timer desarma o 1º. */
   const [confirmandoCancelar, setConfirmandoCancelar] = useState(false);
   const timerCancelar = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -275,8 +350,24 @@ export default function Execucao() {
         // exercita — enquanto ela vivia aqui dentro, a única forma de conferir
         // que nada colide ou some era gravar série no app e recarregar a
         // página na mão.
-        estado[ex.id] = hidratarSeries(doEx, modularSeries(ex.series_alvo, faseSessao));
         hist[ex.id] = await ultimaExecucao(ex.exercise_id, sessionId);
+        // A carga da última vez entra NO ESTADO aqui, não como placeholder:
+        // é o que faz o check gravar em 1 toque em vez de abrir o teclado.
+        // A sugestão de progressão é calculada agora porque a herança precisa
+        // dela — o número herdado tem que ser o mesmo que o selo promete.
+        const sug = avaliarProgressao(
+          hist[ex.id],
+          ex.reps_min ?? 8,
+          ex.reps_max ?? 12,
+          ex.grupo_primario,
+          ex.tipo_carga,
+          faseSessao
+        );
+        estado[ex.id] = prePreencher(
+          hidratarSeries(doEx, modularSeries(ex.series_alvo, faseSessao)),
+          hist[ex.id],
+          contextoDe(ex, faseSessao, sug)
+        );
       }
       setSeries(estado);
       setAnteriores(hist);
@@ -463,42 +554,19 @@ export default function Execucao() {
       if (!atualS) return;
       let valor = campo === 'peso' ? atualS.peso : atualS.reps;
 
-      // Campo vazio herda o da última sessão: é o gesto que faz a progressão
-      // de carga acontecer sem digitar nada.
+      // Rede de segurança: com o pré-preenchimento da abertura o campo quase
+      // nunca chega vazio aqui. Quase — exercício trocado no meio da sessão e
+      // linha criada à mão chegam. A regra de herança é a MESMA função, para
+      // não voltar a existir duas.
       if (!valor) {
-        const ant = anteriores[exId]?.[serie] ?? anteriores[exId]?.[anteriores[exId].length - 1];
-        if (ant) {
-          if (campo === 'peso') {
-            // Só exercício de peso×reps entra na modulação: em exercício por
-            // tempo o campo "peso" guarda segundos — 67% da prancha não é
-            // proteção de tendão, é bug.
-            const ex = exerciciosRef.current.find((e) => e.id === exId);
-            const pesoReps = ex?.tipo_carga === 'peso_reps';
-            const sug = pesoReps ? sugestoes[exId] : null;
-            if (
-              pesoReps &&
-              fase?.fase === 'readaptacao' &&
-              fase.cargaPct != null &&
-              fase.retomadaEmMs != null &&
-              ant.peso_kg &&
-              // O percentual da rampa é sobre a carga PRÉ-PAUSA. Série já
-              // registrada depois da retomada carrega a redução embutida —
-              // reaplicar o percentual sobre ela viraria queda geométrica
-              // (100 → 67 → 45…); a subida semanal fica manual, como a nota
-              // da semana pede.
-              ant.registrado_em < fase.retomadaEmMs
-            ) {
-              valor = String(pesoDeVolta(ant.peso_kg, fase.cargaPct)).replace('.', ',');
-            } else if (sug?.acao === 'subir') {
-              // Fechou a faixa na última sessão: o caminho de menor atrito
-              // passa a ser a carga nova, não a repetição da antiga.
-              valor = String(sug.pesoSugerido).replace('.', ',');
-            } else {
-              valor = ant.peso_kg ? String(ant.peso_kg).replace('.', ',') : '';
-            }
-          } else {
-            valor = ant.reps ? String(ant.reps) : '';
-          }
+        const hist = anteriores[exId] ?? [];
+        const ex = exerciciosRef.current.find((e) => e.id === exId);
+        if (ex) {
+          valor = valorHerdado(
+            campo,
+            hist[serie] ?? hist[hist.length - 1],
+            contextoDe(ex, fase, sugestoes[exId] ?? null)
+          );
         }
       }
       setBuffer(valor);
@@ -512,7 +580,9 @@ export default function Execucao() {
     if (!foco) return;
     setSeries((prev) => {
       const arr = [...(prev[foco.exId] ?? [])];
-      arr[foco.serie] = { ...arr[foco.serie], [foco.campo]: buffer };
+      // `herdado: false` porque o dedo passou por aqui: o valor deixa de ser
+      // referência da semana passada e vira dado de hoje, inclusive na cor.
+      arr[foco.serie] = { ...arr[foco.serie], [foco.campo]: buffer, herdado: false };
       return { ...prev, [foco.exId]: arr };
     });
   }
@@ -553,11 +623,15 @@ export default function Execucao() {
     aplicarBuffer();
     void persistirCorrecao(foco.exId, foco.serie, foco.campo, buffer);
 
-    // Peso preenchido pula direto para reps — o fluxo natural de quem registra.
-    if (foco.campo === 'peso') {
-      const atualS = series[foco.exId]?.[foco.serie];
-      setFoco({ ...foco, campo: 'reps' });
-      setBuffer(atualS?.reps ?? '');
+    // Para onde ir depois: `campoDepoisDeConfirmar` só manda para as
+    // repetições quando elas estão vazias de verdade. O pulo incondicional
+    // custava dois toques por série (confirmar um campo que a herança já
+    // tinha preenchido) e era metade da diferença entre 5 e 3.
+    const linha = { ...(series[foco.exId]?.[foco.serie] ?? { peso: '', reps: '', concluida: false }), [foco.campo]: buffer };
+    const prox = campoDepoisDeConfirmar(foco.campo, linha);
+    if (prox) {
+      setFoco({ ...foco, campo: prox });
+      setBuffer(linha[prox]);
     } else {
       setFoco(null);
     }
@@ -601,6 +675,36 @@ export default function Execucao() {
       arr[idx] = { ...arr[idx], aquecimento: !arr[idx].aquecimento };
       return { ...p, [exId]: arr };
     });
+  }
+
+  /**
+   * Tira uma linha de série da tela (U7).
+   *
+   * A decisão de PODER remover mora em `registro.ts`, com as três recusas
+   * escritas; aqui só sobra o efeito. O piso é o que a reabertura devolveria:
+   * remover abaixo dele deixaria a linha voltar no próximo carregamento, e
+   * "o mesmo treino com dois estados dependendo de reabrir" é justamente o
+   * segundo defeito que U7 descreve — consertar só o primeiro seria trocar um
+   * pelo outro.
+   *
+   * De propósito não navega sozinho ao fechar o exercício: auto-avanço depois
+   * de uma ação destrutiva parece erro, não progresso. A bolinha fica verde e
+   * o "Próximo" fica em destaque, que é o mesmo que acontece ao concluir a
+   * última série pelo caminho normal.
+   */
+  function removerLinha(exId: number, idx: number) {
+    const ex = exerciciosRef.current.find((e) => e.id === exId);
+    if (!ex) return;
+    const linhas = seriesRef.current[exId] ?? [];
+    const r = removerSerie(linhas, idx, pisoDeLinhas(linhas, modularSeries(ex.series_alvo, fase)));
+    if (r.recusa) {
+      buzz.aviso();
+      setFalha({ mensagem: r.recusa });
+      return;
+    }
+    setFalha(null);
+    buzz.ok();
+    setSeries((p) => ({ ...p, [exId]: r.linhas! }));
   }
 
 // eslint-disable-next-line
@@ -705,16 +809,21 @@ function degrausDe(
     const repsN = parseInt(s.reps, 10) || null;
     const porTempo = ex.tipo_carga === 'tempo';
 
-    if (!porTempo && (!pesoN || !repsN)) {
+    // MESMA função que o teste de contagem de toques dirige. Com a carga
+    // herdada no estado, ela devolve null no caminho comum — e é isso que faz
+    // o gesto custar 1 toque em vez de 5.
+    const falta = precisaTeclado(s, porTempo);
+    if (falta) {
       // Falta dado: em vez de erro, abre o campo que está faltando.
-      abrirCampo(exId, idx, !pesoN ? 'peso' : 'reps');
+      abrirCampo(exId, idx, falta);
       buzz.aviso();
       return;
     }
 
     setSeries((p) => {
       const arr = [...(p[exId] ?? [])];
-      arr[idx] = { ...arr[idx], concluida: true };
+      // Gravou: o número deixa de ser referência da semana passada.
+      arr[idx] = { ...arr[idx], concluida: true, herdado: false };
       return { ...p, [exId]: arr };
     });
     buzz.ok();
@@ -903,6 +1012,27 @@ function degrausDe(
     if (alvo) {
       const hist = await ultimaExecucao(alvo.exercise_id, sessionId);
       setAnteriores((p) => ({ ...p, [alvo.id]: hist }));
+      // A carga herdada é do exercício NOVO. Sem isto, as linhas ficariam com
+      // o peso do exercício que acabou de sair — e o check gravaria em 1
+      // toque a carga errada, que é pior do que os 5 toques de antes.
+      const sug = avaliarProgressao(
+        hist,
+        alvo.reps_min ?? 8,
+        alvo.reps_max ?? 12,
+        alvo.grupo_primario,
+        alvo.tipo_carga,
+        fase
+      );
+      setSeries((p) => ({
+        ...p,
+        [alvo.id]: prePreencher(
+          // Linha herdada do exercício anterior volta a ficar vazia; o que foi
+          // gravado ou digitado à mão `prePreencher` já preserva sozinho.
+          (p[alvo.id] ?? []).map((l) => (l.herdado ? { ...l, peso: '', reps: '', herdado: false } : l)),
+          hist,
+          contextoDe(alvo, fase, sug)
+        ),
+      }));
     }
   }
 
@@ -955,7 +1085,9 @@ function degrausDe(
           <Txt v="h3" numberOfLines={1}>
             {nome}
           </Txt>
-          <Txt v="small" cor={colors.textFaint}>
+          {/* Duração, séries e volume: informação que se confere de relance
+              entre séries, não decoração. Em textFaint dava 3,3:1. */}
+          <Txt v="small" cor={colors.textDim}>
             {duracao(decorrido)} · {totalSeries} séries · {volume(volumeAtual)}
           </Txt>
           {/* A fase que a Home prometeu, agora onde ela vale: na sessão. */}
@@ -1032,7 +1164,10 @@ function degrausDe(
               }))
             }
             papel={papeis.get(ex.id) ?? null}
-            onAquecimento={(idx) => marcarAquecimento(ex.id, idx)}
+            onMenu={(idx) => {
+              buzz.selecao();
+              setMenuLinha({ exId: ex.id, idx });
+            }}
             onAproximacoes={() => criarAproximacoes(ex)}
             onTrocar={() => abrirTroca(ex)}
             onDetalhe={() => setDetalhe(ex)}
@@ -1077,6 +1212,10 @@ function degrausDe(
             }
             unidade={foco.campo === "peso" ? "kg" : "reps"}
             anilhas={foco.campo === "peso"}
+            // O cronômetro segue no visor: a barra fica escondida atrás do
+            // teclado, e é exatamente durante o descanso que se prepara a
+            // carga da próxima série.
+            descanso={descansoAtivo ? descanso : null}
             contexto={(() => {
               const s0 = series[foco.exId]?.[foco.serie];
               const outro = foco.campo === 'peso' ? s0?.reps : s0?.peso;
@@ -1204,6 +1343,60 @@ function degrausDe(
         ) : null}
       </Sheet>
 
+      {/* ── Menu da linha: os dois gestos raros da série ── */}
+      <Sheet
+        aberto={!!menuLinha}
+        onFechar={() => setMenuLinha(null)}
+        titulo={(() => {
+          if (!menuLinha) return '';
+          const arr = series[menuLinha.exId] ?? [];
+          const linha = arr[menuLinha.idx];
+          if (!linha) return 'Série';
+          return linha.aquecimento
+            ? 'Série de aquecimento'
+            : `Série ${arr.slice(0, menuLinha.idx + 1).filter((x) => !x.aquecimento).length}`;
+        })()}
+        altura={0.46}
+      >
+        {menuLinha ? (
+          <View style={{ gap: spacing.lg }}>
+            <Txt v="small" cor={colors.textDim}>
+              {series[menuLinha.exId]?.[menuLinha.idx]?.salvaId
+                ? 'Esta série já está no banco. Para mudar o valor, toque no campo; para tirá-la do histórico, desmarque no check.'
+                : 'Aquecimento não conta volume, recorde nem XP — só serve para chegar na carga. Remover tira a linha desta sessão.'}
+            </Txt>
+
+            <Button
+              titulo={
+                series[menuLinha.exId]?.[menuLinha.idx]?.aquecimento
+                  ? 'Voltar a contar como série'
+                  : 'Marcar como aquecimento'
+              }
+              icone="flame-outline"
+              variante="secundario"
+              full
+              tam="lg"
+              onPress={() => {
+                marcarAquecimento(menuLinha.exId, menuLinha.idx);
+                setMenuLinha(null);
+              }}
+            />
+
+            <Button
+              titulo="Remover série"
+              icone="trash-outline"
+              variante="perigo"
+              full
+              tam="lg"
+              onPress={() => {
+                removerLinha(menuLinha.exId, menuLinha.idx);
+                setMenuLinha(null);
+              }}
+            />
+          </View>
+        ) : null}
+      </Sheet>
+
       {/* ── Sair: pausar ou cancelar ── */}
       <Sheet
         aberto={saindo}
@@ -1250,7 +1443,7 @@ function degrausDe(
           />
 
           <View style={{ gap: spacing.sm }}>
-            <Txt v="small" cor={colors.textFaint}>
+            <Txt v="small" cor={colors.textDim}>
               {totalSeries > 0
                 ? `Cancelar apaga as ${totalSeries} série${totalSeries > 1 ? 's' : ''} deste treino. ` +
                   'Recordes que saíram daqui também somem. Não dá para desfazer.'
@@ -1473,7 +1666,7 @@ const Trilha = ({
                   ]}
                 />
               ) : null}
-              <Press onPress={() => onIr(i)} scale={0.88} haptic="selecao">
+              <Press onPress={() => onIr(i)} scale={0.88} haptic="selecao" style={s.bolaAlvo}>
                 <View
                   style={[
                     s.bola,
@@ -1489,7 +1682,7 @@ const Trilha = ({
                       v="small"
                       size={11}
                       bold
-                      cor={ativo ? colors.primary : colors.textFaint}
+                      cor={ativo ? colors.primary : colors.textDim}
                     >
                       {feitas > 0 ? `${feitas}/${arr.length}` : i + 1}
                     </Txt>
@@ -1502,7 +1695,7 @@ const Trilha = ({
       </ScrollView>
 
       <View style={s.contagem}>
-        <Txt v="small" size={11} cor={colors.textFaint}>
+        <Txt v="small" size={11} cor={colors.textDim}>
           {concluidos}/{exercicios.length}
         </Txt>
       </View>
@@ -1532,7 +1725,7 @@ function PaginaExercicio({
   onConcluir,
   onAddSerie,
   papel,
-  onAquecimento,
+  onMenu,
   onAproximacoes,
   onTrocar,
   onDetalhe,
@@ -1560,7 +1753,7 @@ function PaginaExercicio({
   onAddSerie: () => void;
   /** Resolvido no pai, pela mesma função da tela do dia. */
   papel: PapelDaLinha | null;
-  onAquecimento: (idx: number) => void;
+  onMenu: (idx: number) => void;
   onAproximacoes: () => void;
   onTrocar: () => void;
   onDetalhe: () => void;
@@ -1713,7 +1906,7 @@ function PaginaExercicio({
                 </Press>
               </View>
 
-              <Txt v="small" cor={colors.textFaint} size={11}>
+              <Txt v="small" cor={colors.textDim} size={11}>
                 {posicao + 1} de {total} · {nomeGrupo(ex.grupo_primario)}
               </Txt>
 
@@ -1807,48 +2000,64 @@ function PaginaExercicio({
             </Press>
           ) : null}
 
+          {/* Cabeçalho na largura EXATA das colunas da linha — e em textDim,
+              não no textFaint do `v="label"`: 11 px em 3,0:1 é o mesmo
+              problema da coluna Anterior, um tamanho abaixo. */}
           <View style={s.thead}>
-            <Txt v="label" style={{ width: 24 }}>
+            <Txt v="label" cor={colors.textDim} style={{ width: COL_NUMERO }}>
               #
             </Txt>
-            <Txt v="label" style={{ flex: 1 }}>
+            <Txt v="label" cor={colors.textDim} style={{ flex: 1 }}>
               Anterior
             </Txt>
-            <Txt v="label" style={{ width: 74, textAlign: 'center' }}>
+            <Txt
+              v="label"
+              cor={colors.textDim}
+              style={{ width: ALVO_TOQUE.campoPeso.largura, textAlign: 'center' }}
+            >
               {porTempo ? 'Seg' : 'Kg'}
             </Txt>
-            <Txt v="label" style={{ width: 58, textAlign: 'center' }}>
+            <Txt
+              v="label"
+              cor={colors.textDim}
+              style={{ width: ALVO_TOQUE.campoReps.largura, textAlign: 'center' }}
+            >
               {porTempo ? '—' : 'Reps'}
             </Txt>
-            <View style={{ width: 36 }} />
+            <View style={{ width: ALVO_TOQUE.check.largura }} />
           </View>
 
           {series.map((serie, i) => (
             <LinhaSerie
               key={i}
-              idx={i}
               onMedir={(y) => {
                 yLinha.current[i] = y;
               }}
               serie={serie}
               anterior={anteriores[i]}
-              porTempo={porTempo}
               focoPeso={foco?.exId === ex.id && foco.serie === i && foco.campo === 'peso'}
               focoReps={foco?.exId === ex.id && foco.serie === i && foco.campo === 'reps'}
               onEditarPeso={() => onEditar(ex.id, i, 'peso')}
               onEditarReps={() => onEditar(ex.id, i, 'reps')}
               onConcluir={() => onConcluir(i)}
-              onAquecimento={() => onAquecimento(i)}
+              onMenu={() => onMenu(i)}
               numeroValendo={series.slice(0, i + 1).filter((x) => !x.aquecimento).length}
             />
           ))}
 
           <Press onPress={onAddSerie} style={s.addSerie} haptic="leve">
-            <Ionicons name="add" size={15} color={colors.textFaint} />
-            <Txt v="small" size={12} cor={colors.textFaint}>
+            <Ionicons name="add" size={16} color={colors.textDim} />
+            <Txt v="small" cor={colors.textDim}>
               Adicionar série
             </Txt>
           </Press>
+
+          {/* O toque longo não se descobre sozinho. Uma linha, na cor de
+              referência, onde o erro acontece: quem tocou "Adicionar série"
+              por engano lê o desfazer logo abaixo do botão que causou. */}
+          <Txt v="small" size={11} cor={colors.textDim} center>
+            Toque e segure uma série para marcar aquecimento ou remover
+          </Txt>
         </View>
 
         {/* Navegação explícita — deslizar funciona, mas nem todo mundo descobre */}
@@ -1913,35 +2122,48 @@ function PaginaExercicio({
 }
 
 function LinhaSerie({
-  idx,
   serie,
   anterior,
-  porTempo,
   focoPeso,
   focoReps,
   onEditarPeso,
   onEditarReps,
   onConcluir,
-  onAquecimento,
+  onMenu,
   numeroValendo,
   onMedir,
 }: {
-  idx: number;
   serie: Serie;
   anterior?: SerieAnterior;
-  porTempo: boolean;
   focoPeso: boolean;
   focoReps: boolean;
   onEditarPeso: () => void;
   onEditarReps: () => void;
   onConcluir: () => void;
-  onAquecimento: () => void;
+  /** Toque longo em qualquer ponto da linha: aquecimento e remover. */
+  onMenu: () => void;
   /** Numeração que ignora aquecimento: a 1ª valendo é a 1, não a 3. */
   numeroValendo: number;
   onMedir: (y: number) => void;
 }) {
+  /**
+   * Tom do número.
+   *
+   * Três estados, não dois: digitado hoje (`text`, claro), herdado da última
+   * sessão (`textDim` — legível, mas visivelmente emprestado) e ausente
+   * (`textDim` também, porque é só um travessão). O meio-termo é o que
+   * permite pré-preencher sem a tela mentir que o número é de hoje.
+   */
+  const tom = serie.herdado ? colors.textDim : colors.text;
+
   return (
-    <View
+    // A linha INTEIRA é o alvo do toque longo — inclusive a coluna "Anterior",
+    // que não tem filho clicável. Sem `scale`, senão a linha encolhe a cada
+    // toque num campo; sem haptic, porque quem vibra é a ação.
+    <Press
+      onLongPress={onMenu}
+      scale={1}
+      haptic={false}
       style={[
         s.linha,
         serie.concluida && { backgroundColor: colors.successSoft },
@@ -1949,26 +2171,24 @@ function LinhaSerie({
       ]}
       onLayout={(e) => onMedir(e.nativeEvent.layout.y)}
     >
-      {/* O número da série é o botão de aquecimento.
-          Alvo de toque de 44 pt via hitSlop — a mão suada em pé na academia
-          não acerta 24 px, e a linha inteira já é área de edição de campo. */}
-      <Press
-        onPress={onAquecimento}
-        haptic={false}
-        scale={0.9}
-        hitSlop={{ top: 12, bottom: 12, left: 10, right: 10 }}
-        style={{ width: 24 }}
-      >
+      {/* O número deixou de ser botão: o toggle de aquecimento foi para o
+          menu do toque longo, e a largura que ele ocupava virou coluna
+          "Anterior" legível. Ver o comentário de `menuLinha`. */}
+      <View style={s.numero}>
         {serie.aquecimento ? (
           <Ionicons name="flame" size={14} color={colors.warn} />
         ) : (
-          <Txt v="small" cor={colors.textFaint}>
+          <Txt v="small" cor={colors.textDim}>
             {numeroValendo}
           </Txt>
         )}
-      </Press>
+      </View>
 
-      <Txt v="small" cor={colors.textFaint} style={{ flex: 1 }} size={12}>
+      {/* `textDim` e 13 px: é a coluna que decide quanto vai na barra, lida
+          agachado na frente do aparelho. Em `textFaint`/12 dava 3,00:1 sobre
+          o fundo da tabela — abaixo de AA. Medido em `testar:gerador`,
+          seção 25, sobre a cor COMPOSTA das três cores de linha. */}
+      <Txt v="small" cor={colors.textDim} style={{ flex: 1 }}>
         {anterior?.peso_kg
           ? `${fmtPeso(anterior.peso_kg)} × ${anterior.reps}`
           : anterior?.reps
@@ -1976,28 +2196,34 @@ function LinhaSerie({
             : '—'}
       </Txt>
 
-      <Press onPress={onEditarPeso} haptic={false} style={[s.campo, focoPeso && s.campoFoco]}>
-        <Txt v="h3" center cor={serie.peso ? colors.text : colors.textFaint} style={{ width: '100%' }}>
-          {serie.peso || (anterior?.peso_kg ? fmtPeso(anterior.peso_kg) : '—')}
+      <Press
+        onPress={onEditarPeso}
+        onLongPress={onMenu}
+        haptic={false}
+        style={[s.campo, focoPeso && s.campoFoco]}
+      >
+        <Txt v="h3" center cor={serie.peso ? tom : colors.textDim} style={{ width: '100%' }}>
+          {serie.peso || '—'}
         </Txt>
       </Press>
 
       <Press
         onPress={onEditarReps}
+        onLongPress={onMenu}
         haptic={false}
-        style={[s.campo, { width: 58 }, focoReps && s.campoFoco]}
+        style={[s.campo, s.campoReps, focoReps && s.campoFoco]}
       >
-        <Txt v="h3" center cor={serie.reps ? colors.text : colors.textFaint} style={{ width: '100%' }}>
-          {serie.reps || (anterior?.reps ? String(anterior.reps) : '—')}
+        <Txt v="h3" center cor={serie.reps ? tom : colors.textDim} style={{ width: '100%' }}>
+          {serie.reps || '—'}
         </Txt>
       </Press>
 
-      <Press onPress={onConcluir} haptic={false} scale={0.85} style={s.check}>
+      <Press onPress={onConcluir} onLongPress={onMenu} haptic={false} scale={0.85} style={s.check}>
         <View style={[s.checkBox, serie.concluida && s.checkOn]}>
-          <Ionicons name="checkmark" size={17} color={serie.concluida ? '#00251A' : colors.textFaint} />
+          <Ionicons name="checkmark" size={22} color={serie.concluida ? '#00251A' : colors.textDim} />
         </View>
       </Press>
-    </View>
+    </Press>
   );
 }
 
@@ -2056,11 +2282,11 @@ function BarraDescanso({
           {acabou ? proximo : 'Descanso'}
         </Txt>
         {acabou && segundos < -30 ? (
-          <Txt v="small" size={11} cor={colors.textFaint}>
+          <Txt v="small" size={11} cor={colors.textDim}>
             {Math.abs(Math.round(segundos / 60))} min além do intervalo
           </Txt>
         ) : !acabou ? (
-          <Txt v="small" size={11} cor={colors.textFaint} numberOfLines={1}>
+          <Txt v="small" size={11} cor={colors.textDim} numberOfLines={1}>
             {fechou && acao.proximo
               ? `Fechou ${acao.exercicio}. Depois: ${acao.proximo}`
               : `${acao.exercicio} · ${acao.serieFeita}/${acao.serieTotal}`}
@@ -2098,16 +2324,16 @@ const s = StyleSheet.create({
     borderBottomColor: colors.border,
   },
   iconeBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: ALVO_TOQUE.botaoCompacto.largura,
+    height: ALVO_TOQUE.botaoCompacto.altura,
+    borderRadius: ALVO_TOQUE.botaoCompacto.altura / 2,
     backgroundColor: colors.surfaceHigh,
     alignItems: 'center',
     justifyContent: 'center',
   },
   btnFim: {
     paddingHorizontal: spacing.lg,
-    height: 38,
+    height: ALVO_TOQUE.botaoCompacto.altura,
     borderRadius: radius.md,
     backgroundColor: colors.primary,
     alignItems: 'center',
@@ -2122,8 +2348,16 @@ const s = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
-  trilha: { alignItems: 'center', paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
-  traco: { width: 16, height: 2, backgroundColor: colors.border },
+  trilha: { alignItems: 'center', paddingHorizontal: spacing.lg, paddingVertical: spacing.xs },
+  traco: { width: TRACO, height: 2, backgroundColor: colors.border },
+  /* O círculo continua com 30; quem cresceu foi a caixa em volta dele. Pular
+     para o exercício errado no meio do treino é o custo de errar aqui. */
+  bolaAlvo: {
+    width: ALVO_TOQUE.bola.largura,
+    height: ALVO_TOQUE.bola.altura,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   bola: {
     width: BOLA,
     height: BOLA,
@@ -2154,7 +2388,7 @@ const s = StyleSheet.create({
     alignItems: 'center',
     gap: 5,
     paddingHorizontal: spacing.sm,
-    paddingVertical: 6,
+    minHeight: ALVO_TOQUE.botaoCompacto.altura,
     borderRadius: radius.md,
     borderWidth: 1,
     borderStyle: 'dashed',
@@ -2165,7 +2399,7 @@ const s = StyleSheet.create({
     alignItems: 'center',
     gap: 5,
     paddingHorizontal: spacing.sm,
-    paddingVertical: 6,
+    minHeight: ALVO_TOQUE.botaoCompacto.altura,
     borderRadius: radius.md,
     backgroundColor: colors.warnSoft,
   },
@@ -2176,7 +2410,7 @@ const s = StyleSheet.create({
     gap: 5,
     alignSelf: 'flex-start',
     paddingHorizontal: spacing.md,
-    paddingVertical: 7,
+    height: ALVO_TOQUE.botaoCompacto.altura,
     borderRadius: radius.md,
     backgroundColor: colors.infoSoft,
   },
@@ -2190,8 +2424,8 @@ const s = StyleSheet.create({
     backgroundColor: colors.surfaceHigh,
   },
   iconeMini: {
-    width: 36,
-    height: 36,
+    width: ALVO_TOQUE.botaoCompacto.largura,
+    height: ALVO_TOQUE.botaoCompacto.altura,
     borderRadius: radius.md,
     backgroundColor: colors.surfaceAlt,
     alignItems: 'center',
@@ -2220,12 +2454,13 @@ const s = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.sm,
     paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
+    paddingVertical: 2,
     borderRadius: radius.md,
   },
+  numero: { width: COL_NUMERO, alignItems: 'flex-start' },
   campo: {
-    width: 74,
-    height: 44,
+    width: ALVO_TOQUE.campoPeso.largura,
+    height: ALVO_TOQUE.campoPeso.altura,
     borderRadius: radius.md,
     backgroundColor: colors.surfaceAlt,
     borderWidth: 1.5,
@@ -2233,15 +2468,23 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  campoReps: { width: ALVO_TOQUE.campoReps.largura },
   campoFoco: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
-  check: { width: 36, alignItems: 'flex-end' },
+  /* O gesto de ~20x por treino. Caixa de verdade (52x52) em vez de hitSlop —
+     no react-native-web o Pressable descarta essa prop, e o PWA é o app real. */
+  check: {
+    width: ALVO_TOQUE.check.largura,
+    height: ALVO_TOQUE.check.altura,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   checkBox: {
-    width: 34,
-    height: 34,
+    width: ALVO_TOQUE.check.largura - 6,
+    height: ALVO_TOQUE.check.altura - 6,
     borderRadius: radius.md,
     backgroundColor: colors.surfaceAlt,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.borderStrong,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -2251,13 +2494,14 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 5,
-    paddingVertical: spacing.sm,
+    height: ALVO_TOQUE.botaoLinha.altura,
     marginTop: 2,
   },
   aproximacao: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.xs,
+    minHeight: ALVO_TOQUE.botaoLinha.altura,
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.sm,
     marginBottom: spacing.xs,
@@ -2273,7 +2517,9 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 4,
-    paddingVertical: spacing.md,
+    // Media 43 pt com paddingVertical: um a menos que o minimo. Altura fixa
+    // resolve sem depender do tamanho da fonte do sistema.
+    height: HIT,
     borderRadius: radius.md,
     backgroundColor: colors.surfaceAlt,
   },
@@ -2289,7 +2535,9 @@ const s = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.md,
     paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
+    // O "Pular" cresceu de 30 para 44: a barra compensa no padding para não
+    // roubar altura da página, que já reserva 76 pt para ela.
+    paddingVertical: spacing.sm,
     borderRadius: radius.lg,
     backgroundColor: '#2A1206',
     borderWidth: 1,
@@ -2297,7 +2545,10 @@ const s = StyleSheet.create({
   },
   pular: {
     paddingHorizontal: spacing.md,
-    paddingVertical: 6,
+    minWidth: ALVO_TOQUE.botaoCompacto.largura,
+    height: ALVO_TOQUE.botaoCompacto.altura,
+    alignItems: 'center',
+    justifyContent: 'center',
     borderRadius: radius.full,
     backgroundColor: colors.surfaceHigh,
   },
@@ -2319,14 +2570,16 @@ const s = StyleSheet.create({
   },
   tentarDeNovo: {
     paddingHorizontal: spacing.md,
-    paddingVertical: 10,
+    height: ALVO_TOQUE.botaoCompacto.altura,
+    alignItems: 'center',
+    justifyContent: 'center',
     borderRadius: radius.full,
     backgroundColor: colors.dangerSoft,
   },
   fecharFalha: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: ALVO_TOQUE.botaoCompacto.largura,
+    height: ALVO_TOQUE.botaoCompacto.altura,
+    borderRadius: ALVO_TOQUE.botaoCompacto.altura / 2,
     alignItems: 'center',
     justifyContent: 'center',
   },

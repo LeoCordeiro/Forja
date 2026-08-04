@@ -3,7 +3,7 @@ import { Platform, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { Image } from 'expo-image';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import Animated, { FadeIn } from 'react-native-reanimated';
-import { colors, radius, spacing } from '@/theme';
+import { colors, radius, spacing, HIT_MIN } from '@/theme';
 import { Txt } from './Txt';
 import { Press } from './Press';
 import { Sheet } from './Sheet';
@@ -312,7 +312,9 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 4,
-    paddingVertical: 6,
+    // 27 pt medidos no navegador; alternar vídeo/fotos fica logo abaixo do
+    // vídeo, e errar aqui abre o player em vez de trocar de modo.
+    height: HIT_MIN,
     borderRadius: radius.md,
     backgroundColor: colors.surfaceAlt,
   },

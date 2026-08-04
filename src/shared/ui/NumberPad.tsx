@@ -9,11 +9,12 @@ import Animated, {
   withRepeat,
   withTiming,
 } from 'react-native-reanimated';
-import { colors, radius, spacing } from '@/theme';
+import { colors, HIT_MIN, radius, spacing } from '@/theme';
 import { Txt } from './Txt';
 import { Press } from './Press';
 import { buzz } from '../utils/haptics';
 import { calcularAnilhas, resumoAnilhas } from '@/features/treino/anilhas';
+import { cronometro } from '../utils/format';
 
 interface Props {
   valor: string;
@@ -29,6 +30,14 @@ interface Props {
   contexto?: { rotulo: string; valor: string };
   /** Mostra quais anilhas montar para o valor digitado. */
   anilhas?: boolean;
+  /**
+   * Segundos que faltam do descanso — negativo quando já passou.
+   *
+   * O teclado ocupa metade da tela e escondia a barra de descanso justamente
+   * no momento em que ela mais orienta: durante o intervalo, preparando a
+   * carga da próxima série. Aqui o contador não some, só encolhe.
+   */
+  descanso?: number | null;
 }
 
 /**
@@ -48,6 +57,7 @@ export function NumberPad({
   unidade,
   contexto,
   anilhas,
+  descanso,
 }: Props) {
   /**
    * Primeira tecla substitui o valor herdado, em vez de concatenar.
@@ -112,10 +122,24 @@ export function NumberPad({
         </View>
         {contexto ? (
           <View style={s.contexto}>
-            <Txt v="small" size={10} cor={colors.textFaint}>
+            <Txt v="small" size={10} cor={colors.textDim}>
               {contexto.rotulo}
             </Txt>
             <Txt v="h3">{contexto.valor}</Txt>
+          </View>
+        ) : null}
+        {/* Descanso correndo: o mesmo número da barra, na mesma cor, sem
+            custar altura nenhuma no teclado. Verde quando acabou é o sinal de
+            "pode ir" que a barra dá — quem está digitando precisa dele tanto
+            quanto quem está olhando a tabela. */}
+        {descanso !== null && descanso !== undefined ? (
+          <View style={s.contexto}>
+            <Txt v="small" size={10} cor={colors.textDim}>
+              descanso
+            </Txt>
+            <Txt v="h3" cor={descanso <= 0 ? colors.success : colors.primary}>
+              {cronometro(descanso)}
+            </Txt>
           </View>
         ) : null}
       </View>
@@ -265,7 +289,9 @@ const s = StyleSheet.create({
   },
   rapido: {
     flex: 1,
-    height: 38,
+    // 44 e não 38: somar anilha é o segundo gesto mais usado do teclado, e o
+    // dedo que erra aqui muda a carga para o lado errado.
+    height: HIT_MIN,
     borderRadius: radius.md,
     backgroundColor: colors.surface,
     borderWidth: 1,
