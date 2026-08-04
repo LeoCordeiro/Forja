@@ -46,14 +46,23 @@ export default function Tempo() {
     const [r, semana] = await Promise.all([resumo(), agendaSemanal()]);
 
     // Estima cada dia de treino com os exercícios reais.
+    //
+    // O cardio sai à parte porque `estimarDuracao` mede só musculação: nesta
+    // tela, cujo assunto é literalmente o tempo, o "cabe / não cabe" decidia
+    // sem os 30 min de bicicleta que o plano prescreve — e era aqui que o
+    // usuário ia justamente para descobrir se o treino cabe no dia dele.
     const estimativas: Record<number, number> = {};
+    const cardios: Record<number, number> = {};
     for (const d of semana) {
       if (d.routineDayId) {
         const exs = await exerciciosDoDia(d.routineDayId);
         estimativas[d.diaSemana] = estimarDuracao(exs).totalSeg;
+        cardios[d.diaSemana] = exs
+          .filter((e) => e.grupo_primario === 'cardio')
+          .reduce((soma, e) => soma + (e.reps_max ?? 0), 0);
       }
     }
-    return { r, semana, estimativas };
+    return { r, semana, estimativas, cardios };
   }, []);
 
   useEffect(() => {
@@ -137,7 +146,10 @@ export default function Tempo() {
 
         {minutos.map((m, i) => {
           const est = dados?.estimativas[i];
-          const cabe = !est || !m || est <= m * 60;
+          const card = dados?.cardios[i] ?? 0;
+          // O cardio entra no "cabe?" porque ele ocupa o mesmo relógio da
+          // pessoa, mesmo não ocupando o mesmo orçamento de prescrição.
+          const cabe = !est || !m || est + card <= m * 60;
           return (
             <Card key={i} padding={spacing.md}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md }}>
@@ -174,6 +186,7 @@ export default function Tempo() {
                   />
                   <Txt v="small" size={11} cor={cabe ? colors.success : colors.warn}>
                     Treino deste dia leva ~{emMinutos(est)} min
+                    {card > 0 ? ` + ${emMinutos(card)} min de cardio` : ''}
                     {cabe ? '' : ` — não cabe em ${m}`}
                   </Txt>
                 </View>

@@ -1,5 +1,6 @@
 import type * as SQLite from 'expo-sqlite';
-import { COMPOSTOS, COMPOSTOS_PESADOS, descansoCorreto } from '@/features/treino/classificacao';
+import { COMPOSTOS, COMPOSTOS_PESADOS } from '@/features/treino/classificacao';
+import { descansoCorreto, descansoLegado, type Papel } from '@/features/treino/papel';
 import { EXERCICIOS, MEDIA_BASE } from './seed/exercicios';
 
 /**
@@ -128,12 +129,22 @@ async function classificarExercicios(db: SQLite.SQLiteDatabase) {
 
   // Guarda o descanso ideal no próprio catálogo, para rotinas novas já nascerem
   // com o valor certo.
-  const exs = await db.getAllAsync<{ id: number; nome: string; grupo_primario: string }>(
-    'SELECT id, nome, grupo_primario FROM exercises'
-  );
+  // Só roda em banco recém-criado (o `return` acima corta quando já existe
+  // exercício classificado), então aqui a regra NOVA é a certa: ninguém tem
+  // rotina montada ainda para ser reescrita por baixo.
+  //
+  // `equipamento` entra na conta porque é ele que dá a demanda de
+  // estabilização — sem ele, supino com barra e supino máquina recebiam o
+  // mesmo descanso padrão, que é justamente a distinção de B6.
+  const exs = await db.getAllAsync<{
+    id: number;
+    nome: string;
+    grupo_primario: string;
+    equipamento: string | null;
+  }>('SELECT id, nome, grupo_primario, equipamento FROM exercises');
   for (const e of exs) {
     await db.runAsync('UPDATE exercises SET descanso_padrao = ? WHERE id = ?', [
-      descansoCorreto(e.nome, 10, e.grupo_primario),
+      descansoCorreto(e.nome, 10, e.grupo_primario, undefined, e.equipamento),
       e.id,
     ]);
   }
@@ -163,17 +174,32 @@ async function corrigirDescansos(db: SQLite.SQLiteDatabase) {
     id: number;
     nome: string;
     grupo: string;
+    equipamento: string | null;
+    papel: string | null;
     reps_max: number | null;
     descanso_seg: number;
   }>(
-    `SELECT re.id, e.nome, e.grupo_primario AS grupo, re.reps_max, re.descanso_seg
+    `SELECT re.id, e.nome, e.grupo_primario AS grupo, e.equipamento, re.papel,
+            re.reps_max, re.descanso_seg
        FROM routine_exercises re
        JOIN exercises e ON e.id = re.exercise_id`
   );
 
   let ajustadas = 0;
   for (const l of linhas) {
-    const ideal = descansoCorreto(l.nome, l.reps_max ?? 10, l.grupo);
+    // ── A linha com papel usa a regra nova; a sem papel, a antiga ──────────
+    //
+    // Rotina anterior à v16 não tem papel, e sem ele a regra nova trata todo
+    // multiarticular como principal — falso a partir do segundo exercício do
+    // grupo. Aplicar isso aqui faria o plano que já está no aparelho ganhar
+    // ~7 min por sessão sozinho, sem ninguém pedir, estourando o tempo para o
+    // qual ele foi dimensionado. Rotina que funciona em produção só muda por
+    // decisão do dono: quando ele refizer o treino, ela nasce com papel e com
+    // a regra nova de uma vez.
+    const papel = (l.papel as Papel | null) ?? null;
+    const ideal = papel
+      ? descansoCorreto(l.nome, l.reps_max ?? 10, l.grupo, papel, l.equipamento)
+      : descansoLegado(l.nome, l.reps_max ?? 10, l.grupo);
     if (ideal > l.descanso_seg) {
       await db.runAsync('UPDATE routine_exercises SET descanso_seg = ? WHERE id = ?', [ideal, l.id]);
       ajustadas++;

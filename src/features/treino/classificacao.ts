@@ -6,7 +6,19 @@
  * vez conserta o catálogo inteiro e toda rotina criada daqui em diante.
  */
 
-/** Multiarticulares: movem duas ou mais articulações, exigem mais e cansam mais. */
+/**
+ * Exercícios de alta demanda SISTÊMICA: os que abrem a sessão.
+ *
+ * Foi chamada de "multiarticulares" por muito tempo e a etiqueta não era exata
+ * — hip thrust, ponte, pull through e flexão nórdica movem uma articulação só e
+ * estão aqui de propósito, porque cobram do corpo inteiro e não podem ser
+ * jogados para o fim do treino. Quem responde "quantas articulações" agora é
+ * `articulacoesDe` em `papel.ts`, que é o atributo de B3; esta lista responde
+ * "quem vem primeiro e cansa mais", que é outra pergunta e sempre foi.
+ *
+ * Separar as duas é o que permitiu o descanso sair do PAPEL (A5) sem
+ * reescrever a ordem do programa inteiro.
+ */
 export const COMPOSTOS = [
   'Supino reto com barra',
   'Supino inclinado com barra',
@@ -111,32 +123,14 @@ export function ehPesado(nome: string): boolean {
   return COMPOSTOS_PESADOS.includes(nome);
 }
 
-/**
- * Descanso correto para o exercício, em segundos.
- *
- * Schoenfeld 2016: 3 minutos produziram mais força E mais músculo que 1 minuto
- * em 8 semanas. Com mais descanso você mantém carga e repetições nas séries
- * seguintes — e é esse volume acumulado que constrói.
- *
- * Isolador não precisa do mesmo tempo: fadiga menos o sistema inteiro e a
- * recuperação local é mais rápida.
- */
-export function descansoCorreto(nome: string, repsAlvo = 10, grupo?: string): number {
-  if (grupo === 'cardio') return 0;
-  if (ehPesado(nome)) return repsAlvo <= 8 ? 180 : 150;
-  if (ehComposto(nome)) return 150;
-  return repsAlvo >= 15 ? 60 : 90;
-}
-
-/** Explicação curta do descanso, para a tela de execução. */
-export function porqueDescanso(nome: string, segundos: number): string {
-  if (segundos >= 180)
-    return 'Composto pesado. Três minutos preservam carga e repetições nas próximas séries — é o que mais rende em hipertrofia.';
-  if (segundos >= 150)
-    return 'Exercício composto. Dois minutos e meio mantêm o desempenho ao longo das séries.';
-  if (segundos >= 90) return 'Isolador. Um minuto e meio já recupera o suficiente.';
-  return 'Série longa de isolador — a recuperação local é rápida.';
-}
+// `descansoCorreto` e `porqueDescanso` MUDARAM DE ARQUIVO, para `papel.ts`.
+//
+// A chave do descanso era a repetição — `ehPesado(nome) ? (repsAlvo <= 8 ? 180
+// : 150)` — e como `repsDe` só produzia 8-12 para quem marcou "iniciante", o
+// degrau de 180 s era inalcançável no programa inteiro desses perfis (A5). A
+// chave certa é o PAPEL, e o papel depende da sessão inteira, não de um nome:
+// por isso a função foi para o arquivo que sabe o que é papel. Aqui ficou o que
+// depende só do exercício.
 
 /**
  * Ordem correta dentro da sessão.
@@ -362,7 +356,13 @@ export function padraoDe(nome: string, grupo: string): string {
     return 'livre';
   }
   if (grupo === 'triceps') {
-    if (/mergulho|supino fechado/.test(n)) return 'composto';
+    // A lista de "empurrar" é maior do que parece porque esta função também
+    // responde pelo grupo SECUNDÁRIO: perguntar o padrão de tríceps de um
+    // supino é como o gerador descobre que o dia de peito já cobriu a extensão
+    // de cotovelo com empurrão (A9). Caindo no default, todo supino "cobria"
+    // a polia e o dia terminava sem nenhuma extensão isolada — que é
+    // exatamente o defeito A7.
+    if (/mergulho|supino|flex[ãa]o|desenvolvimento|press/.test(n)) return 'composto';
     if (/testa|franc/.test(n)) return 'acima';
     if (/coice|kickback/.test(n)) return 'coice';
     return 'polia';

@@ -58,7 +58,22 @@ import {
   pesoDeVolta,
   type Progressao,
 } from '@/features/treino/progressao';
-import { descansoCorreto, MOTIVOS_TROCA, porqueDescanso } from '@/features/treino/classificacao';
+import { MOTIVOS_TROCA } from '@/features/treino/classificacao';
+import { aquecimento, type SerieAquecimento } from '@/features/treino/anilhas';
+import { SEG_DESCANSO_APROXIMACAO } from '@/features/treino/duracao';
+import { hidratarSeries, inserirAproximacoes, type LinhaDeSerie } from '@/features/treino/series';
+import {
+  ABRE_O_GRUPO,
+  descansoCorreto,
+  LABEL_PAPEL,
+  papeisDaRotina,
+  porqueDescanso,
+  PORQUE_PAPEL,
+  rirNaFase,
+  textoRir,
+  type Papel,
+  type PapelDaLinha,
+} from '@/features/treino/papel';
 import {
   avisarFimDoDescanso,
   lerDescanso,
@@ -94,12 +109,15 @@ import {
   prepararAudio,
 } from '@/shared/utils/alarme';
 
-interface Serie {
-  peso: string;
-  reps: string;
-  concluida: boolean;
-  salvaId?: number;
-}
+/**
+ * A linha de série da tela — definida em `series.ts`, com as operações que
+ * mexem nela. O tipo mora lá porque as operações moram lá: enquanto elas
+ * viviam dentro deste componente, `serie_index` colidia sem ninguém ver.
+ *
+ * A marca de aquecimento vai para o banco como `set_logs.tipo = 'aquecimento'`,
+ * que todas as queries de volume, PR e histórico já excluem.
+ */
+type Serie = LinhaDeSerie;
 
 type Foco = { exId: number; serie: number; campo: 'peso' | 'reps' } | null;
 
@@ -148,7 +166,10 @@ export default function Execucao() {
    * Gravação que falhou, com o gesto para repetir. Sem isto a série ficava
    * verde na tela e fora do banco — a perda só aparecia no dia seguinte.
    */
-  const [falha, setFalha] = useState<{ mensagem: string; retry: () => void } | null>(null);
+  // `retry` opcional: o mesmo banner serve para erro que dá para repetir e para
+  // recusa que precisa ser EXPLICADA. Recusar em silêncio (só uma vibração) é
+  // como o app ensina que o toque não funciona.
+  const [falha, setFalha] = useState<{ mensagem: string; retry?: () => void } | null>(null);
   /** Cancelar com série registrada pede dois toques; o timer desarma o 1º. */
   const [confirmandoCancelar, setConfirmandoCancelar] = useState(false);
   const timerCancelar = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -160,8 +181,36 @@ export default function Execucao() {
    * a closure de um retry pode ser de vários renders atrás, e decidir por um
    * snapshot velho é o que duplicava série. Quem grava lê SEMPRE daqui.
    */
+  /**
+   * O papel de cada linha — a MESMA função que a tela do dia usa.
+   *
+   * Antes o executor deduzia com `eh_composto ? 'principal' : 'isolador'` e a
+   * tela do dia com `papeisDaSessao`: numa rotina anterior à v16 o supino
+   * inclinado saía "Complementar · RIR 1-2" no plano e "Principal · RIR 2-3"
+   * aqui — o executor mandando treinar mais longe da falha do que o plano
+   * prescreve, na mesma linha do mesmo treino.
+   */
+  const papeis = useMemo(
+    () =>
+      papeisDaRotina(
+        exercicios.map((e) => ({
+          id: e.id,
+          nome: e.nome,
+          grupo: e.grupo_primario,
+          equipamento: e.equipamento,
+          tipoCarga: e.tipo_carga,
+          papel: e.papel,
+        }))
+      ),
+    [exercicios]
+  );
+
   const seriesRef = useRef(series);
   seriesRef.current = series;
+  // O mesmo espelho para o histórico: `criarAproximacoes` precisa da carga da
+  // última sessão sem virar dependência de callback.
+  const anterioresRef = useRef(anteriores);
+  anterioresRef.current = anteriores;
   const exerciciosRef = useRef(exercicios);
   exerciciosRef.current = exercicios;
 
@@ -222,17 +271,11 @@ export default function Execucao() {
           modularSeries(ex.series_alvo, faseSessao),
           doEx.length ? Math.max(...doEx.map((x) => x.serie_index)) + 1 : 0
         );
-        estado[ex.id] = Array.from({ length: total }, (_, i) => {
-          const salva = doEx.find((s) => s.serie_index === i);
-          return salva
-            ? {
-                peso: salva.peso_kg ? String(salva.peso_kg).replace('.', ',') : '',
-                reps: salva.reps ? String(salva.reps) : '',
-                concluida: true,
-                salvaId: salva.id,
-              }
-            : { peso: '', reps: '', concluida: false };
-        });
+        // A hidratação mora em `series.ts` e é a MESMA função que o teste
+        // exercita — enquanto ela vivia aqui dentro, a única forma de conferir
+        // que nada colide ou some era gravar série no app e recarregar a
+        // página na mão.
+        estado[ex.id] = hidratarSeries(doEx, modularSeries(ex.series_alvo, faseSessao));
         hist[ex.id] = await ultimaExecucao(ex.exercise_id, sessionId);
       }
       setSeries(estado);
@@ -331,8 +374,15 @@ export default function Execucao() {
   // Sair da tela não pode deixar o silêncio tocando para sempre.
   useEffect(() => () => manterAcordado(false), []);
 
+  // Aquecimento fora da conta, igual ao que o banco faz: é a mesma régua de
+  // `finalizarSessao`, `historicoSessoes` e `estatisticas`. Mostrar "6 séries"
+  // e gravar 4 seria a tela discordando do histórico dela mesma.
   const totalSeries = useMemo(
-    () => Object.values(series).reduce((a, arr) => a + arr.filter((x) => x.concluida).length, 0),
+    () =>
+      Object.values(series).reduce(
+        (a, arr) => a + arr.filter((x) => x.concluida && !x.aquecimento).length,
+        0
+      ),
     [series]
   );
   const volumeAtual = useMemo(
@@ -341,7 +391,9 @@ export default function Execucao() {
         (a, arr) =>
           a +
           arr
-            .filter((x) => x.concluida)
+            // Mesma exclusão do `recalcularVolume` do banco: aquecimento nunca
+            // é volume. Sem isto o número da tela subia e o do histórico não.
+            .filter((x) => x.concluida && !x.aquecimento)
             .reduce(
               (b, x) =>
                 b + (parseFloat(x.peso.replace(',', '.')) || 0) * (parseInt(x.reps, 10) || 0),
@@ -524,6 +576,90 @@ export default function Execucao() {
   }
 
   // ── concluir série ──────────────────────────────────────────────────────
+  /**
+   * Liga e desliga a marca de aquecimento de uma série (F8).
+   *
+   * Série JÁ GRAVADA não muda de tipo aqui de propósito: mudar o tipo depois do
+   * insert exigiria refazer volume e recordes derivados, e é o mesmo caminho que
+   * já transformou uma correção de digitação em recorde permanente. Para
+   * corrigir, desmarque a série (o que apaga a linha e recalcula), marque como
+   * aquecimento e registre de novo.
+   */
+  function marcarAquecimento(exId: number, idx: number) {
+    const s = seriesRef.current[exId]?.[idx];
+    if (!s) return;
+    if (s.salvaId) {
+      buzz.aviso();
+      setFalha({
+        mensagem: 'Série já gravada. Desmarque, marque como aquecimento e registre de novo.',
+      });
+      return;
+    }
+    buzz.leve();
+    setSeries((p) => {
+      const arr = [...(p[exId] ?? [])];
+      arr[idx] = { ...arr[idx], aquecimento: !arr[idx].aquecimento };
+      return { ...p, [exId]: arr };
+    });
+  }
+
+// eslint-disable-next-line
+/**
+ * De onde sai a carga de referência da aproximação.
+ *
+ * O histórico é a primeira fonte. Sem ele — e a PRIMEIRA sessão de cada
+ * exercício é justamente a primeira semana de volta de pausa — vale o peso que
+ * a pessoa já digitou na primeira série valendo. Antes disso não há o que
+ * aproximar, e aí o card nem aparece em vez de aparecer prometendo.
+ */
+function degrausDe(
+  ex: RoutineExerciseFull,
+  linhas: Serie[],
+  anteriores: SerieAnterior[]
+): SerieAquecimento[] {
+  const doHistorico = anteriores.find((a) => a?.peso_kg)?.peso_kg ?? 0;
+  const digitado = linhas.find((l) => !l.aquecimento && l.peso)?.peso ?? '';
+  const alvo = doHistorico || parseFloat(digitado.replace(',', '.')) || 0;
+  return aquecimento(alvo, ex.equipamento, ex.tipo_carga, ex.reps_max ?? 10);
+}
+
+  /**
+   * Cria as duas séries de aproximação do principal, já com a carga calculada.
+   *
+   * A carga alvo é a última série valendo daquele exercício — é o número que a
+   * pessoa vai puxar hoje. Sem histórico não há o que aproximar, e a ação nem
+   * aparece na tela.
+   */
+  function criarAproximacoes(ex: RoutineExerciseFull) {
+    // ── Nunca inserir antes de série já gravada ───────────────────────────
+    //
+    // `serie_index` é a POSIÇÃO no array — é assim que a sessão se reconstrói
+    // ao reabrir (`doEx.find(s => s.serie_index === i)`). Um prepend depois de
+    // a série 1 estar gravada empurra tudo e faz o aquecimento nascer com
+    // `serie_index = 0`, colidindo com a linha que já existe: na reabertura só
+    // a primeira volta, o aquecimento some da tela e fica em `set_logs` sem
+    // `salvaId` — sem como desmarcar nem corrigir, que é a regra 5 do
+    // AGENTS.md quebrada. PWA recarregando no meio do treino é rotina.
+    const jaGravou = (seriesRef.current[ex.id] ?? []).some((x) => x.salvaId);
+    if (jaGravou) {
+      buzz.aviso();
+      setFalha({
+        mensagem: 'Aproximação é antes da primeira série valendo. Este exercício já começou.',
+      });
+      return;
+    }
+
+    const passos = degrausDe(ex, seriesRef.current[ex.id] ?? [], anterioresRef.current[ex.id] ?? []);
+    const r = inserirAproximacoes(seriesRef.current[ex.id] ?? [], passos);
+    if (r.recusa) {
+      buzz.aviso();
+      setFalha({ mensagem: r.recusa });
+      return;
+    }
+    buzz.ok();
+    setSeries((p) => ({ ...p, [ex.id]: r.linhas! }));
+  }
+
   async function concluirSerie(exId: number, idx: number) {
     // Resolvidos na hora, pelos espelhos: `ex` e `s` de uma closure velha é
     // exatamente o que o retry do banner não pode usar para decidir.
@@ -564,6 +700,7 @@ export default function Execucao() {
     // (retry atrasado ou toque repetido).
     if (s.salvaId) return;
 
+
     const pesoN = parseFloat(s.peso.replace(',', '.')) || null;
     const repsN = parseInt(s.reps, 10) || null;
     const porTempo = ex.tipo_carga === 'tempo';
@@ -593,6 +730,7 @@ export default function Execucao() {
         pesoKg: pesoN,
         reps: repsN,
         duracaoSeg: porTempo ? repsN : null,
+        tipo: s.aquecimento ? 'aquecimento' : 'normal',
       });
     } catch {
       // Desfaz o verde otimista: série marcada sem linha no banco é perda
@@ -627,9 +765,14 @@ export default function Execucao() {
     const iAtual = exerciciosRef.current.findIndex((e) => e.id === exId);
     const iProximo = proximoPendente(iAtual, projetado);
 
-    if (ex.descanso_seg > 0) {
+    // Descanso DEPOIS de uma aproximação é 60 s fixos, não o do exercício:
+    // herdar 180 s fazia duas aproximações num supino custarem 6 minutos
+    // parados, sozinhas. Ribeiro et al. (PMC7558980) usam 1 min entre as
+    // séries de aquecimento e 3 min só antes da valendo.
+    const descansoDaSerie = s.aquecimento ? SEG_DESCANSO_APROXIMACAO : ex.descanso_seg;
+    if (descansoDaSerie > 0) {
       const novo: DescansoAtivo = {
-        fim: Date.now() + ex.descanso_seg * 1000,
+        fim: Date.now() + descansoDaSerie * 1000,
         exercicio: ex.nome,
         serieFeita: feitasAgora,
         serieTotal: arrNova.length,
@@ -645,7 +788,7 @@ export default function Execucao() {
       manterAcordado(true);
       // Alarme do sistema: toca com a tela apagada e o celular no bolso, que
       // é o cenário real de quem descansa 3 minutos entre séries pesadas.
-      void agendarFimDoDescanso(ex.descanso_seg, novo.proximo);
+      void agendarFimDoDescanso(descansoDaSerie, novo.proximo);
     }
 
     if (gravada.prs.length > 0) mostrarPR(ex.nome, gravada.prs[0]);
@@ -888,6 +1031,9 @@ export default function Execucao() {
                 [ex.id]: [...(p[ex.id] ?? []), { peso: '', reps: '', concluida: false }],
               }))
             }
+            papel={papeis.get(ex.id) ?? null}
+            onAquecimento={(idx) => marcarAquecimento(ex.id, idx)}
+            onAproximacoes={() => criarAproximacoes(ex)}
             onTrocar={() => abrirTroca(ex)}
             onDetalhe={() => setDetalhe(ex)}
             onProximo={() => irPara(i + 1)}
@@ -964,19 +1110,21 @@ export default function Execucao() {
           <Txt v="small" cor={colors.danger} bold style={{ flex: 1 }}>
             {falha.mensagem}
           </Txt>
-          <Press
-            onPress={() => {
-              const tentar = falha.retry;
-              setFalha(null);
-              tentar();
-            }}
-            style={s.tentarDeNovo}
-            haptic="leve"
-          >
-            <Txt v="small" cor={colors.danger} bold>
-              Tentar de novo
-            </Txt>
-          </Press>
+          {falha.retry ? (
+            <Press
+              onPress={() => {
+                const tentar = falha.retry!;
+                setFalha(null);
+                tentar();
+              }}
+              style={s.tentarDeNovo}
+              haptic="leve"
+            >
+              <Txt v="small" cor={colors.danger} bold>
+                Tentar de novo
+              </Txt>
+            </Press>
+          ) : null}
           <Press onPress={() => setFalha(null)} style={s.fecharFalha} scale={0.9}>
             <Ionicons name="close" size={17} color={colors.textDim} />
           </Press>
@@ -993,6 +1141,24 @@ export default function Execucao() {
         {detalhe ? (
           <ScrollView showsVerticalScrollIndicator={false}>
             <View style={{ gap: spacing.lg }}>
+              {/* Por que este exercício está aqui. O papel já é a resposta
+                  estrutural — isto só a escreve como se fala. */}
+              {papeis.get(detalhe.id) ? (
+                <View style={[s.explicaDescanso, { backgroundColor: colors.warnSoft }]}>
+                  <Ionicons name="podium-outline" size={16} color={colors.warn} />
+                  <Txt v="small" cor={colors.textDim} style={{ flex: 1 }}>
+                    <Txt v="small" bold cor={colors.warn}>
+                      {LABEL_PAPEL[papeis.get(detalhe.id)!.papel]}
+                      {papeis.get(detalhe.id)!.ancora && papeis.get(detalhe.id)!.papel !== 'principal'
+                        ? ` · ${ABRE_O_GRUPO}`
+                        : ''}
+                      .{' '}
+                    </Txt>
+                    {PORQUE_PAPEL[papeis.get(detalhe.id)!.papel]}
+                  </Txt>
+                </View>
+              ) : null}
+
               <View style={s.explicaDescanso}>
                 <Ionicons name="timer-outline" size={16} color={colors.info} />
                 <Txt v="small" cor={colors.textDim} style={{ flex: 1 }}>
@@ -1224,8 +1390,20 @@ export default function Execucao() {
                     <View style={{ flex: 1 }}>
                       <Txt v="h3">{sub.nome}</Txt>
                       <Txt v="small" cor={colors.textFaint} size={11}>
+                        {/* Descanso do PAPEL da vaga, não de um papel deduzido
+                            do nome com reps fixo em 10: quem troca continua na
+                            mesma posição da sessão, e é ela que decide. Era o
+                            número do card discordando do que a troca grava. */}
                         {sub.equipamento ?? 'livre'} · descanso{' '}
-                        {descansoCorreto(sub.nome, 10, sub.grupo_primario)}s
+                        {descansoCorreto(
+                          sub.nome,
+                          trocando?.reps_max ?? 10,
+                          sub.grupo_primario,
+                          papeis.get(trocando?.id ?? -1)?.papel,
+                          sub.equipamento,
+                          sub.tipo_carga
+                        )}
+                        s
                       </Txt>
                     </View>
                     <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
@@ -1353,6 +1531,9 @@ function PaginaExercicio({
   onEditar,
   onConcluir,
   onAddSerie,
+  papel,
+  onAquecimento,
+  onAproximacoes,
   onTrocar,
   onDetalhe,
   onProximo,
@@ -1377,6 +1558,10 @@ function PaginaExercicio({
   onEditar: (exId: number, serie: number, campo: 'peso' | 'reps') => void;
   onConcluir: (idx: number) => void;
   onAddSerie: () => void;
+  /** Resolvido no pai, pela mesma função da tela do dia. */
+  papel: PapelDaLinha | null;
+  onAquecimento: (idx: number) => void;
+  onAproximacoes: () => void;
   onTrocar: () => void;
   onDetalhe: () => void;
   onProximo: () => void;
@@ -1385,6 +1570,42 @@ function PaginaExercicio({
   const feitas = series.filter((x) => x.concluida).length;
   const completo = feitas === series.length && series.length > 0;
   const porTempo = ex.tipo_carga === 'tempo';
+  const temAquecimento = series.some((x) => x.aquecimento);
+  const jaGravou = series.some((x) => x.salvaId);
+  /**
+   * Os degraus REAIS, com a carga da última vez e o arredondamento do aparelho.
+   *
+   * A tela deixou de prometer "2 aproximações" para depois não conseguir criar
+   * nenhuma: o botão só aparece quando existe degrau, e o texto diz o peso que
+   * vai entrar. Barra fixa não chega aqui (`tipo_carga` não é `peso_reps`), e
+   * exercício sem histórico de carga também não — não há o que aproximar.
+   */
+  const passosAprox =
+    ex.aquecimento_series > 0 && !temAquecimento && !jaGravou
+      ? aquecimento(anteriores.find((a) => a?.peso_kg)?.peso_kg ?? 0, ex.equipamento, ex.tipo_carga)
+      : [];
+
+  /**
+   * O RIR desta linha do plano, ajustado pela fase.
+   *
+   * A coluna nasce na v16; rotina anterior vem com NULL e cai na dedução por
+   * papel do próprio exercício. Assim o plano velho abre com um RIR coerente em
+   * vez de abrir sem nenhum — que é o estado que A6 achou.
+   */
+  const rirDoExercicio = (() => {
+    if (porTempo || !papel) return '';
+    const doPlano: [number, number] | null =
+      ex.rir_min != null && ex.rir_max != null ? [ex.rir_min, ex.rir_max] : null;
+    // Readaptação e deload afrouxam o alvo: o tendão não acompanha a
+    // velocidade com que o músculo recupera carga depois de uma pausa.
+    const naFase = (f: 'readaptacao' | 'deload' | null) =>
+      rirNaFase(papel.papel, ex.nome, ex.grupo_primario, ex.equipamento, f, ex.tipo_carga);
+    const ajustado =
+      fase && (fase.fase === 'readaptacao' || fase.fase === 'deload')
+        ? naFase(fase.fase)
+        : doPlano ?? naFase(null);
+    return textoRir(ajustado);
+  })();
 
   // O alvo que a semana pede — não o do template. Semana leve com "3 × 8-12"
   // no card convida a fazer 3; o número mostrado precisa ser o modulado.
@@ -1514,6 +1735,20 @@ function PaginaExercicio({
                     </Txt>
                   </View>
                 ) : null}
+                {/* RIR do EXERCÍCIO, não da semana.
+                    O chip de fase no cabeçalho diz o RIR do bloco; este diz o
+                    do papel — e são diferentes de propósito: manter 2-3 no
+                    principal custa quase nada em força, enquanto apertar no
+                    isolador é onde o ganho de tamanho está. Sem ele, "3 × 8-12"
+                    não prescreve esforço nenhum. */}
+                {rirDoExercicio ? (
+                  <View style={[s.tag, { backgroundColor: colors.warnSoft }]}>
+                    <Ionicons name="flame-outline" size={10} color={colors.warn} />
+                    <Txt v="small" size={10} cor={colors.warn} bold>
+                      {rirDoExercicio}
+                    </Txt>
+                  </View>
+                ) : null}
                 {selo ? (
                   <View style={[s.tag, { backgroundColor: selo.fundo }]}>
                     <Ionicons name={selo.icone} size={10} color={selo.cor} />
@@ -1558,6 +1793,20 @@ function PaginaExercicio({
             yTabela.current = e.nativeEvent.layout.y;
           }}
         >
+          {passosAprox.length ? (
+            <Press onPress={onAproximacoes} style={s.aproximacao} haptic="leve">
+              <Ionicons name="trending-up" size={14} color={colors.warn} />
+              <Txt v="small" size={11} cor={colors.textDim} style={{ flex: 1 }}>
+                {passosAprox.length === 1 ? 'Aproximação' : `${passosAprox.length} aproximações`}{' '}
+                antes da 1ª valendo: {passosAprox.map((d) => `${fmtPeso(d.peso)} kg × ${d.reps}`).join(' e ')}.
+                Não contam volume nem recorde.
+              </Txt>
+              <Txt v="small" size={11} cor={colors.warn} bold>
+                Criar
+              </Txt>
+            </Press>
+          ) : null}
+
           <View style={s.thead}>
             <Txt v="label" style={{ width: 24 }}>
               #
@@ -1589,6 +1838,8 @@ function PaginaExercicio({
               onEditarPeso={() => onEditar(ex.id, i, 'peso')}
               onEditarReps={() => onEditar(ex.id, i, 'reps')}
               onConcluir={() => onConcluir(i)}
+              onAquecimento={() => onAquecimento(i)}
+              numeroValendo={series.slice(0, i + 1).filter((x) => !x.aquecimento).length}
             />
           ))}
 
@@ -1671,6 +1922,8 @@ function LinhaSerie({
   onEditarPeso,
   onEditarReps,
   onConcluir,
+  onAquecimento,
+  numeroValendo,
   onMedir,
 }: {
   idx: number;
@@ -1682,16 +1935,38 @@ function LinhaSerie({
   onEditarPeso: () => void;
   onEditarReps: () => void;
   onConcluir: () => void;
+  onAquecimento: () => void;
+  /** Numeração que ignora aquecimento: a 1ª valendo é a 1, não a 3. */
+  numeroValendo: number;
   onMedir: (y: number) => void;
 }) {
   return (
     <View
-      style={[s.linha, serie.concluida && { backgroundColor: colors.successSoft }]}
+      style={[
+        s.linha,
+        serie.concluida && { backgroundColor: colors.successSoft },
+        serie.aquecimento && { backgroundColor: colors.warnSoft },
+      ]}
       onLayout={(e) => onMedir(e.nativeEvent.layout.y)}
     >
-      <Txt v="small" cor={colors.textFaint} style={{ width: 24 }}>
-        {idx + 1}
-      </Txt>
+      {/* O número da série é o botão de aquecimento.
+          Alvo de toque de 44 pt via hitSlop — a mão suada em pé na academia
+          não acerta 24 px, e a linha inteira já é área de edição de campo. */}
+      <Press
+        onPress={onAquecimento}
+        haptic={false}
+        scale={0.9}
+        hitSlop={{ top: 12, bottom: 12, left: 10, right: 10 }}
+        style={{ width: 24 }}
+      >
+        {serie.aquecimento ? (
+          <Ionicons name="flame" size={14} color={colors.warn} />
+        ) : (
+          <Txt v="small" cor={colors.textFaint}>
+            {numeroValendo}
+          </Txt>
+        )}
+      </Press>
 
       <Txt v="small" cor={colors.textFaint} style={{ flex: 1 }} size={12}>
         {anterior?.peso_kg
@@ -1978,6 +2253,16 @@ const s = StyleSheet.create({
     gap: 5,
     paddingVertical: spacing.sm,
     marginTop: 2,
+  },
+  aproximacao: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    marginBottom: spacing.xs,
+    borderRadius: radius.sm,
+    backgroundColor: colors.warnSoft,
   },
 
   // Navegação

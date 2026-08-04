@@ -13,7 +13,8 @@ import type {
 import { e1rm } from '../perfil/calculos';
 import { getPerfil } from '../perfil/api';
 import { darPontos, registrarAtividade } from '../gamificacao/api';
-import { descansoCorreto, ehComposto, prioridadeDe, substitutosDe } from './classificacao';
+import { ehComposto, prioridadeDe, substitutosDe } from './classificacao';
+import { descansoCorreto, type Papel } from './papel';
 import { resolverFase, type FaseEfetiva } from './fase';
 import { isoDe } from '@/shared/utils/date';
 
@@ -75,7 +76,11 @@ export async function listarDias(): Promise<DiaComResumo[]> {
   return all<DiaComResumo>(`
     SELECT rd.*,
            r.nome AS rotina,
-           (SELECT COUNT(*) FROM routine_exercises re WHERE re.routine_day_id = rd.id)
+           -- Cardio fora da conta, igual ao que diasComTempo faz. Divergir fazia
+           -- a Home dizer 6 exercícios e a aba Treino dizer 5 no MESMO dia.
+           (SELECT COUNT(*) FROM routine_exercises re
+              JOIN exercises e2 ON e2.id = re.exercise_id
+             WHERE re.routine_day_id = rd.id AND e2.grupo_primario <> 'cardio')
              AS qtd_exercicios,
            (SELECT MAX(ws.iniciado_em) FROM workout_sessions ws
              WHERE ws.routine_day_id = rd.id AND ws.finalizado_em IS NOT NULL)
@@ -95,7 +100,9 @@ export async function listarDias(): Promise<DiaComResumo[]> {
  * a tela abre com 4 a 6 treinos, e 6 idas ao banco para montar uma lista é o
  * tipo de coisa que faz o app parecer lento sem motivo.
  */
-export async function diasComTempo(): Promise<(DiaComResumo & { minutos: number })[]> {
+export async function diasComTempo(): Promise<
+  (DiaComResumo & { minutos: number; minutosCardio: number })[]
+> {
   const dias = await listarDias();
   if (!dias.length) return [];
 
@@ -124,10 +131,26 @@ export async function diasComTempo(): Promise<(DiaComResumo & { minutos: number 
     porDia.get(e.routine_day_id)!.push(e);
   }
 
-  return dias.map((d) => ({
-    ...d,
-    minutos: emMinutos(estimarDuracao((porDia.get(d.id) ?? []) as never).totalSeg),
-  }));
+  return dias.map((d) => {
+    const doDia = porDia.get(d.id) ?? [];
+    return {
+      ...d,
+      minutos: emMinutos(estimarDuracao(doDia as never).totalSeg),
+      // Os minutos acima são de MUSCULAÇÃO: `estimarDuracao` ignora cardio de
+      // propósito, porque o tempo do questionário é o que a pessoa tem para
+      // levantar peso. Só que o cardio existe no plano e a tela não o mostrava
+      // em número nenhum — a sessão dizia 87 min e ela passava 107 na academia.
+      minutosCardio: Math.round(
+        doDia
+          .filter((e) => e.grupo_primario === 'cardio')
+          .reduce((soma, e) => soma + (e.reps_max ?? 0), 0) / 60
+      ),
+      // O cardio também não é "exercício" na contagem da lista: ele é o que vem
+      // DEPOIS do treino, e contá-lo junto faz um dia de 5 exercícios parecer
+      // de 6.
+      qtd_exercicios: doDia.filter((e) => e.grupo_primario !== 'cardio').length,
+    };
+  });
 }
 
 // ── Treino marcado à mão ──────────────────────────────────────────────────
@@ -378,7 +401,17 @@ export async function exerciciosDaSessao(sessionId: number): Promise<RoutineExer
       // Classificação e descanso acompanham o exercício efetivo: trocar
       // composto por isolador (ou o contrário) muda o intervalo correto.
       eh_composto: ehComposto(novo.nome) ? 1 : 0,
-      descanso_seg: descansoCorreto(novo.nome, lista[i].reps_max ?? 10, novo.grupo_primario),
+      // O PAPEL da linha é preservado: quem troca de exercício continua na
+      // mesma vaga da sessão, e é a vaga que define principal ou isolador. Sem
+      // isso a linha trocada recebia descanso de outra regra e ficava
+      // desalinhada do resto de um plano v16.
+      descanso_seg: descansoCorreto(
+        novo.nome,
+        lista[i].reps_max ?? 10,
+        novo.grupo_primario,
+        (lista[i].papel as Papel | null) ?? undefined,
+        novo.equipamento
+      ),
     };
   }
   return lista;
@@ -583,6 +616,16 @@ export async function atualizarSerie(s: {
   let prs: PersonalRecord[] = [];
 
   await tx(async () => {
+    // O TIPO da linha manda, e ele não vem no argumento: quem corrige uma série
+    // está na tela, não sabe (nem deveria) que existe uma coluna `tipo`.
+    // `registrarSerie` já pulava a detecção em aquecimento; a correção não
+    // pulava, então corrigir o peso de uma aproximação cravava recorde a partir
+    // de uma série que, por definição, não é esforço máximo. Antes de G2 esse
+    // guard era código morto — não havia como criar aquecimento pela tela.
+    const linha = await first<{ tipo: string }>('SELECT tipo FROM set_logs WHERE id = ?', [
+      s.setLogId,
+    ]);
+
     await run('UPDATE set_logs SET peso_kg = ?, reps = ? WHERE id = ?', [
       s.pesoKg,
       s.reps,
@@ -593,7 +636,7 @@ export async function atualizarSerie(s: {
     await run('DELETE FROM personal_records WHERE set_log_id = ?', [s.setLogId]);
     await recalcularVolume(s.sessionId);
 
-    if (s.pesoKg && s.reps) {
+    if (linha?.tipo !== 'aquecimento' && s.pesoKg && s.reps) {
       prs = await detectarPRs(s.setLogId, s);
     }
   });
@@ -699,8 +742,13 @@ export async function finalizarSessao(sessionId: number, sensacao?: number, nota
   // transação, uma falha no meio deixava treino finalizado sem pontuar — e
   // repetir a chamada pontuaria em dobro.
   await tx(async () => {
+    // `tipo <> 'aquecimento'` não é detalhe: sem ele, duas séries de
+    // aproximação e o treino abandonado gravavam `finalizado_em`, davam XP,
+    // avançavam a sequência e disparavam o check-in. Aquecimento é o que se faz
+    // ANTES de treinar — se só ele aconteceu, o treino não aconteceu.
     const series = await first<{ n: number }>(
-      'SELECT COUNT(*) AS n FROM set_logs WHERE session_id = ? AND concluida = 1',
+      `SELECT COUNT(*) AS n FROM set_logs
+        WHERE session_id = ? AND concluida = 1 AND tipo <> 'aquecimento'`,
       [sessionId]
     );
 
@@ -752,9 +800,14 @@ export async function ultimaExecucao(
   exerciseId: number,
   sessaoAtual?: number
 ): Promise<SerieAnterior[]> {
+  // O filtro de tipo tem que estar nas DUAS queries. Só na segunda, uma sessão
+  // em que o exercício teve apenas aquecimento era eleita "última execução" e
+  // devolvia lista vazia — o "Anterior:" sumia da tela e a progressão perdia a
+  // referência, com a série de verdade viva duas sessões atrás.
   const s = await first<{ session_id: number }>(
     `SELECT session_id FROM set_logs
       WHERE exercise_id = ? AND concluida = 1 AND session_id <> ?
+        AND tipo <> 'aquecimento'
       ORDER BY registrado_em DESC LIMIT 1`,
     [exerciseId, sessaoAtual ?? -1]
   );
@@ -815,7 +868,8 @@ export interface SessaoResumo extends WorkoutSession {
 export async function historicoSessoes(limite = 30): Promise<SessaoResumo[]> {
   return all<SessaoResumo>(
     `SELECT ws.*,
-            (SELECT COUNT(*) FROM set_logs sl WHERE sl.session_id = ws.id) AS qtd_series,
+            (SELECT COUNT(*) FROM set_logs sl
+              WHERE sl.session_id = ws.id AND sl.tipo <> 'aquecimento') AS qtd_series,
             (SELECT COUNT(*) FROM personal_records pr WHERE pr.session_id = ws.id) AS qtd_prs
        FROM workout_sessions ws
       WHERE ws.finalizado_em IS NOT NULL
@@ -835,7 +889,8 @@ export async function estatisticas() {
     SELECT
       (SELECT COUNT(*) FROM workout_sessions WHERE finalizado_em IS NOT NULL) AS treinos,
       (SELECT COALESCE(SUM(volume_total_kg),0) FROM workout_sessions)         AS volume,
-      (SELECT COUNT(*) FROM set_logs WHERE concluida = 1)                     AS series,
+      (SELECT COUNT(*) FROM set_logs
+        WHERE concluida = 1 AND tipo <> 'aquecimento')                        AS series,
       (SELECT COUNT(*) FROM personal_records WHERE valor_anterior IS NOT NULL) AS prs
   `);
   return r ?? { treinos: 0, volume: 0, series: 0, prs: 0 };

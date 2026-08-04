@@ -103,7 +103,11 @@ CREATE TABLE IF NOT EXISTS routine_exercises (
   reps_max       INTEGER DEFAULT 12,   -- faixa, não número fixo
   descanso_seg   INTEGER NOT NULL DEFAULT 90,
   superset_grupo INTEGER,              -- mesmo número = bi-set
-  observacao     TEXT
+  observacao     TEXT,
+  papel          TEXT,                 -- principal|complementar|isolador|finalizador
+  rir_min        INTEGER,              -- repetições em reserva do bloco de acúmulo
+  rir_max        INTEGER,
+  aquecimento_series INTEGER NOT NULL DEFAULT 0  -- aproximações; nunca contam volume
 );
 CREATE INDEX IF NOT EXISTS ix_re_day ON routine_exercises (routine_day_id, ordem);
 

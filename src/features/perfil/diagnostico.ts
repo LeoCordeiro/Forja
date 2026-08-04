@@ -138,7 +138,17 @@ export const DESISTENCIAS = [
 // ── Dores por região ──────────────────────────────────────────────────────
 
 export const REGIOES_DOR = [
-  { chave: 'ombro', label: 'Ombro', evitar: ['Desenvolvimento militar', 'Supino reto com barra', 'Elevação lateral'] },
+  // `Remada alta` entrou depois, e por incoerência interna: com dor no ombro o
+  // app tirava a ELEVAÇÃO LATERAL e a vaga do padrão era preenchida pela remada
+  // alta — que não estava na lista e, por ser composta de barra, ainda subia
+  // para a prescrição pesada (5-8, RIR 2-3, 180 s). O usuário perdia o
+  // exercício mais benigno da abdução e ganhava abdução com rotação interna,
+  // com mais carga. Medido: 23 aparições em perfis com dor no ombro.
+  //
+  // A correção certa é regra por PADRÃO e atributo em vez de lista nominal —
+  // isso é F5 e está anotado no roadmap. Esta é a correção mínima que fecha a
+  // contradição.
+  { chave: 'ombro', label: 'Ombro', evitar: ['Desenvolvimento militar', 'Supino reto com barra', 'Elevação lateral', 'Remada alta'] },
   { chave: 'lombar', label: 'Lombar', evitar: ['Levantamento terra', 'Agachamento livre', 'Remada curvada com barra', 'Stiff'] },
   { chave: 'joelho', label: 'Joelho', evitar: ['Agachamento livre', 'Afundo com barra', 'Hack machine'] },
   { chave: 'punho', label: 'Punho', evitar: ['Rosca direta com barra', 'Supino fechado', 'Flexão de braço'] },

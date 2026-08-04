@@ -210,6 +210,7 @@ export default function Treino() {
                         <Txt v="small" size={11} cor={colors.textFaint}>
                           {d.qtd_exercicios} exercício{d.qtd_exercicios === 1 ? '' : 's'} · ~
                           {d.minutos} min
+                          {d.minutosCardio > 0 ? ` + ${d.minutosCardio} min de cardio` : ''}
                           {d.ultima_vez ? ` · ${dataAmigavel(d.ultima_vez)}` : ' · nunca treinado'}
                         </Txt>
                       </View>

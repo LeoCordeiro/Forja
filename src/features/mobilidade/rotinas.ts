@@ -88,7 +88,7 @@ export const ROTINAS: RotinaMobilidade[] = [
         nome: 'Série de aproximação',
         duracaoSeg: 90,
         instrucao:
-          'Duas séries leves do primeiro exercício do treino, com 40% e 60% da carga. É o aquecimento que mais importa.',
+          'Duas séries leves do primeiro exercício do treino, com 40% e 65% da carga. É o aquecimento que mais importa.',
       },
     ],
   },

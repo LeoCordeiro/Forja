@@ -90,34 +90,77 @@ export interface SerieAquecimento {
 }
 
 /**
- * Degraus de aquecimento até a carga de trabalho.
+ * As duas séries de aproximação do principal (F8).
  *
- * Só vale a pena para carga alta: aquecer para 20 kg de rosca é perder tempo.
- * Abaixo de 40 kg devolve um degrau só; abaixo de 20, nenhum.
+ * ── Por que duas, e por que 40% e 65% ────────────────────────────────────
+ *
+ * A versão anterior desta função devolvia quatro degraus (barra, 50%, 70%, 85%)
+ * e nunca foi chamada por ninguém — ficou órfã no arquivo enquanto o gerador
+ * entregava plano sem nenhuma série de aquecimento. Quatro degraus é protocolo
+ * de dia de força máxima; num treino de hipertrofia eles custam quatro minutos
+ * e uma parte do estímulo da primeira série valendo.
+ *
+ * Dois degraus é o que a escada do tempo livre (B2) prescreve e o que a própria
+ * rotina de mobilidade do app já dizia em texto ("duas séries leves do primeiro
+ * exercício, com 40% e 60% da carga") sem ninguém implementar. 65% em vez de
+ * 60% porque é onde o segundo degrau ainda não fadiga e já ensaia a carga.
+ *
+ * ── Elas NÃO são volume ──────────────────────────────────────────────────
+ *
+ * Gravadas com `set_logs.tipo = 'aquecimento'`, que já é excluído de volume, PR
+ * e histórico em todas as queries. Sem essa marcação, duas séries leves no
+ * primeiro exercício virariam "Anterior: 32 kg" na sessão seguinte e poderiam
+ * cravar recorde de volume — o aquecimento estragaria justamente a medida que o
+ * principal existe para dar.
  */
 export function aquecimento(
   cargaTrabalho: number,
-  barraKg = 20,
-  ehComposto = true
+  equipamento?: string | null,
+  tipoCarga = 'peso_reps',
+  repsAlvo = 10
 ): SerieAquecimento[] {
-  if (cargaTrabalho < 20 || !ehComposto) return [];
+  // Sem carga ESCOLHÍVEL não existe aproximação. Barra fixa, mergulho e flexão
+  // não têm 40% — o peso é o corpo. Prometer "+2 aproximações" ali e devolver
+  // "34 kg" é inventar um número que não existe no aparelho.
+  if (tipoCarga !== 'peso_reps') return [];
+  // Abaixo de 20 kg o degrau não vale a viagem: a barra sozinha já pesa isso, e
+  // aquecer para uma rosca de 12 kg tira repetição da série que conta.
+  if (cargaTrabalho < 20) return [];
 
+  // ── O arredondamento é do APARELHO, não da barra ───────────────────────
+  //
+  // Aplicar matemática de anilha a halter e máquina produzia número que não
+  // existe: halter de 24 kg virava "7,5 e 15", máquina de 80 kg virava "30 e
+  // 50". Halter sobe de 2 em 2 na maioria das academias; pino de máquina, de 5
+  // em 5; só a barra é que se monta com anilha.
   const arredonda = (v: number) => {
-    const c = calcularAnilhas(v, barraKg);
-    return c.total;
+    if (equipamento === 'barra') return calcularAnilhas(v, 20).total;
+    if (equipamento === 'halter') return Math.max(2, Math.round(v / 2) * 2);
+    return Math.max(5, Math.round(v / 5) * 5);
   };
 
-  if (cargaTrabalho < 40) {
-    return [
-      { peso: barraKg, reps: 10, nota: 'Só a barra, movimento solto' },
-      { peso: arredonda(cargaTrabalho * 0.7), reps: 5, nota: 'Um degrau e vai' },
-    ];
-  }
+  // Degrau só entra se for MAIS LEVE que a série valendo — com barra, 40% de
+  // 30 kg arredonda para a barra nua (20 kg) e o "aquecimento" virava 67% da
+  // carga; a 20 kg virava a própria carga de trabalho rotulada de aquecimento.
+  const teto = cargaTrabalho * 0.9;
+  // O segundo degrau acompanha a ZONA da série valendo. Ribeiro et al.
+  // (PMC7558980) mostram que aquecer com poucas repetições e carga baixa não
+  // basta: o degrau eficaz foi 80%. Para uma série de 5-8 (principal de barra
+  // livre) 65% deixa um salto grande demais até a carga de trabalho; para
+  // 8-12 ele já é o degrau certo e 80% começaria a custar repetição.
+  const segundo = repsAlvo <= 8 ? 0.8 : 0.65;
+  const passos = [
+    { pct: 0.4, reps: 8, nota: 'solto, só para lubrificar' },
+    { pct: segundo, reps: segundo >= 0.8 ? 3 : 5, nota: 'o corpo reconhece o movimento' },
+  ]
+    .map((d) => ({
+      peso: arredonda(cargaTrabalho * d.pct),
+      reps: d.reps,
+      nota: `${Math.round(d.pct * 100)}% da carga — ${d.nota}`,
+    }))
+    .filter((d) => d.peso < teto);
 
-  return [
-    { peso: barraKg, reps: 10, nota: 'Só a barra, amplitude completa' },
-    { peso: arredonda(cargaTrabalho * 0.5), reps: 5, nota: 'Metade da carga, sem esforço' },
-    { peso: arredonda(cargaTrabalho * 0.7), reps: 3, nota: 'Começa a pesar, ainda fácil' },
-    { peso: arredonda(cargaTrabalho * 0.85), reps: 1, nota: 'Uma repetição só, para o corpo reconhecer' },
-  ].filter((s, i, arr) => i === 0 || s.peso > arr[i - 1].peso);
+  // Dois degraus no mesmo peso são um degrau: mantém o mais leve com as
+  // repetições do mais pesado seria mentir sobre a intenção de cada um.
+  return passos.filter((d, i, arr) => i === 0 || d.peso > arr[i - 1].peso);
 }

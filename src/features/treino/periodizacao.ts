@@ -46,15 +46,14 @@ export const DESCANSO = {
   cardioIntervalado: 60,
 } as const;
 
-export function descansoSugerido(
-  ehComposto: boolean,
-  repsAlvo: number,
-  fase: Fase = 'acumulo'
-): number {
-  if (fase === 'readaptacao') return ehComposto ? 120 : 75;
-  if (ehComposto) return repsAlvo <= 6 ? DESCANSO.compostoPesado : DESCANSO.composto;
-  return repsAlvo >= 15 ? DESCANSO.isoladorLeve : DESCANSO.isolador;
-}
+// `descansoSugerido` foi APAGADA daqui.
+//
+// Ninguém a chamava e ela guardava a regra antiga — descanso saindo de
+// "é composto?" mais repetições, que é exatamente a chave que A5 derrubou. Era
+// a terceira definição de descanso do repositório e a única errada: quem
+// responde isso agora é `descansoCorreto`, em `papel.ts`, a partir do PAPEL.
+// Função morta com regra velha não é neutra: é a que a próxima pessoa acha
+// primeiro.
 
 /**
  * RIR alvo (repetições em reserva) por fase.

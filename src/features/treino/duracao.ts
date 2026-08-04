@@ -44,6 +44,17 @@ const SEG_POR_REP = 3;
 const SEG_TROCA = 90;
 /** Aquecimento geral no começo da sessão. */
 const SEG_AQUECIMENTO = 240;
+/** Execução de uma aproximação: ~6 repetições leves em cadência controlada. */
+const SEG_APROXIMACAO_EXEC = 6 * SEG_POR_REP;
+/**
+ * Descanso DEPOIS de uma aproximação — 60 s, não o descanso do exercício.
+ *
+ * Ribeiro et al. (PMC7558980) descansam 1 minuto entre as séries de
+ * aquecimento e só então 3 minutos antes da série valendo. Herdar o descanso
+ * do trabalho fazia duas aproximações num supino custarem 6 minutos parados,
+ * sozinhas.
+ */
+export const SEG_DESCANSO_APROXIMACAO = 60;
 
 export interface EstimativaTreino {
   totalSeg: number;
@@ -78,6 +89,18 @@ export function estimarDuracao(exs: RoutineExerciseFull[]): EstimativaTreino {
     execucao += e.series_alvo * porSerie;
     // O descanso da última série não conta: você já foi para o próximo.
     descanso += Math.max(0, e.series_alvo - 1) * e.descanso_seg;
+
+    // ── As séries de aproximação também gastam o relógio ──────────────────
+    //
+    // Elas não contam VOLUME (e é por isso que ficam fora de `set_logs` de
+    // verdade), mas contam MINUTO: duas aproximações num supino são duas
+    // séries e dois descansos. Ficarem de fora daqui era a reincidência de
+    // A10 — o app declarando 55 min para uma sessão de 61.
+    const aq = e.aquecimento_series ?? 0;
+    if (aq > 0) {
+      execucao += aq * SEG_APROXIMACAO_EXEC;
+      descanso += aq * SEG_DESCANSO_APROXIMACAO;
+    }
   }
 
   const transicao = SEG_AQUECIMENTO + forca.length * SEG_TROCA;

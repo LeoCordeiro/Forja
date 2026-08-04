@@ -469,6 +469,42 @@ const V15 = `
 ALTER TABLE substituicoes ADD COLUMN routine_exercise_id INTEGER REFERENCES routine_exercises(id);
 `;
 
+/**
+ * v15 → v16: o papel do exercício na sessão, e o esforço que ele pede.
+ *
+ * ── Por que precisa de coluna, e não de dedução na tela ──────────────────
+ *
+ * Papel é propriedade da SESSÃO, não do exercício: o mesmo supino é principal
+ * num dia e complementar noutro, e é o gerador — que enxerga a sessão inteira —
+ * quem sabe qual dos dois. Deduzir de novo na tela criaria uma segunda
+ * definição da mesma coisa, que é como o app passa a discordar de si mesmo (foi
+ * exatamente o caso do crossover, classificado como composto numa função e como
+ * abertura em outra).
+ *
+ * E o RIR é o dado que estava faltando inteiro: a prescrição chegava ao usuário
+ * como "3 × 8-12" sem dizer o esforço, e sem esforço a faixa de repetição não
+ * prescreve nada — 8 repetições longe da falha e 8 na falha são treinos
+ * diferentes.
+ *
+ * ── E quem já está com o banco preenchido? ───────────────────────────────
+ *
+ * Tudo aditivo e nullable: rotina antiga fica com `papel`, `rir_min` e
+ * `rir_max` em NULL e `aquecimento_series` em 0 — que é literalmente o que ela
+ * é hoje, sem aproximação prescrita e sem RIR. Nenhuma linha é reescrita e
+ * nenhum histórico muda: `set_logs` não é tocado, e volume, PR e XP saem de lá.
+ * A tela cai no papel deduzido do próprio exercício (`papel.ts` responde sem
+ * contexto de sessão) enquanto a coluna for NULL, então o plano velho continua
+ * abrindo e mostrando um RIR coerente. Quem refizer o treino ganha a coluna
+ * preenchida pelo gerador — e "Refazer meu treino" arquiva com `ativa = 0`, sem
+ * apagar nada.
+ */
+const V16 = `
+ALTER TABLE routine_exercises ADD COLUMN papel TEXT;
+ALTER TABLE routine_exercises ADD COLUMN rir_min INTEGER;
+ALTER TABLE routine_exercises ADD COLUMN rir_max INTEGER;
+ALTER TABLE routine_exercises ADD COLUMN aquecimento_series INTEGER NOT NULL DEFAULT 0;
+`;
+
 export const MIGRACOES: { versao: number; sql: string }[] = [
   { versao: 2, sql: V2 },
   { versao: 3, sql: V3 },
@@ -484,4 +520,5 @@ export const MIGRACOES: { versao: number; sql: string }[] = [
   { versao: 13, sql: V13 },
   { versao: 14, sql: V14 },
   { versao: 15, sql: V15 },
+  { versao: 16, sql: V16 },
 ];

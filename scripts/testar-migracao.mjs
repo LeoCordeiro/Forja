@@ -251,5 +251,80 @@ conferir('rodar de novo é inofensivo',
   comHistorico.prepare(`SELECT COUNT(*) AS n FROM exercises WHERE nome = 'Supino na polia'`).get().n === 1 &&
     histIntacto('set_logs') === 1);
 
+// ── 7. v15 → v16: papel, RIR e aquecimento em banco JÁ USADO ───────────────
+//
+// A pergunta que toda migração desta base tem que responder é "e quem já está
+// com o banco preenchido?". Aqui ela é literal: uma rotina criada antes da v16
+// não tem papel nem RIR, e o histórico dela é o produto. O teste reproduz o
+// banco preV16 de verdade — tabela sem as colunas novas, `user_version = 15` —
+// e cobra as duas metades: as colunas passam a existir, e NADA do que já estava
+// lá muda de valor.
+console.log('\n7. v15 → v16 em banco já usado');
+const preV16 = new DatabaseSync(':memory:');
+preV16.exec(DDL);
+await aplicarMigracoes(adaptar(preV16));
+
+// Volta a tabela ao formato da v15 e remarca a versão — é o estado de quem
+// instalou o app antes desta fase.
+preV16.exec(`
+  DROP TABLE routine_exercises;
+  CREATE TABLE routine_exercises (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    routine_day_id INTEGER NOT NULL,
+    exercise_id    INTEGER NOT NULL,
+    ordem          INTEGER NOT NULL DEFAULT 0,
+    series_alvo    INTEGER NOT NULL DEFAULT 3,
+    reps_min       INTEGER DEFAULT 8,
+    reps_max       INTEGER DEFAULT 12,
+    descanso_seg   INTEGER NOT NULL DEFAULT 90,
+    superset_grupo INTEGER,
+    observacao     TEXT,
+    rpe_alvo       REAL,
+    eh_composto    INTEGER NOT NULL DEFAULT 0
+  );
+  PRAGMA user_version = 15;
+`);
+preV16
+  .prepare(
+    `INSERT INTO routine_exercises (routine_day_id, exercise_id, ordem, series_alvo, reps_min, reps_max, descanso_seg)
+     VALUES (1, 1, 0, 4, 8, 12, 150)`
+  )
+  .run();
+
+conferir(
+  'antes: a rotina não tem papel nem RIR',
+  !colunas(preV16, 'routine_exercises').includes('papel'),
+  colunas(preV16, 'routine_exercises').join(',')
+);
+// A marca precisa CONFERIR aqui: senão o teste passa pelo caminho da auto-cura
+// (que refaz tudo do zero) e nunca exercita o degrau v15 → v16 de verdade.
+conferir('a v15 é reconhecida como legítima', await marcaConfere(adaptar(preV16), 15));
+
+await aplicarMigracoes(adaptar(preV16));
+
+const colsDepois = colunas(preV16, 'routine_exercises');
+for (const c of ['papel', 'rir_min', 'rir_max', 'aquecimento_series'])
+  conferir(`routine_exercises.${c} existe`, colsDepois.includes(c));
+conferir('chega na v16', versao(preV16) === ULTIMA, `user_version=${versao(preV16)}`);
+
+const linhaVelha = preV16.prepare('SELECT * FROM routine_exercises WHERE id = 1').get();
+conferir(
+  'a linha antiga não foi reescrita',
+  linhaVelha.series_alvo === 4 && linhaVelha.reps_min === 8 && linhaVelha.descanso_seg === 150,
+  `${linhaVelha.series_alvo}×${linhaVelha.reps_min}-${linhaVelha.reps_max} @ ${linhaVelha.descanso_seg}s`
+);
+conferir(
+  'papel e RIR nascem NULL, aquecimento em 0 — que é o que a rotina antiga É',
+  linhaVelha.papel === null && linhaVelha.rir_min === null && linhaVelha.aquecimento_series === 0,
+  `papel=${linhaVelha.papel} rir=${linhaVelha.rir_min} aq=${linhaVelha.aquecimento_series}`
+);
+
+await aplicarMigracoes(adaptar(preV16));
+conferir(
+  'aplicar de novo não duplica coluna nem apaga a linha',
+  versao(preV16) === ULTIMA &&
+    preV16.prepare('SELECT COUNT(*) AS n FROM routine_exercises').get().n === 1
+);
+
 console.log(falhas ? `\n${falhas} falha(s)\n` : '\nTudo passou\n');
 process.exit(falhas ? 1 : 0);

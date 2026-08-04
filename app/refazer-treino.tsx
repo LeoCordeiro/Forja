@@ -172,7 +172,13 @@ export default function RefazerTreino() {
                     {d.nome}
                   </Txt>
                   <Txt v="small" size={11} cor={colors.textFaint}>
-                    {d.exercicios.length} exercícios · ~{d.minutos} min
+                    {/* Os minutos são de MUSCULAÇÃO. O cardio aparece somado e
+                        separado — o app mostrava 87 min e a pessoa passava 107
+                        na academia, porque os 20 min de esteira existiam no
+                        plano e em número nenhum da tela. */}
+                    {d.exercicios.filter((e) => e.grupo !== 'cardio').length} exercícios · ~
+                    {d.minutos} min
+                    {d.minutosCardio > 0 ? ` + ${d.minutosCardio} min de cardio` : ''}
                   </Txt>
                 </View>
               </View>

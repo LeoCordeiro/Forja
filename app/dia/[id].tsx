@@ -27,10 +27,28 @@ import { hoje, isoDe } from '@/shared/utils/date';
 import { getPerfil } from '@/features/perfil/api';
 import { RIR_POR_FASE, semanaAtual as semanaDoPlano } from '@/features/treino/periodizacao';
 import { prioridadeDe } from '@/features/treino/classificacao';
+import {
+  ABRE_O_GRUPO,
+  LABEL_PAPEL,
+  papeisDaRotina,
+  prescricaoDe,
+  textoRir,
+  type PapelDaLinha,
+} from '@/features/treino/papel';
 import { analisarOrdem } from '@/features/treino/ordem';
 import { buzz } from '@/shared/utils/haptics';
 import { Ajuda } from '@/shared/ui/Ajuda';
 import { AJUDA } from '@/shared/ajudas';
+
+/** O RIR da linha: o do plano quando existe, o do papel quando não. */
+function rirDaLinha(ex: RoutineExerciseFull, papeis: Map<number, PapelDaLinha>): string {
+  if (ex.tipo_carga === 'tempo' || ex.grupo_primario === 'cardio') return '';
+  if (ex.rir_min != null && ex.rir_max != null) return textoRir([ex.rir_min, ex.rir_max]);
+  const papel = papeis.get(ex.id)?.papel ?? 'isolador';
+  return textoRir(
+    prescricaoDe(papel, ex.nome, ex.grupo_primario, ex.equipamento, ex.tipo_carga).rir
+  );
+}
 
 export default function DiaDeTreino() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -116,6 +134,25 @@ export default function DiaDeTreino() {
     return p.some((v, i) => i > 0 && v < p[i - 1]);
   })();
 
+  // Papel de cada linha, pela MESMA função que o executor usa — indexada por
+  // id, não por posição.
+  //
+  // A versão anterior casava a lista de força (sem cardio) com a lista completa
+  // por índice. Passava enquanto o cardio fosse o último; só que
+  // `addExercicioNoDia` insere com `MAX(ordem)+1`, ou seja DEPOIS do cardio, e
+  // aí um agachamento livre acrescentado à mão aparecia como Isolador com
+  // RIR 0-2 — e todas as linhas seguintes deslocadas junto.
+  const papeis = papeisDaRotina(
+    (dados?.exs ?? []).map((e) => ({
+      id: e.id,
+      nome: e.nome,
+      grupo: e.grupo_primario,
+      equipamento: e.equipamento,
+      tipoCarga: e.tipo_carga,
+      papel: e.papel,
+    }))
+  );
+
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <Tela
@@ -152,10 +189,36 @@ export default function DiaDeTreino() {
                   >
                     <Txt v="h3">{ex.nome}</Txt>
                     <Txt v="small" cor={colors.textFaint}>
-                      {/* Alvo modulado pela fase — o mesmo número que a sessão vai abrir. */}
-                      {nomeGrupo(ex.grupo_primario)} · {modularSeries(ex.series_alvo, fase)} ×{' '}
-                      {ex.reps_min}-{ex.reps_max} · {ex.descanso_seg}s
+                      {/* Cardio é medido em minutos, não em repetições: "1 ×
+                          1800-1800" é o número certo no formato errado, e era
+                          isso que a tela mostrava. */}
+                      {ex.grupo_primario === 'cardio' ? (
+                        `${nomeGrupo(ex.grupo_primario)} · ${Math.round((ex.reps_max ?? 0) / 60)} min · Zona 2`
+                      ) : (
+                        <>
+                          {/* Alvo modulado pela fase — o mesmo número que a sessão vai abrir. */}
+                          {nomeGrupo(ex.grupo_primario)} · {modularSeries(ex.series_alvo, fase)} ×{' '}
+                          {ex.reps_min}-{ex.reps_max} · {ex.descanso_seg}s
+                          {rirDaLinha(ex, papeis) ? ` · ${rirDaLinha(ex, papeis)}` : ''}
+                        </>
+                      )}
                     </Txt>
+                    {/* O papel é a resposta a "por que este exercício está aqui".
+                        Sem ele, três séries de elevação lateral no fim do dia de
+                        peito parecem sobra de algoritmo. Cardio não tem papel:
+                        ele não disputa vaga com nenhum grupo muscular. */}
+                    {ex.grupo_primario !== 'cardio' ? (
+                      <Txt v="small" size={11} cor={colors.textDim}>
+                        {LABEL_PAPEL[papeis.get(ex.id)?.papel ?? 'isolador']}
+                        {/* Quem abre o grupo sem ser principal ganha o sufixo,
+                            não o rótulo: "Isolador · abre o grupo" diz as duas
+                            verdades, "Principal" dizia uma mentira. */}
+                        {papeis.get(ex.id)?.ancora && papeis.get(ex.id)?.papel !== 'principal'
+                          ? ` · ${ABRE_O_GRUPO}`
+                          : ''}
+                        {ex.aquecimento_series > 0 ? ` · +${ex.aquecimento_series} aproximações` : ''}
+                      </Txt>
+                    ) : null}
                   </Press>
                   <Press onPress={() => setEditando(ex)} style={s.acao} scale={0.9}>
                     <Ionicons name="options-outline" size={18} color={colors.textDim} />

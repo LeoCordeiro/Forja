@@ -154,5 +154,16 @@ export function resolverFase(args: ArgsFase): FaseEfetiva | null {
  */
 export function modularSeries(seriesAlvo: number, fase: FaseEfetiva | null): number {
   if (!fase || fase.volumePct >= 100) return seriesAlvo;
-  return Math.max(1, Math.round((seriesAlvo * fase.volumePct) / 100));
+  // ── O piso é 2, e na readaptação a redução é de UMA série ──────────────
+  //
+  // B11 é explícita: "−1 série por exercício (não −50% linear)". O que precisa
+  // cair na volta é a proximidade da falha e a carga absoluta, não a cobertura
+  // de padrões — e cortar pela metade tira justamente os isoladores do fim,
+  // que são os de menor demanda articular.
+  //
+  // E o piso de 2 não é enfeite: o piso de A7 cria exercício de 2 séries, e
+  // `round(2 × 0,55)` devolvia 1 — exercício de série única é presença, não
+  // estímulo, e B2 proíbe nos dois sentidos.
+  if (fase.fase === 'readaptacao') return Math.max(2, seriesAlvo - 1);
+  return Math.max(2, Math.round((seriesAlvo * fase.volumePct) / 100));
 }

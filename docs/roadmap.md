@@ -21,7 +21,7 @@ Prescrição-alvo (o que devia sair): `prescricao-alvo.md` na mesma pasta.
 | 1 | Nada se perde | F1 U3 U4 N1 N2 | **feita** — commit `97f480f`, verificação independente 30/07 |
 | 2 | Motor de treino | F2 F3 F4 F6 | **feita** — commit `890ec16`. Cross-review duplo (qa reprovou a 1ª rodada com 1 ALTO, corrigido e re-aprovado; fitness-scientist aprovou os 4 com ressalvas → candidatos abaixo). Ver "Validação da fase 2" |
 | **G1** | **Estrutura e seleção** | A2, A1+A11, A4, A3, A8 | **feita e no ar** — commits `ee543d2` + `8c68ef1` (correção do cross-review), build `1e725e2c2d8d`. Gate reverificado pelo Claude 2×: 32 falhas contra o código pré-G1, 9 contra o `ee543d2`, 0 depois. Ver "Validação de G1" |
-| G2 | Prescrição com papel | causa 5 + F8 (aquecimento) | pendente |
+| G2 | Prescrição com papel | A5 A6 A7 A9 A10 + F8 | **feita** — working tree, sem commit. Gate: 30 falhas contra `8c68ef1` (worktree, mesmo arquivo de teste), 0 depois. Ver "Validação de G2" |
 | G3 | Treinador que explica e varia | execução detalhada, técnicas de intensidade, objetivo do exercício, variação entre ciclos | pendente |
 | 4 | Série em 1 toque | U1 U2 U5 U6 U7 | pendente — validar no celular, não só navegador |
 | 5 | Segurança e nutrição | F5 N3 N6 N8 U8 | pendente |
@@ -135,6 +135,72 @@ estão no código (`ACSM 2026` em volume.ts, Baz-Valle/Coleman em programa.ts,
 Refalo/Nuzzo/Haugen em gerador.ts) NÃO foram verificadas — não tratar como
 evidência nem reaproveitar em texto de produto sem WebFetch antes. As 5 fontes
 verificadas estão no cabeçalho do fitness.md.
+
+## Validação de G2 (03/08/2026)
+
+Working tree, sem commit. `tsc --noEmit` limpo. `testar:gerador` e
+`testar:migracao` 100%. Schema: **v16** (aditiva).
+
+**O gate, na ordem certa desta vez.** Os invariantes novos foram escritos
+direto na grade de 1.350 perfis (seção 16) *antes* de qualquer correção e
+rodados contra o HEAD: **30 falhas**. Depois, o MESMO arquivo de teste rodou
+num worktree em `8c68ef1` — **30 falhas, as mesmas**, e nenhuma asserção
+pré-existente de G1 quebrou dos dois lados. Ou seja: tudo que falhou era
+defeito de G2, nada era regressão de G1. Com a correção: **0**.
+
+| Invariante (grade de 1.350 perfis) | contra `8c68ef1` | depois |
+|---|---|---|
+| (a) exatamente 1 principal por grupo por sessão | 16.947 | 0 |
+| (b) nenhum desenvolvimento pesado em dia de empurrar | 548 | 0 |
+| (c) grupo pequeno em dia homônimo com 2 exercícios e 1 mono | 786 | 0 |
+| (d) reps ≤ 8 sempre com 180 s | 0 | 0 |
+| (e) faixa de reps não colapsa dentro do grupo | 2.337 | 0 |
+| (f) cardio na dose e modalidade da constante | 613 | 0 |
+| (g) RIR em todo exercício de força | 27.708 | 0 |
+| G1: exercício acima de 4 séries | 0 | 0 |
+| G1: sessão acima do teto fora da exceção | 0 | 0 |
+| G1: 3+ exercícios do mesmo padrão | 0 | 0 |
+
+(d) já passava contra G1 e continua passando: o defeito de A5 não era o tier
+errado, era o tier **inalcançável** — quem marcava "iniciante" nunca chegava a
+`reps ≤ 8`. Quem pega isso é a seção 17, que compara a prescrição do mesmo
+exercício no mesmo papel entre iniciante e intermediário (3 cenários, todos
+divergiam antes; nenhum diverge agora) e cobra ao menos um exercício a 180 s
+no plano de um iniciante (era zero em todos).
+
+**O dia A, de G1 para G2** (mesmo perfil do bug: 4 dias, foco peito, iniciante,
+academia, preferência máquina, 90 min, recomposição):
+
+| | G1 | G2 | B10 pedia |
+|---|---|---|---|
+| Padrões distintos / exercícios | 5 em 5 | **7 em 7** | 7 em 7 |
+| Exercícios de tríceps | 1 (mergulho) | **2** (testa + polia) | 2 |
+| Extensão de cotovelo alongada | 0 | **1** | 1 |
+| Séries diretas de ombro, nenhuma anterior | 0 | **6** | 6 |
+| Desenvolvimento pesado no dia | 1 | **0** | 0 |
+| Faixas de reps distintas | 2 | **4** | 4 |
+| RIR na tela | não existia | **em todo exercício** | sim |
+| Séries de aproximação | 0 | **2, só no principal** | 2 |
+| Cardio | esteira, 20 min, todo dia | **bicicleta, 30 min, 3 dias** | idem |
+| Duração declarada | 47 min (cardio invisível) | **55 min + 30 de cardio** | ~52 |
+
+**Validado no navegador a 390×844** (app de verdade, "Refazer meu treino" com o
+perfil salvo): plano regerado com A Peito e tríceps (7 exercícios, ~55 min + 30
+de cardio), B Inferior completo (75 min, **sem cardio** — a modalidade evita o
+dia de perna), C e D com cardio. Tela do dia mostra papel e RIR em cada linha
+("Supino máquina · Peito · 4 × 6-10 · 150s · RIR 1-2 · Principal · +2
+aproximações") e o cardio como "30 min · Zona 2". Executor mostra o chip
+`RIR 1-2` e o aviso de aproximação só no principal; tocar o número da série
+alterna para aquecimento e renumera as séries valendo. Zero erro de console
+além do WakeLock do `expo-keep-awake` com aba oculta (ambiente de dev, já
+documentado).
+
+**Não validado no navegador:** gravar uma série de aquecimento de ponta a ponta
+— o teclado numérico do executor não responde a evento sintético no pane (é
+limitação do harness, não do app; o mesmo teclado funciona no toque real). A
+exclusão do aquecimento de volume, PR e histórico continua garantida pelas
+queries que já existiam (`tipo <> 'aquecimento'` em 4 pontos + `registrarSerie`
+pulando `detectarPRs`), e nenhuma delas foi tocada. **Conferir no celular.**
 
 ## Validação de G1 (03/08/2026)
 
@@ -330,13 +396,73 @@ De G1 (03/08 — achados encontrados durante a implementação, nenhum virou có
 15. **Panturrilha some do plano inteiro** com foco inferior em 3 dias (1 → 0
     aparições, por corte de tempo). Achado do teste de frequência; o teste
     restringe a asserção a grupo grande justamente por isso.
-16. **Uniarticulares ainda em `COMPOSTOS` além do crossover**: hip thrust,
-    ponte de glúteo, elevação pélvica, pull through e flexão nórdica movem uma
-    articulação só e estão listados como compostos (hip thrust também em
-    `COMPOSTOS_PESADOS`). Diferente do crossover, aqui não há conflito interno
-    de classificação — a lista e o `padraoDe` concordam. Mexer muda descanso e
-    ordem no programa inteiro: é decisão de prescrição, cabe em G2 junto da
-    inversão de `descansoCorreto`, com teste de descanso no mesmo commit.
+16. ~~**Uniarticulares ainda em `COMPOSTOS` além do crossover**~~ — **feito em
+    G2**, por um caminho diferente do proposto. Tirá-los da lista jogaria hip
+    thrust para o fim da sessão e daria a âncora do glúteo ao agachamento
+    ajoelhado. `COMPOSTOS` passou a declarar o que sempre foi de fato —
+    **demanda sistêmica**, quem abre a sessão — e `articulacoesDe` (em
+    `papel.ts`) virou o atributo explícito de B3. Os cinco respondem "mono"
+    onde importa: não podem ser complementar nem finalizador, e o descanso
+    deles agora sai do papel, não da lista.
+
+Dos DOIS cross-reviews de G2 (03/08 — o que ficou fora, com número):
+
+27. **Variedade semanal de padrão só é garantida nas COSTAS.** O invariante
+    genérico ("todo grupo grande com 2+ padrões na semana") ainda falha em
+    **168 de 1.350 perfis** depois da correção (era 614). Fechar exige a
+    seleção conversar com a cobertura indireta em duas escalas ao mesmo tempo
+    — a da sessão e a da semana — e a troca semanal precisa rodar depois da
+    cobertura sem desfazê-la. O que ficou garantido e testado é o caso concreto
+    que a auditoria mediu: nenhuma semana de costas sem uma puxada de verdade
+    (era 182 perfis, agora 0).
+28. **M1 — dois tetos para a mesma pergunta, ainda.** `volume.ts` usa
+    `TETO_UTIL = 20` e o gerador limita grupo pequeno a 14 fracionadas; a tela
+    de programa vai carimbar "acima de 20" sobre o plano que o próprio gerador
+    montou. Uma constante só, consumida pelos dois, e o teto do pequeno subindo
+    para 18-20 (o que libera o 3+2 de tríceps que B10 pedia). Não entrou porque
+    mexer no teto do grupo pequeno move volume em todos os perfis e não sobrou
+    rodada para medir o efeito.
+29. **M2 — cardio incompleto em 3 dos 4 objetivos.** `emagrecimento` pede 4
+    sessões e entrega `min(4, dias)` sem dizer que falta uma; `hipertrofia` e
+    `manutencao` têm dose na constante e não recebem nada. 75 de 420 perfis
+    fora da dose. É o mesmo A10, corrigido em 2 dos 4 objetivos.
+30. **M3 — o card do deload ainda imprime número, não direção.**
+    `RIR_POR_FASE.deload` diz 4-5 no card enquanto `rirNaFase` devolve 2 no
+    isolador: duas fontes de RIR na mesma tela. `modularSeries` foi corrigida
+    (piso de 2 e −1 série na readaptação, B11); o texto do card não.
+31. **Regra por PADRÃO para dor, em vez de lista nominal** (F5). `Remada alta`
+    entrou na lista de dor no ombro como correção mínima; a correção boa é
+    derivar de padrão + atributos, e isso é fase 5.
+
+De G2 (03/08 — achados durante a implementação, nenhum virou código):
+
+21. **O piso de A7 perde para o teto da sessão, e isso é decisão.** Com 6,5
+    fracionadas de indireto vindas dos supinos, um tríceps de 2 exercícios × 2
+    séries fecha em 10,5 num teto de 10. O teto ganha (é garantia testada desde
+    G1) e o plano DECLARA o grupo que ficou com um exercício só. Na grade isso
+    acontece em perfis de casa sem equipamento (não existe isolador de tríceps
+    com peso corporal) e em sessões de 30 min. Resolver de verdade exige mexer
+    no teto do grupo pequeno ou no volume de peito da sessão — nenhum dos dois
+    cabia aqui.
+22. **B10 pede 5 séries diretas de tríceps no dia A; G2 entrega 4.** O piso
+    monta 3+2, `aparExcesso` corta para 2+2 porque o total fracionado semanal
+    do tríceps (14) estoura o alvo (6, com o desconto de quem não é foco). O
+    alvo semanal de grupo pequeno medido em fracionado é o próximo gargalo —
+    mesma discussão do achado 21, um nível acima.
+23. **Peito fecha em 12 diretas no dia A, contra 10 de B10.** Não é defeito: é
+    o teto de sessão (12) sendo usado inteiro porque sobra tempo. B10 chegou a
+    10 porque também gastava tempo com o 4º e 5º exercício que G2 não tem.
+24. **`quantosExercicios` e o piso de 2 séries continuam sendo convenção.**
+    O achado 18 do qa segue aberto: o piso de A7 cria exercício com 2 séries,
+    e nada garante que ele não caia para 1 num corte futuro.
+25. **A grade de 1.350 perfis testa 3 locais, não 5.** `academia_rede`,
+    `academia_simples` e `casa_halteres` não existem em `LOCAIS` e caem no
+    fallback de `equipamentosDe` (academia completa). Os locais reais são
+    `academia`, `smart_fit`, `academia_basica`, `casa_equipada`,
+    `casa_simples`. Pré-existente de G1; corrigir amplia a cobertura sem custo.
+26. **O cabeçalho da tela do dia conta o cardio como exercício** ("8
+    exercícios" num dia de 7 + bicicleta). `diasComTempo` já separa; a tela do
+    dia usa `dados.exs.length` direto.
 
 Do cross-review do qa (03/08 — deixados fora da correção de propósito):
 

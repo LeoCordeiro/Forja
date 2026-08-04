@@ -10,8 +10,11 @@
  */
 import { EXERCICIOS } from '../src/db/seed/exercicios.ts';
 import { montarPlano, REGIOES } from '../src/features/treino/gerador.ts';
-import { padraoDe, ehComposto, ehPesado } from '../src/features/treino/classificacao.ts';
+import { FORCA_RELATIVA, padraoDe, ehComposto, ehPesado } from '../src/features/treino/classificacao.ts';
 import { LOCAIS } from '../src/features/treino/local.ts';
+import { CARDIO } from '../src/features/treino/periodizacao.ts';
+import { aquecimento } from '../src/features/treino/anilhas.ts';
+import { hidratarSeries, inserirAproximacoes, numeroValendo } from '../src/features/treino/series.ts';
 
 // O seed vira o mesmo formato que o gerador recebe do banco.
 const TODOS = EXERCICIOS.map(([nome, grupo, sec, equip, carga], i) => ({
@@ -296,6 +299,8 @@ for (const g of ['posterior', 'ombro', 'peito'])
 // ══════════════════════════════════════════════════════════════════════════
 
 const PEQUENOS_T = ['biceps', 'triceps', 'panturrilha', 'abdomen', 'trapezio', 'antebraco'];
+/** Excêntrico puro: RIR não é aferível ali. Espelha `papel.ts`. */
+const EXCENTRICOS_T = new Set(['Flexão nórdica', 'Barra fixa negativa']);
 const GRANDES_T = ['peito', 'costas', 'ombro', 'quadriceps', 'posterior', 'gluteo'];
 /** Teto por sessão sobre o total FRACIONADO (B2 do prescricao-alvo). */
 const tetoSessao = (g) => (PEQUENOS_T.includes(g) ? 10 : 12);
@@ -326,6 +331,74 @@ const diretasDoDia = (d) => {
 };
 
 const chave = (e) => `${e.grupo}:${padraoDe(e.nome, e.grupo)}`;
+
+/** Sem acento e em minúscula — o nome do dia é texto de produto, não chave. */
+const semAcento = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
+/** O dia leva o nome do grupo? ("A — Peito e tríceps" leva o do tríceps.) */
+const diaLevaONome = (nomeDoDia, grupo) => semAcento(nomeDoDia).includes(semAcento(grupo));
+
+/**
+ * O cardio bate com `CARDIO.porObjetivo`? Devolve o erro, ou '' quando bate.
+ *
+ * Três eixos, porque a saída auditada errou os três: modalidade (esteira, a que
+ * o próprio app diz para evitar), duração (20 min contra 30) e frequência (todo
+ * dia contra 3 sessões).
+ */
+/** Equipamentos do local, com o mesmo fallback de `equipamentosDe`. */
+const perfilLocal = (p) => new Set((LOCAIS.find((l) => l.chave === p.local) ?? LOCAIS[0]).equipamentos);
+
+/** Padrões que o catálogo oferece para um grupo NAQUELE local. */
+function padroesDoLocal(grupo, p) {
+  const equip = perfilLocal(p);
+  const out = new Set();
+  for (const e of fonte.catalogo) {
+    if (e.grupo_primario !== grupo) continue;
+    if (e.equipamento && !equip.has(e.equipamento)) continue;
+    // Mesmo filtro de força relativa que o gerador aplica: mergulho no
+    // paralelo é o segundo padrão de peito em casa, e ele não existe para quem
+    // ainda não sustenta o próprio peso. Contar padrão que o gerador nunca
+    // poderia escolher faria a asserção cobrar o impossível.
+    const r = FORCA_RELATIVA[e.nome];
+    if (r && p.barraFixaReps >= 0 && p.barraFixaReps < r.minReps) continue;
+    out.add(padraoDe(e.nome, grupo));
+  }
+  return out;
+}
+
+const ORDEM_CARDIO = ['Bicicleta ergométrica', 'Elíptico', 'Remo ergômetro', 'Esteira'];
+function conferirCardio(plano, p, fonteCat) {
+  const comCardio = plano.dias.filter((d) => d.exercicios.some((e) => e.grupo === 'cardio'));
+  const pedeCardio = p.objetivo === 'emagrecimento' || p.objetivo === 'recomposicao';
+  if (!pedeCardio) return comCardio.length ? `cardio em ${comCardio.length} dias sem objetivo que peça` : '';
+
+  const conf = CARDIO.porObjetivo[p.objetivo];
+  // Mesmo fallback de `equipamentosDe`: local desconhecido cai em academia.
+  const equip = new Set((LOCAIS.find((l) => l.chave === p.local) ?? LOCAIS[0]).equipamentos);
+  const disponiveis = fonteCat.cardio.filter((e) => !e.equipamento || equip.has(e.equipamento));
+  if (!disponiveis.length) return comCardio.length ? 'cardio prescrito sem modalidade disponível no local' : '';
+
+  const esperadoDias = Math.min(conf.sessoes, plano.dias.length);
+  // Sessão que não coube no tempo pode ter perdido o cardio — o plano avisa, e
+  // isso não é o defeito que este teste persegue. Cardio a MAIS nunca tem
+  // desculpa: era o defeito original (todo dia).
+  const cortou = plano.avisos.some(
+    (a) => a.includes('o cardio saiu da sessão') || a.includes('a menos para caber em')
+  );
+  if (comCardio.length > esperadoDias || (!cortou && comCardio.length !== esperadoDias))
+    return `cardio em ${comCardio.length} dias, esperado ${esperadoDias}`;
+
+  const preferida = ORDEM_CARDIO.find((n) => disponiveis.some((e) => e.nome === n)) ?? disponiveis[0].nome;
+  for (const d of comCardio) {
+    for (const e of d.exercicios) {
+      if (e.grupo !== 'cardio') continue;
+      if (e.nome !== preferida) return `${d.nome}: ${e.nome} em vez de ${preferida}`;
+      if (e.repsMin !== conf.minutos * 60)
+        return `${d.nome}: ${Math.round(e.repsMin / 60)} min em vez de ${conf.minutos}`;
+    }
+  }
+  return '';
+}
 
 /** Como o aviso escreve o nome do grupo — para conferir o texto entregue. */
 const COMO_SE_FALA_T = {
@@ -481,9 +554,12 @@ for (const dias of [3, 4, 5, 6]) {
 // posições 4 e 5, depois de um crossover na 3.
 console.log('\n12. Ordem por papel na lista final');
 const papelDe = (n) => (ehPesado(n) ? 0 : ehComposto(n) ? 1 : 2);
-for (const { nome, plano } of planos) {
+for (const { nome, plano, p: perfil } of planos) {
   const foraDeOrdem = [];
   const espalhados = [];
+  // Os grupos em foco abrem a sessão por decisão do usuário (asserção 3), e
+  // isso ganha do tier. A régua de tier vale para o RESTO.
+  const emFoco = new Set((perfil?.focos ?? []).flatMap((f) => REGIOES[f] ?? [f]));
   for (const d of plano.dias) {
     const blocos = {};
     d.exercicios.forEach((e, i) => {
@@ -494,10 +570,35 @@ for (const { nome, plano } of planos) {
       // O grupo é um bloco só: não pode aparecer, sumir e voltar na sessão.
       const contiguo = itens.every((x, k) => k === 0 || x.i === itens[k - 1].i + 1);
       if (!contiguo) espalhados.push(`${d.nome}/${g}`);
-      for (let k = 1; k < itens.length; k++) {
-        if (papelDe(itens[k].e.nome) < papelDe(itens[k - 1].e.nome))
-          foraDeOrdem.push(`${d.nome}: ${itens[k].e.nome} depois de ${itens[k - 1].e.nome}`);
-      }
+    }
+
+    // UNIDADE: o DIA inteiro, não o bloco.
+    //
+    // A versão anterior comparava pares dentro do mesmo grupo e por isso
+    // deixava passar 349 de 1.890 dias com composto pesado a 5-8/180 s DEPOIS
+    // de isolador de OUTRO grupo — e 11,3% dos dias abrindo com monoarticular.
+    // Era a mesma armadilha de unidade de medida que deixou passar as 22
+    // séries: a regra estava certa e medida na escala errada.
+    //
+    // A exceção é a ÊNFASE: quem marcou glúteo faz glúteo primeiro, mesmo que
+    // o glúteo do dia seja uma abdução. Então a régua começa depois do bloco
+    // do primeiro grupo, que é o tema do dia.
+    // A régua é o PRIMEIRO exercício de cada bloco, e não item a item: os
+    // blocos são contíguos por decisão de A4, então o último de um bloco
+    // sempre pode ser mais leve que o primeiro do seguinte sem que isso seja
+    // defeito. O que é defeito — e era o que ninguém media — é um bloco que
+    // ABRE com isolador vindo antes de um bloco que abre com composto pesado.
+    const daForca = d.exercicios.filter((e) => e.grupo !== 'cardio');
+    const aberturas = [];
+    for (const e of daForca) if (!aberturas.some((x) => x.grupo === e.grupo)) aberturas.push(e);
+    // Menos o primeiro: o bloco que abre o dia é o tema dele, escolhido pelo
+    // modelo e pela ênfase — quem marcou glúteo faz glúteo primeiro.
+    const semFoco = aberturas.filter((e) => !emFoco.has(e.grupo));
+    for (let k = 2; k < semFoco.length; k++) {
+      if (papelDe(semFoco[k].nome) < papelDe(semFoco[k - 1].nome))
+        foraDeOrdem.push(
+          `${d.nome}: bloco de ${semFoco[k].grupo} (${semFoco[k].nome}) depois de ${semFoco[k - 1].grupo}`
+        );
     }
   }
   ok(`${nome}: nenhum composto pesado depois de isolador`, !foraDeOrdem.length, foraDeOrdem.join(' | '));
@@ -527,17 +628,37 @@ const padroesNoDia = new Set(forcaNoDia.map(chave));
 ok('nenhum exercício da sessão repete padrão de outro', padroesNoDia.size === forcaNoDia.length,
    `${padroesNoDia.size} padrões em ${forcaNoDia.length} exercícios`);
 
-// B10 quer 7 padrões. G1 entrega 5, e o que falta NÃO está em G1:
+// B10 quer 7 padrões. G1 entregou 5, e o que faltava não estava em G1:
 //   · tríceps: 15,5 fracionadas na semana contra teto 14 → sem folga para o 2º
-//     exercício (extensão de cotovelo isolada). É A7, fase G2.
+//     exercício (extensão de cotovelo isolada). Era A7, fase G2.
 //   · ombro: 21 fracionadas contra teto 20 → sem folga para abdução lateral ou
-//     face pull, e o desenvolvimento pesado continua comendo as 4 diretas.
-//     É A9, fase G2.
-// Os dois travam no teto SEMANAL fracionado, não no da sessão — ou seja, o
-// gerador está recusando corretamente pela regra de A11 (folga de agenda não
-// vira série). Subir esta trava para 6 é o critério de aceite de G2.
-ok('a sessão cobre ao menos 5 padrões distintos', padroesNoDia.size >= 5,
+//     face pull, e o desenvolvimento pesado comendo as 4 diretas. Era A9, G2.
+// G2 destrava os dois: o piso de grupo pequeno (A7) não consulta o teto SEMANAL
+// fracionado — ele é um piso de PRESCRIÇÃO, e o teto que ele respeita é o da
+// sessão; e a restrição por cobertura indireta (A9) tira o desenvolvimento
+// pesado do dia de empurrar, abrindo a vaga para abdução lateral e face pull.
+ok('a sessão cobre ao menos 6 padrões distintos', padroesNoDia.size >= 6,
    `${padroesNoDia.size}: ${[...padroesNoDia].join(', ')}`);
+
+// A7 pede mais que "dois exercícios": pede um monoarticular na posição
+// ALONGADA. Para o tríceps, é a extensão de cotovelo acima da cabeça (testa,
+// francês) — o padrão 'acima'. Sem ele, "peito e tríceps" continua sendo um dia
+// de peito com o tríceps recebendo só o que sobra dos supinos.
+const triNoDia = diaPeito.exercicios.filter((e) => e.grupo === 'triceps');
+ok('o tríceps tem 2 exercícios no dia que leva o nome dele', triNoDia.length >= 2,
+   `${triNoDia.length}: ${triNoDia.map((e) => e.nome).join(', ') || 'nenhum'}`);
+ok('e um deles é extensão de cotovelo na posição alongada',
+   triNoDia.some((e) => padraoDe(e.nome, 'triceps') === 'acima'),
+   triNoDia.map((e) => padraoDe(e.nome, 'triceps')).join(', ') || 'nenhum');
+
+// A9: o ombro do dia de empurrar entra por abdução, não por desenvolvimento.
+const ombroNoDia = diaPeito.exercicios.filter((e) => e.grupo === 'ombro');
+ok('nenhum desenvolvimento pesado no dia de empurrar',
+   !ombroNoDia.some((e) => ehPesado(e.nome) && padraoDe(e.nome, 'ombro') === 'desenvolvimento'),
+   ombroNoDia.map((e) => e.nome).join(', ') || 'nenhum');
+ok('o ombro entra com padrões não-anteriores',
+   ombroNoDia.every((e) => ['lateral', 'posterior'].includes(padraoDe(e.nome, 'ombro'))),
+   ombroNoDia.map((e) => `${e.nome} [${padraoDe(e.nome, 'ombro')}]`).join(', ') || 'nenhum');
 
 const contaPadrao = {};
 for (const e of diaPeito.exercicios) {
@@ -555,9 +676,15 @@ ok('peito aparece 2× na semana', (apBug.peito ?? 0) >= 2, `${apBug.peito ?? 0}�
 ok('costas aparece 2× na semana', (apBug.costas ?? 0) >= 2, `${apBug.costas ?? 0}×`);
 
 console.log(
-  `   ${diaPeito.nome} (${diaPeito.minutos} min):\n` +
+  `   ${diaPeito.nome} (${diaPeito.minutos} min` +
+    `${diaPeito.minutosCardio ? ` + ${diaPeito.minutosCardio} min de cardio` : ''}):\n` +
     diaPeito.exercicios
-      .map((e) => `     ${e.nome} — ${e.series}×${e.repsMin}-${e.repsMax}, ${e.descanso}s [${chave(e)}]`)
+      .map(
+        (e) =>
+          `     ${e.nome} — ${e.papel ?? '?'} — ${e.series}×${e.repsMin}-${e.repsMax}, ` +
+          `RIR ${e.rirMin ?? '?'}-${e.rirMax ?? '?'}, ${e.descanso}s` +
+          `${e.aquecimento ? ` (+${e.aquecimento} aprox.)` : ''} [${chave(e)}]`
+      )
       .join('\n')
 );
 
@@ -663,7 +790,17 @@ console.log('\n16. Invariantes de sessão numa grade de perfis');
           }
 
   let empilhados = 0, acimaDoTeto = 0, padraoDemais = 0, sumiuSemAviso = 0;
-  const amostra = { empilhado: '', teto: '', padrao: '', sumiu: '' };
+  // G2 — os invariantes de PRESCRIÇÃO na mesma grade. Escritos aqui antes de
+  // qualquer correção, porque foi rodando só nos cenários nomeados que as
+  // asserções de G1 passaram contra o código defeituoso.
+  let semPrincipal = 0, semRir = 0, pisoPequeno = 0, pressNoEmpurrar = 0;
+  let faixaUnica = 0, cardioErrado = 0, descansoErrado = 0, aproxSemCarga = 0;
+  let pesadoDemais = 0, padraoUnicoSemana = 0;
+  const amostra = {
+    empilhado: '', teto: '', padrao: '', sumiu: '',
+    principal: '', rir: '', piso: '', press: '', faixa: '', cardio: '', descanso: '', aprox: '',
+    pesado: '', semana: '',
+  };
 
   for (const p of grade) {
     const plano = await montarPlano(p, fonte);
@@ -682,6 +819,35 @@ console.log('\n16. Invariantes de sessão numa grade de perfis');
           empilhados++;
           amostra.empilhado ||= `${rot} | ${d.nome} | ${e.series}x ${e.nome}`;
         }
+        // (g) RIR em todo exercício de força — hoje ele não existe em lugar
+        // nenhum do plano, e sem ele "8-12 repetições" não diz o esforço.
+        // Série por TEMPO (prancha) fica de fora e isso é exceção declarada:
+        // repetição em reserva é conta de repetições, e ali não há nenhuma.
+        // Excêntrico puro fica de fora e isso é exceção DECLARADA: na nórdica
+        // e na barra fixa negativa a fase concêntrica é assistida, então
+        // "quantas repetições sobraram" não é pergunta respondível. Imprimir
+        // RIR ali seria inventar prescrição para caber num campo.
+        if (
+          e.repsMax > 0 &&
+          !EXCENTRICOS_T.has(e.nome) &&
+          (!Number.isFinite(e.rirMin) || !Number.isFinite(e.rirMax))
+        ) {
+          semRir++;
+          amostra.rir ||= `${rot} | ${d.nome} | ${e.nome}`;
+        }
+        // (d) o tier dos 180 s existe e é alcançável: reps ≤ 8 só sai do
+        // principal de estabilização alta, e ele descansa 3 min.
+        if (e.repsMax > 0 && e.repsMax <= 8 && e.descanso < 180) {
+          descansoErrado++;
+          amostra.descanso ||= `${rot} | ${d.nome} | ${e.nome} ${e.repsMin}-${e.repsMax} @ ${e.descanso}s`;
+        }
+        // (h) aproximação exige CARGA EXTERNA. Barra fixa, mergulho e flexão
+        // não têm 40% — o peso é o corpo, e a tela prometia dois degraus que
+        // ou não faziam nada ou inventavam quilos que não existem no aparelho.
+        if ((e.aquecimento ?? 0) > 0 && e.tipoCarga !== 'peso_reps') {
+          aproxSemCarga++;
+          amostra.aprox ||= `${rot} | ${d.nome} | ${e.nome} (${e.tipoCarga})`;
+        }
       }
       for (const [k, n] of Object.entries(conta))
         if (n > 2) { padraoDemais++; amostra.padrao ||= `${rot} | ${d.nome} | ${k}=${n}`; }
@@ -693,6 +859,160 @@ console.log('\n16. Invariantes de sessão numa grade de perfis');
         acimaDoTeto++;
         amostra.teto ||= `${rot} | ${d.nome} | ${g}=${v}/${tetoSessao(g)} (diretas ${dir[g] ?? 0}, exs ${exs})`;
       }
+
+      const forca = d.exercicios.filter((e) => e.grupo !== 'cardio');
+
+      // (a) exatamente 1 ÂNCORA por grupo por sessão.
+      //
+      // UNIDADE: grupo × sessão. A asserção era sobre "principal" e estava
+      // medindo a coisa errada: abrir o bloco é POSIÇÃO (alimenta o gráfico),
+      // ser principal é PRESCRIÇÃO. Enquanto as duas moravam na mesma palavra,
+      // 3.450 monoarticulares saíam rotulados "Principal" — e o texto do
+      // executor mandava "fazer descansado, é a carga que comparamos" sobre um
+      // tríceps testa de 2 × 10-15.
+      for (const g of new Set(forca.map((e) => e.grupo))) {
+        const n = forca.filter((e) => e.grupo === g && e.ancora).length;
+        if (n !== 1) {
+          semPrincipal++;
+          amostra.principal ||= `${rot} | ${d.nome} | ${g}: ${n} âncoras`;
+        }
+      }
+      // E o principal, quando existe, é multiarticular de carga ajustável.
+      for (const e of forca) {
+        if (e.papel !== 'principal') continue;
+        if (!ehComposto(e.nome) || e.tipoCarga !== 'peso_reps') {
+          semPrincipal++;
+          amostra.principal ||= `${rot} | ${d.nome} | ${e.nome} papel=principal (${e.tipoCarga})`;
+        }
+      }
+
+      // (c) grupo pequeno em dia que leva o nome dele: ≥2 exercícios, ao menos
+      // 1 monoarticular. É o "peito e tríceps sem uma extensão de cotovelo".
+      //
+      // A garantia possível não é "sempre 2": em casa sem equipamento não
+      // existe isolador de tríceps, num dia de 30 min não cabe, e com 6,5
+      // fracionadas de indireto o segundo exercício estoura o teto da própria
+      // sessão. É a mesma régua do grupo que some — quando não dá, o plano DIZ.
+      const declaradoSemPiso = plano.avisos.some((a) => a.includes('ficou com UM exercício'));
+      for (const g of PEQUENOS_T) {
+        if (!diaLevaONome(d.nome, g)) continue;
+        const doGrupo = forca.filter((e) => e.grupo === g);
+        if (!doGrupo.length) continue;
+        const cumpre = doGrupo.length >= 2 && doGrupo.some((e) => !ehComposto(e.nome));
+        if (!cumpre && !declaradoSemPiso) {
+          pisoPequeno++;
+          amostra.piso ||= `${rot} | ${d.nome} | ${g}: ${doGrupo.map((e) => e.nome).join(', ')}`;
+        }
+      }
+
+      // (b) dia de empurrar não leva desenvolvimento pesado.
+      //
+      // "Dia de empurrar" medido pelo que a sessão faz, não pelo nome dela: o
+      // ombro já recebeu 5+ séries FRACIONADAS de graça dos empurrões do dia —
+      // metade do piso semanal inteiro, num dia só, tudo em deltoide anterior.
+      // Aí um desenvolvimento pesado é o mesmo músculo pelo mesmo padrão, feito
+      // por último e cansado (A9). O limiar do código é mais apertado (60% do
+      // alvo da sessão) e avaliado na seleção; aqui a régua é o resultado final.
+      const indiretoOmbro = (fracionadoDoDia(d).ombro ?? 0) - (dir.ombro ?? 0);
+      if (indiretoOmbro >= 5) {
+        const press = forca.find(
+          (e) => e.grupo === 'ombro' && ehPesado(e.nome) && padraoDe(e.nome, 'ombro') === 'desenvolvimento'
+        );
+        if (press) {
+          pressNoEmpurrar++;
+          amostra.press ||= `${rot} | ${d.nome} | ${press.nome} (indireto ${indiretoOmbro})`;
+        }
+      }
+
+      // (e) mais de uma faixa de reps por sessão, e — a régua que morde — o
+      // grupo com 2+ exercícios nunca com todos na MESMA faixa.
+      //
+      // Uma faixa só era o sintoma de A6: a prescrição saía da experiência e o
+      // programa inteiro virava 8-12, do supino com barra ao mergulho. Um dia
+      // de corpo todo com um exercício por grupo pode ter duas faixas e estar
+      // certo (são todos principais) — por isso a segunda régua é por grupo.
+      const faixas = new Set(forca.filter((e) => e.repsMax > 0).map((e) => `${e.repsMin}-${e.repsMax}`));
+      let colapsado = null;
+      for (const g of new Set(forca.map((e) => e.grupo))) {
+        // Panturrilha e abdômen têm faixa de GRUPO (12-20), exceção declarada
+        // em `papel.ts`: 5-8 de panturrilha não é treino pesado, é tendão.
+        if (g === 'panturrilha' || g === 'abdomen') continue;
+        const doGrupo = forca.filter((e) => e.grupo === g && e.repsMax > 0);
+        if (doGrupo.length < 2) continue;
+        // Grupo sem principal de verdade na sessão: o primeiro do bloco é
+        // monoarticular e recebe prescrição de isolador (10-15), como o ombro
+        // do dia de empurrar, que entra por duas abduções, ou o glúteo cujo
+        // primeiro exercício é um hip thrust. Dois isoladores na mesma faixa
+        // ali é a prescrição certa, não o colapso de A6 — que é o composto
+        // pesado recebendo 8-12 igual ao acessório.
+        if (doGrupo[0].repsMin >= 10) continue;
+        // Grupo inteiro de carga FIXA não tem zona escolhível: dois exercícios
+        // de peso corporal na mesma faixa é a prescrição certa, não o colapso
+        // de A6 (que é o composto pesado recebendo 8-12 igual ao acessório).
+        if (doGrupo.every((e) => e.tipoCarga !== 'peso_reps')) continue;
+        if (new Set(doGrupo.map((e) => `${e.repsMin}-${e.repsMax}`)).size < 2)
+          colapsado ||= `${g}: ${doGrupo.length}× ${doGrupo[0].repsMin}-${doGrupo[0].repsMax}`;
+      }
+      // A régua de sessão só vale onde variedade é estruturalmente possível:
+      // num corpo todo com UM exercício por grupo, todos são principais e uma
+      // faixa só é a prescrição certa, não o defeito A6.
+      const algumGrupoRepete = forca.length > new Set(forca.map((e) => e.grupo)).size;
+      // Sessão inteira de carga fixa (casa sem equipamento) tem uma faixa só
+      // porque a zona não é escolhível em exercício nenhum dela — é a
+      // prescrição certa, e cobrar variedade ali seria cobrar o que C1 proibiu.
+      const algumaAjustavel = forca.some((e) => e.tipoCarga === 'peso_reps');
+      if ((algumGrupoRepete && algumaAjustavel && faixas.size < 2) || colapsado) {
+        faixaUnica++;
+        amostra.faixa ||= `${rot} | ${d.nome} | ${colapsado ?? [...faixas].join(' / ')}`;
+      }
+    }
+
+    // ── UNIDADE: SEMANA ────────────────────────────────────────────────
+    //
+    // Nenhum invariante media semana, e por isso passaram: 142 casos do mesmo
+    // exercício pesado em 3+ dias e 38 semanas em que as costas recebem
+    // trabalho direto SÓ no padrão `lombar` — zero puxada, zero remada, a
+    // semana inteira, num grupo de alvo 14.
+    const aparicoes = {};
+    const padroesSemana = {};
+    for (const d of plano.dias)
+      for (const e of d.exercicios) {
+        if (e.grupo === 'cardio') continue;
+        if (ehPesado(e.nome)) aparicoes[e.nome] = (aparicoes[e.nome] ?? 0) + 1;
+        (padroesSemana[e.grupo] ??= new Set()).add(padraoDe(e.nome, e.grupo));
+      }
+    for (const [nome, n] of Object.entries(aparicoes)) {
+      if (n <= 2) continue;
+      pesadoDemais++;
+      amostra.pesado ||= `${rot} | ${nome} em ${n} dias`;
+    }
+    for (const g of GRANDES_T) {
+      const ps = padroesSemana[g];
+      // Só cobra de quem aparece 2+ vezes na semana: com uma aparição, um
+      // padrão é o teto do que a divisão permite.
+      const linhas = plano.dias.filter((d) => d.exercicios.some((e) => e.grupo === g)).length;
+      if (!ps || linhas < 2) continue;
+      // A régua COBRADA é a das costas: uma semana inteira sem nenhuma puxada
+      // de verdade (só `lombar`, vindo de terra e hiperextensão) é uma semana
+      // sem dorsal, e eram 38 semanas assim. Para os outros grupos grandes a
+      // variedade semanal ainda não é garantia — está medida e registrada como
+      // candidato no roadmap (168 perfis com um padrão só), porque fechar isso
+      // exige a seleção conversar com a cobertura indireta em duas escalas ao
+      // mesmo tempo, e não cabia nesta rodada.
+      if (g !== 'costas') continue;
+      const faltaPuxar = !['vertical', 'horizontal', 'extensao_ombro'].some((x) => ps.has(x));
+      if (!faltaPuxar) continue;
+      // Só cobra onde o local oferece a alternativa.
+      if (padroesDoLocal(g, p).size < 2) continue;
+      padraoUnicoSemana++;
+      amostra.semana ||= `${rot} | ${g}: ${[...ps].join(', ')}`;
+    }
+
+    // (f) cardio na dose e na modalidade da constante do próprio app.
+    const erroCardio = conferirCardio(plano, p, fonte);
+    if (erroCardio) {
+      cardioErrado++;
+      amostra.cardio ||= `${rot} | ${erroCardio}`;
     }
 
     // Grupo ausente só conta se a DIVISÃO o previa e o relógio o apagou.
@@ -718,6 +1038,170 @@ console.log('\n16. Invariantes de sessão numa grade de perfis');
   ok('nenhuma sessão acima do teto fora da exceção', acimaDoTeto === 0, `${acimaDoTeto} — ${amostra.teto}`);
   ok('nenhuma sessão com 3+ exercícios do mesmo padrão', padraoDemais === 0, `${padraoDemais} — ${amostra.padrao}`);
   ok('grupo grande que some sempre vem declarado', sumiuSemAviso === 0, `${sumiuSemAviso} — ${amostra.sumiu}`);
+  ok('(a) exatamente 1 principal por grupo por sessão', semPrincipal === 0, `${semPrincipal} — ${amostra.principal}`);
+  ok('(b) nenhum desenvolvimento pesado em dia de empurrar', pressNoEmpurrar === 0, `${pressNoEmpurrar} — ${amostra.press}`);
+  ok('(c) grupo pequeno em dia homônimo tem 2 exercícios e 1 mono', pisoPequeno === 0, `${pisoPequeno} — ${amostra.piso}`);
+  ok('(d) reps ≤ 8 sempre com 180 s de descanso', descansoErrado === 0, `${descansoErrado} — ${amostra.descanso}`);
+  ok('(e) sessão de 5+ exercícios com 3+ faixas de reps', faixaUnica === 0, `${faixaUnica} — ${amostra.faixa}`);
+  ok('(f) cardio na dose e modalidade da constante', cardioErrado === 0, `${cardioErrado} — ${amostra.cardio}`);
+  ok('(g) RIR em todo exercício de força', semRir === 0, `${semRir} — ${amostra.rir}`);
+  ok('(h) aproximação só onde existe carga externa', aproxSemCarga === 0, `${aproxSemCarga} — ${amostra.aprox}`);
+  ok('(i) mesmo pesado no máximo 2× na semana', pesadoDemais === 0, `${pesadoDemais} — ${amostra.pesado}`);
+  ok('(j) semana de costas sempre com uma puxada', padraoUnicoSemana === 0, `${padraoUnicoSemana} — ${amostra.semana}`);
+}
+
+// ── 17. A prescrição não sai da EXPERIÊNCIA (A6) ───────────────────────────
+//
+// O achado que originou a fase: `repsDe` só produzia [5,8] quando
+// `experiencia !== 'iniciante'`. Marcar "iniciante" apagava a zona pesada — e,
+// em cascata, os 180 s — do programa INTEIRO. Leonardo é intermediário
+// destreinado; uma resposta de questionário reescreveu a prescrição toda.
+//
+// A régua é comparativa de propósito: não é "iniciante devia receber 5-8", é
+// "o mesmo exercício, no mesmo papel, não muda de faixa nem de descanso porque
+// a pessoa marcou outra caixa". Volume por semana continua saindo da
+// experiência — é lá que ela pertence.
+console.log('\n17. Reps e descanso saem do PAPEL, não da experiência');
+for (const cen of [
+  { nome: '4 dias academia', p: { ...base, dias: 4, diasDisponiveis: [1, 2, 4, 5] } },
+  { nome: '4 dias foco peito 90 min', p: { ...base, dias: 4, focos: ['peito'], minutosPorDia: Array(7).fill(90) } },
+  { nome: '5 dias livre', p: { ...base, dias: 5, diasDisponiveis: [1, 2, 3, 4, 5], preferenciaEquipamento: 'livre' } },
+]) {
+  const prescricao = async (experiencia) => {
+    const plano = await montarPlano({ ...cen.p, experiencia }, fonte);
+    const m = {};
+    for (const d of plano.dias)
+      for (const e of d.exercicios)
+        if (e.grupo !== 'cardio')
+          // A chave inclui o PAPEL de propósito. Experiência muda volume
+          // semanal, volume muda quantos exercícios o grupo tem, e com dois
+          // exercícios a rosca concentrada deixa de ser o principal do bíceps
+          // para virar isolador — outro papel, outra prescrição, e isso está
+          // certo. O que A6 proíbe é o MESMO papel prescrever diferente porque
+          // a pessoa marcou outra caixa no questionário.
+          m[`${e.nome}|${e.papel}`] = `${e.repsMin}-${e.repsMax}/${e.descanso}s/RIR${e.rirMin}-${e.rirMax}`;
+    return m;
+  };
+  const ini = await prescricao('iniciante');
+  const inter = await prescricao('intermediario');
+  const comuns = Object.keys(ini).filter((n) => inter[n]);
+  const divergem = comuns.filter((n) => ini[n] !== inter[n]);
+  ok(
+    `${cen.nome}: mesma prescrição para iniciante e intermediário`,
+    !divergem.length,
+    divergem.slice(0, 3).map((n) => `${n}: ${ini[n]} x ${inter[n]}`).join(' | ')
+  );
+
+  // E o tier dos 180 s precisa ser ALCANÇÁVEL: com peso livre disponível, todo
+  // plano tem ao menos um principal de estabilização alta na zona pesada.
+  const plano = await montarPlano({ ...cen.p, experiencia: 'iniciante' }, fonte);
+  const pesados = plano.dias.flatMap((d) => d.exercicios.filter((e) => e.descanso >= 180));
+  ok(
+    `${cen.nome}: iniciante também alcança os 180 s`,
+    pesados.length > 0,
+    pesados.length ? pesados.map((e) => e.nome).slice(0, 2).join(', ') : 'nenhum exercício a 180 s'
+  );
+}
+
+// ── 18. Aquecimento no principal (F8) ─────────────────────────────────────
+console.log('\n18. Séries de aproximação no principal (F8)');
+let totalAproximacoes = 0;
+for (const { nome, plano } of planos) {
+  const erros = [];
+  let comAproximacao = 0;
+  for (const d of plano.dias) {
+    for (const e of d.exercicios) {
+      if (e.grupo === 'cardio') continue;
+      // `repsMin < 10` separa o principal de verdade (5-8 ou 6-10) do principal
+      // monoarticular, que recebe prescrição de isolador (10-15) e não precisa
+      // de aproximação — aquecer 8 kg de elevação lateral custa mais tempo do
+      // que rende. `tipoCarga` separa o que TEM carga: não existe "40% da
+      // carga" numa barra fixa, e prometer aproximação ali era 40% das
+      // prescrições (162 de 402) apontando para um botão que não faz nada.
+      const esperado =
+        e.papel === 'principal' && e.repsMax > 0 && e.repsMin < 10 && e.tipoCarga === 'peso_reps'
+          ? 2
+          : 0;
+      if ((e.aquecimento ?? 0) !== esperado)
+        erros.push(`${d.nome}: ${e.nome} (${e.papel}) = ${e.aquecimento ?? 0}, esperado ${esperado}`);
+      if ((e.aquecimento ?? 0) > 0) comAproximacao++;
+    }
+  }
+  ok(
+    `${nome}: 2 aproximações no principal e zero no resto`,
+    !erros.length,
+    erros.length ? erros.slice(0, 2).join(' | ') : `${comAproximacao} exercícios com aproximação`
+  );
+  totalAproximacoes += comAproximacao;
+}
+
+// A contagem global existe para a asserção acima não passar vazia: sem ela, um
+// plano com ZERO aproximação (que era o de antes de F8) satisfaz "nenhum erro"
+// sem fazer nada. Ela é GLOBAL e não por cenário porque zero é a resposta certa
+// em casa sem equipamento — lá não existe exercício com carga externa, e exigir
+// aproximação seria cobrar o que a nova regra acabou de proibir.
+ok('a prescrição de aproximação existe de verdade', totalAproximacoes > 0,
+   `${totalAproximacoes} exercícios com aproximação nos ${planos.length} cenários`);
+
+// -- 19. O fluxo real da aproximacao (F8) ---------------------------------
+//
+// UNIDADE: a SERIE, dentro de uma sessao que e reaberta.
+//
+// Os dois defeitos que este teste existe para pegar nao aparecem em contagem
+// de plano nenhuma: `serie_index` e a POSICAO da linha no array da tela, e a
+// criacao de aproximacoes fazia prepend sem olhar o que ja estava gravado. Com
+// a serie 1 no banco, o aquecimento nascia com `serie_index = 0` colidindo — e
+// na reabertura so a primeira das duas voltava. O aquecimento sumia da tela e
+// ficava em `set_logs` sem `salvaId`, sem como desmarcar nem corrigir: a regra
+// 5 do AGENTS.md quebrada, num PWA que recarrega no meio do treino.
+console.log('\n19. Fluxo da aproximacao: criar, gravar, reabrir');
+{
+  const alvo = planos
+    .flatMap((x) => x.plano.dias.flatMap((d) => d.exercicios))
+    .find((e) => e.aquecimento > 0);
+  ok('existe exercicio com aproximacao prescrita', !!alvo, alvo?.nome ?? 'nenhum');
+
+  const passos = aquecimento(60, alvo?.equipamento ?? 'barra', alvo?.tipoCarga ?? 'peso_reps', alvo?.repsMax ?? 10);
+  ok('a carga vira degraus de verdade', passos.length >= 1,
+     passos.map((x) => `${x.peso}kg x ${x.reps}`).join(' e '));
+  ok('nenhum degrau alcanca a carga de trabalho', passos.every((x) => x.peso < 60),
+     passos.map((x) => x.peso).join(', '));
+
+  const zeradas = Array.from({ length: 4 }, () => ({ peso: '', reps: '', concluida: false }));
+  const criado = inserirAproximacoes(zeradas, passos);
+  ok('criar antes da 1a serie e permitido', !!criado.linhas, criado.recusa ?? '');
+
+  const linhas = criado.linhas ?? [];
+  const gravadas = linhas.map((l, i2) => ({
+    id: 100 + i2,
+    serie_index: i2,
+    peso_kg: 40,
+    reps: 8,
+    tipo: l.aquecimento ? 'aquecimento' : 'normal',
+  }));
+  const indices = gravadas.map((g) => g.serie_index);
+  ok('nenhum serie_index colide', new Set(indices).size === indices.length, indices.join(','));
+
+  const reaberta = hidratarSeries(gravadas, 4);
+  ok('a reabertura devolve TODAS as series', reaberta.length === linhas.length,
+     `${reaberta.length} de ${linhas.length}`);
+  ok('e cada uma com o id para desmarcar ou corrigir',
+     reaberta.every((l) => l.salvaId), `${reaberta.filter((l) => !l.salvaId).length} sem id`);
+  ok('o aquecimento volta marcado como aquecimento',
+     reaberta.filter((l) => l.aquecimento).length === passos.length,
+     `${reaberta.filter((l) => l.aquecimento).length} de ${passos.length}`);
+  ok('e a numeracao valendo recomeca em 1',
+     numeroValendo(reaberta, passos.length) === 1, String(numeroValendo(reaberta, passos.length)));
+
+  const comUmaGravada = [
+    { peso: '60', reps: '8', concluida: true, salvaId: 7 },
+    ...zeradas.slice(1),
+  ];
+  const recusado = inserirAproximacoes(comUmaGravada, passos);
+  ok('criar DEPOIS de gravar e recusado', !!recusado.recusa, recusado.recusa ?? 'permitiu');
+  ok('e a recusa e uma frase, nao um silencio',
+     (recusado.recusa ?? '').length > 20, recusado.recusa ?? '');
+  ok('as linhas nao foram tocadas', !recusado.linhas);
 }
 
 console.log(falhas ? `\n${falhas} falha(s)\n` : '\nTudo passou\n');

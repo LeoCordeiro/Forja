@@ -181,6 +181,12 @@ export interface RoutineExercise {
   eh_composto: number;
   superset_grupo: number | null;
   observacao: string | null;
+  /** Papel na sessão (B3). NULL em rotina criada antes da v16. */
+  papel: string | null;
+  rir_min: number | null;
+  rir_max: number | null;
+  /** Séries de aproximação prescritas. Nunca contam volume nem PR. */
+  aquecimento_series: number;
 }
 
 /** routine_exercises + os campos do exercício, como a tela de execução precisa. */
