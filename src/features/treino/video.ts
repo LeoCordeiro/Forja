@@ -62,10 +62,23 @@ export const FONTES = {
 /**
  * Sinais de execução decente, para filtrar o que se vê nos vídeos.
  * Muito conteúdo viral prioriza engajamento sobre técnica.
+ *
+ * ── Uma linha daqui contradizia o resto do app ───────────────────────────
+ *
+ * Ela dizia "movimento controlado na descida — **a fase excêntrica é onde mais
+ * se cresce**", e ficava três centímetros acima do card de cadência, que diz o
+ * contrário com a fonte na mão: Krzysztofik 2019 mede hipertrofia semelhante de
+ * 0,5 s a 8 s de fase excêntrica. Não adianta o app dizer a verdade num card se
+ * o card de cima repete o mito que ele existe para desfazer — e o de cima é o
+ * que a pessoa lê primeiro.
+ *
+ * O critério de vídeo que sobra é o VERIFICÁVEL: descida controlada em vez de
+ * peso caindo. Isso é sobre a carga ser sustentada, não sobre crescer mais.
  */
 export const COMO_AVALIAR_VIDEO = [
   'Amplitude completa, sem "meio movimento" para colocar mais peso.',
-  'Movimento controlado na descida — a fase excêntrica é onde mais se cresce.',
+  'Descida controlada, com o peso sendo sustentado — não largado. Não precisa ser lenta: precisa ' +
+    'ser conduzida.',
   'Sem impulso de tronco ou quadril para vencer a carga.',
   'Quem demonstra explica o porquê, não só repete o movimento.',
 ];

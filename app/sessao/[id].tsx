@@ -86,7 +86,7 @@ import {
   type PapelDaLinha,
 } from '@/features/treino/papel';
 import { PORQUE_PAPEL, porqueEsteExercicio } from '@/features/treino/porque';
-import { execucaoDe, PORQUE_CADENCIA, resumoDeExecucao } from '@/features/treino/execucao';
+import { execucaoDe, porqueCadenciaDe, resumoDeExecucao } from '@/features/treino/execucao';
 import { tecnicasDaSessao } from '@/features/treino/tecnicas';
 import {
   avisarFimDoDescanso,
@@ -1418,7 +1418,14 @@ function degrausDe(
                     ).amplitude
                   }
                   {'\n\n'}
-                  {PORQUE_CADENCIA}
+                  {porqueCadenciaDe(
+                    execucaoDe(
+                      detalhe.nome,
+                      detalhe.grupo_primario,
+                      detalhe.equipamento,
+                      detalhe.tipo_carga
+                    ).cadencia
+                  )}
                 </Txt>
               </View>
 

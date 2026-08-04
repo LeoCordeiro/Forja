@@ -67,13 +67,54 @@ export const TEMPO_POR_REP_PADRAO = tempoPorRepSeg(CADENCIA_PADRAO);
 
 /**
  * A frase que impede a próxima pessoa (ou o próximo agente) de vender cadência
- * como intensidade. Aparece na tela, não só no comentário.
+ * como intensidade — e ela agora sabe de que exercício está falando.
+ *
+ * ── O que a validação de tela pegou ──────────────────────────────────────
+ *
+ * Ela era uma constante única, impressa embaixo de todo card. Na `Flexão
+ * nórdica` a tela mostrava **4-0-1** e "a descida É o exercício aqui: quatro
+ * segundos até o fim" e, três centímetros abaixo, a mesma tela dizia "o padrão
+ * aqui é 2 s descendo... descer mais devagar não substitui carga nem repetição".
+ * O app prescrevia 4 s e negava os 4 s na mesma dobra.
+ *
+ * A parte que vale para todo mundo (a faixa de 0,5 a 8 s) continua fixa, porque
+ * é a evidência. A parte que fala do QUE FAZER passou a depender da cadência que
+ * aquele exercício de fato recebeu.
  */
-export const PORQUE_CADENCIA =
-  'Cadência é ritmo, não dificuldade. De 0,5 s a 8 s de descida o músculo cresce ' +
-  'praticamente igual — o que muda é quanto tempo você passa na academia. Por isso o ' +
-  'padrão aqui é 2 s descendo e subida com intenção de acelerar: é o ritmo que mantém a ' +
-  'técnica sem alongar a sessão. Descer mais devagar não substitui carga nem repetição.';
+const EVIDENCIA_CADENCIA =
+  'Cadência é ritmo, não dificuldade: de 0,5 s a 8 s de descida o músculo cresce praticamente ' +
+  'igual, e o que muda é quanto tempo você passa na academia.';
+
+export function porqueCadenciaDe(c: Cadencia): string {
+  // Série por tempo não tem repetição, logo não tem cadência a explicar.
+  if (!tempoPorRepSeg(c)) {
+    return (
+      'Esta série é medida em segundos, não em repetições — não há descida nem subida para ' +
+      'cronometrar. O que conta é quanto tempo a posição se mantém sem ceder.'
+    );
+  }
+  if (c.excentrica >= 4) {
+    return (
+      `${EVIDENCIA_CADENCIA} Este exercício é a exceção declarada: aqui a descida é o exercício ` +
+      'inteiro, a subida é assistida, e os 4 s não são "mais intensidade" — são o protocolo do ' +
+      'movimento.'
+    );
+  }
+  return (
+    `${EVIDENCIA_CADENCIA} Por isso o padrão é 2 s descendo e subida com intenção de acelerar: ` +
+    'é o ritmo que mantém a técnica sem alongar a sessão. Descer mais devagar não substitui ' +
+    'carga nem repetição.'
+  );
+}
+
+/**
+ * O texto genérico, para quem não tem um exercício na mão.
+ *
+ * Mantido exportado porque é a frase que resume a política do app, mas as telas
+ * usam `porqueCadenciaDe` — foi a versão sem contexto que produziu a
+ * contradição da nórdica.
+ */
+export const PORQUE_CADENCIA = porqueCadenciaDe(CADENCIA_PADRAO);
 
 /** Excêntrico puro: a descida É o exercício, e a subida é assistida. */
 const EXCENTRICOS = new Set(['Flexão nórdica', 'Barra fixa negativa']);
@@ -201,8 +242,18 @@ const ERRO: Record<string, string> = {
     'Deixar a polia puxar o peso de volta. O cabo mantém tensão o tempo todo — é essa a vantagem dele, ' +
     'e ela some quando a fase de retorno vira queda livre.',
   maquina_ajuste:
-    'Começar sem ajustar banco e eixo. Na máquina a articulação tem que ficar alinhada com o pivô do ' +
-    'aparelho; dois furos errados mudam o músculo que trabalha.',
+    'Começar sem ajustar o aparelho. Na máquina a articulação tem que ficar alinhada com o pivô; ' +
+    'dois furos errados mudam o músculo que trabalha.',
+  // Tornozelo e abdômen não têm pivô a alinhar, e por isso não cabem no erro de
+  // máquina — a `Panturrilha em pé` recebia "começar sem ajustar BANCO e eixo",
+  // sobre um aparelho em que a pessoa fica de pé. Aqui a classe mecânica é
+  // outra: amplitude curta, cortada nas duas pontas.
+  tornozelo_amplitude:
+    'Quicar embaixo e não fechar em cima. O tornozelo tem amplitude curta — cortar as duas pontas ' +
+    'transforma a série num balanço com o peso indo e voltando sozinho.',
+  abdomen_pescoco:
+    'Puxar a cabeça com as mãos. O pescoço não move o tronco: quem encurta a distância entre ' +
+    'costela e quadril é o abdômen, e é ele que precisa cansar.',
   mono_articulacao_solta:
     'Mover o que devia ficar parado. Em exercício de uma articulação só, ajudar com tronco ou ombro ' +
     'reparte a carga com músculos maiores e o alvo recebe menos do que a carga sugere.',
@@ -222,6 +273,12 @@ export function erroComumDe(
 ): string {
   if (EXCENTRICOS.has(nome)) return ERRO.excentrico;
   if (tipoCarga === 'tempo') return ERRO.tempo;
+
+  // Grupos cuja articulação não tem pivô a alinhar nem carga externa a segurar:
+  // o erro deles é de AMPLITUDE, e cai antes do erro de implemento. Sem isto a
+  // panturrilha em pé recebia o texto de ajuste de banco de uma máquina sentada.
+  if (grupo === 'panturrilha') return ERRO.tornozelo_amplitude;
+  if (grupo === 'abdomen') return ERRO.abdomen_pescoco;
 
   const pico = picoDeTensao(nome, grupo);
   const perfil = perfilDeResistencia(nome, equipamento);
@@ -262,10 +319,15 @@ export function execucaoDe(
   return {
     cadencia,
     cadenciaTexto: cadenciaTexto(cadencia),
-    porqueCadencia:
-      cadencia.excentrica >= 4
-        ? 'A descida É o exercício aqui: quatro segundos até o fim, e a volta você faz com ajuda. ' +
-          'Não existe "quantas repetições sobraram" num movimento assim.'
+    // Três casos, e o terceiro é o que a validação de tela pegou: a prancha
+    // recebia "Desça em 2 s, suba com intenção de acelerar" e, duas linhas
+    // abaixo, "não há amplitude a percorrer". O card se contradizia sozinho.
+    porqueCadencia: !tempoPorRepSeg(cadencia)
+      ? 'Série medida em segundos: não há descida nem subida para cronometrar. O relógio conta o ' +
+        'tempo em que a posição se mantém — quando a forma quebra, a série acabou.'
+      : cadencia.excentrica >= 4
+        ? 'Aqui a descida é o exercício inteiro: quatro segundos até o fim, e a volta você faz com ' +
+          'ajuda. Não existe "quantas repetições sobraram" num movimento assim.'
         : 'Desça em 2 s, suba com intenção de acelerar. Este é o ritmo mais eficiente em tempo — não o ' +
           'mais fácil nem o mais difícil.',
     amplitude: amplitudeDe(nome, grupo, tipoCarga),

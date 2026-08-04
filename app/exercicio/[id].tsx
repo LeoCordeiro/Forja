@@ -12,7 +12,7 @@ import {
   prsDoExercicio,
   quebraDoExercicio,
 } from '@/features/treino/api';
-import { execucaoDe, PORQUE_CADENCIA, tempoSobTensaoSeg } from '@/features/treino/execucao';
+import { execucaoDe, porqueCadenciaDe, tempoPorRepSeg } from '@/features/treino/execucao';
 import { nomeGrupo, num, peso } from '@/shared/utils/format';
 import {
   abrir as abrirVideo,
@@ -49,7 +49,7 @@ export default function DetalheExercicio() {
   const { ex, prs, evo, quebra } = dados;
 
   const execucao = execucaoDe(ex.nome, ex.grupo_primario, ex.equipamento, ex.tipo_carga);
-  const repsTipicas = 10;
+  const temCadencia = tempoPorRepSeg(execucao.cadencia) > 0;
 
   // Dia só de séries acima de 10 reps vem com e1rm nulo (a estimativa não
   // vale em série longa) — sem ponto no gráfico, em vez de um zero mentiroso.
@@ -144,17 +144,21 @@ export default function DetalheExercicio() {
               <Txt v="h2" cor={colors.primary}>
                 {execucao.cadenciaTexto}
               </Txt>
+              {/* O rótulo só existe se houver as três fases. Numa prancha ele
+                  ficava embaixo de "por tempo", nomeando o que não há. */}
               <Txt v="small" cor={colors.textDim} size={11}>
-                descida · pausa · subida
+                {temCadencia ? 'descida · pausa · subida' : 'a série é medida em segundos'}
               </Txt>
             </View>
-            {execucao.cadencia.excentrica > 0 ? (
+            {temCadencia ? (
               <View style={{ alignItems: 'flex-end' }}>
-                <Txt v="h3">
-                  ~{tempoSobTensaoSeg(execucao.cadencia, repsTipicas)} s
-                </Txt>
+                <Txt v="h3">{tempoPorRepSeg(execucao.cadencia)} s</Txt>
+                {/* Por REPETIÇÃO, não "em 10 reps": esta tela não conhece a
+                    faixa prescrita (ela é da linha da rotina, não do catálogo),
+                    e o 10 cravado dizia "~30 s em 10 reps" sobre um exercício
+                    prescrito em 6-10. Segundos por repetição é sempre verdade. */}
                 <Txt v="small" cor={colors.textDim} size={11}>
-                  sob tensão em {repsTipicas} reps
+                  por repetição
                 </Txt>
               </View>
             ) : null}
@@ -171,8 +175,11 @@ export default function DetalheExercicio() {
           <Txt v="body">{execucao.amplitude}</Txt>
         </Card>
 
+        {/* O texto da política, agora DERIVADO da cadência deste exercício: a
+            constante única dizia "o padrão é 2 s" embaixo de um card que
+            prescreve 4-0-1, negando na mesma dobra o que acabara de prescrever. */}
         <Txt v="small" cor={colors.textDim}>
-          {PORQUE_CADENCIA}
+          {porqueCadenciaDe(execucao.cadencia)}
         </Txt>
       </Animated.View>
 
@@ -242,27 +249,32 @@ export default function DetalheExercicio() {
         )}
       </Animated.View>
 
+      {/* ── B8 nível 1: a quebra da curva vive FORA do gráfico ────────────────
+          Ela nasceu aninhada dentro de `serie.length > 1` e por isso o lado
+          NOVO nunca aparecia: um exercício que acabou de entrar no bloco tem,
+          por definição, zero ponto de histórico. Metade das quebras era
+          estruturalmente impossível de mostrar — e era justamente o lado em que
+          a pessoa pergunta "por que estou começando do zero?". O aviso é sobre
+          a TROCA, não sobre o gráfico; ele não pode depender de haver gráfico. */}
+      {quebra ? (
+        <Animated.View entering={FadeInDown.delay(170).duration(300)}>
+          <View style={s.quebra}>
+            <Ionicons name="git-branch" size={18} color={colors.info} />
+            <View style={{ flex: 1, gap: 2 }}>
+              <Txt v="label" cor={colors.info}>
+                {quebra.lado === 'antigo' ? 'Esta curva termina aqui' : 'Esta curva começa do zero'}
+              </Txt>
+              <Txt v="small" cor={colors.info}>
+                {quebra.quebra.texto}
+              </Txt>
+            </View>
+          </View>
+        </Animated.View>
+      ) : null}
+
       {serie.length > 1 ? (
         <Animated.View entering={FadeInDown.delay(180).duration(300)} style={{ gap: spacing.md }}>
           <Txt v="label">Progressão de força (1RM estimado)</Txt>
-          {/* ── B8 nível 1: a curva QUEBRA, e o app diz isso antes do gráfico ──
-              Emendar a carga de dois exercícios diferentes mostraria uma queda
-              ou um salto que a pessoa não teve. */}
-          {quebra ? (
-            <View style={s.quebra}>
-              <Ionicons name="git-branch" size={18} color={colors.info} />
-              <View style={{ flex: 1, gap: 2 }}>
-                <Txt v="label" cor={colors.info}>
-                  {quebra.lado === 'antigo'
-                    ? 'Esta curva termina aqui'
-                    : 'Esta curva começa do zero'}
-                </Txt>
-                <Txt v="small" cor={colors.info}>
-                  {quebra.quebra.texto}
-                </Txt>
-              </View>
-            </View>
-          ) : null}
           <Card>
             <Linha dados={serie} sufixo="kg" cor={colors.primary} />
           </Card>

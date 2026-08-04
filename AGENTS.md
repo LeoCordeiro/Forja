@@ -79,6 +79,16 @@ A distribuição real é o PWA: `npm run build:pwa` e deploy do `dist/`.
   registrado como asset em `metro.config.js` ou o bundle web nem constrói.
 - **Haptics** não existe no web: sempre usar `buzz` de `shared/utils/haptics`,
   que já tem o guard.
+- **OPFS aceita UM access handle por arquivo.** Navegar direto de uma rota para
+  outra deixa o worker do SQLite anterior segurando o `forja.db`, e a tela nova
+  estoura `NoModificationAllowedError`. Numa varredura automatizada de rotas,
+  passar por `about:blank` com ~1,2 s entre navegações. Isso derruba qualquer
+  varredura ingênua — e o erro parece bug da tela nova, não do harness.
+- **Dirigir o app por CDP:** os chips de escolha do onboarding só respondem a
+  `PointerEvent` sintético despachado em JS; os botões grandes, ao mouse do CDP.
+  Mandar os dois num chip marca e desmarca. Para chamar código de produção de
+  dentro da página em dev, `__r.getModules()` do Metro devolve um **Map** (não um
+  objeto: `Object.keys` nele dá `[]`), com `verboseName` e `publicModule.exports`.
 - **iOS sem Mac:** build pelo EAS (`eas build -p ios`).
 
 ## Dados de terceiros

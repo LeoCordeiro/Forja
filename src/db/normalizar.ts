@@ -22,6 +22,7 @@ import { EXERCICIOS, MEDIA_BASE } from './seed/exercicios';
 export async function normalizar(db: SQLite.SQLiteDatabase) {
   await renomearExercicios(db);
   await completarCatalogo(db);
+  await sincronizarDicas(db);
   await classificarExercicios(db);
   // ORDEM: o papel entra ANTES do descanso, e isso é a fase inteira.
   // Sem papel, `corrigirDescansos` cai no fallback que trata todo
@@ -128,6 +129,43 @@ async function completarCatalogo(db: SQLite.SQLiteDatabase) {
   // `classificarExercicios` logo abaixo. G2.1 não criou este mecanismo, mas
   // multiplicou a magnitude dele ao fazer a regra nova valer para todo mundo.
   await db.runAsync('UPDATE exercises SET eh_composto = 0');
+}
+
+/**
+ * Dica do catálogo que CONTRADIZIA a prescrição do app, corrigida no lugar.
+ *
+ * ── O caso, achado na validação de tela do G3 ────────────────────────────
+ *
+ * `Panturrilha em pé` pedia "pausa embaixo" na dica enquanto o card de cadência,
+ * três centímetros acima, prescrevia **2-0-1** — pausa zero. A pausa de 1 s foi
+ * medida e rejeitada de propósito (custava 1.184 séries na grade de 1.350
+ * perfis, por algo que Krzysztofik 2019 não prescreve), então quem está errado é
+ * o texto antigo.
+ *
+ * ── E quem já está com o banco montado? ──────────────────────────────────
+ *
+ * `completarCatalogo` só INSERE o que falta: corrigir o seed não corrige o
+ * aparelho de ninguém. Este passo escreve o texto novo por NOME, e é a mesma
+ * forma de `renomearExercicios` — lista declarada, curta, idempotente (o WHERE
+ * só acha o texto velho), e escreve numa coluna só de UMA tabela. `set_logs`,
+ * `personal_records` e `routine_exercises` não aparecem em cláusula nenhuma.
+ *
+ * A lista é declarada de propósito, e não "sincronize tudo do seed": reescrever
+ * em massa texto que o app mostra é o tipo de passo que passa despercebido e
+ * apaga correção feita à mão. Aqui entra só o que contradiz uma prescrição.
+ */
+const DICAS_CORRIGIDAS: [nome: string, de: string, para: string][] = [
+  [
+    'Panturrilha em pé',
+    'Amplitude total e pausa embaixo. Meia amplitude não desenvolve panturrilha.',
+    'Amplitude total, sem quicar embaixo. Meia amplitude não desenvolve panturrilha.',
+  ],
+];
+
+async function sincronizarDicas(db: SQLite.SQLiteDatabase) {
+  for (const [nome, de, para] of DICAS_CORRIGIDAS) {
+    await db.runAsync('UPDATE exercises SET dica = ? WHERE nome = ? AND dica = ?', [para, nome, de]);
+  }
 }
 
 async function classificarExercicios(db: SQLite.SQLiteDatabase) {

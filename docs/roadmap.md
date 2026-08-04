@@ -24,7 +24,8 @@ Prescrição-alvo (o que devia sair): `prescricao-alvo.md` na mesma pasta.
 | G2 | Prescrição com papel | A5 A6 A7 A9 A10 + F8 | **feita e no ar** — commit `5374f1e`, build `f11ddcbac48c`. Reprovada por qa (3 ALTOs) E fitness-scientist (2 CRÍTICOS + 5 ALTOs) na 1ª entrega; corrigida e reverificada. Gate final conferido pelo Claude: **27 falhas contra o código em produção, 0 depois**. Ver "Validação de G2" |
 | G2.1 | Sobras do G2 | ALTO-3 (backfill de papel) + M1 M2 M3-texto + variedade semanal | **no ar** — commit `bb6babf`. Gate: 23 falhas no gerador + 5 na migração contra `63c716b`, 0 depois. **Reprovada no cross-review do qa** (2 ALTOs + 4 MÉDIOS + 4 BAIXOs) — ver "Correção do cross-review de G2.1" |
 | G2.2 | Correção do cross-review de G2.1 | ALTO-1 (chaves de local) ALTO-2 (papel congelado) M1 M2 M3 M4 + 4 BAIXOs | **feita, não commitada** — gate: **10 falhas no gerador + 2 na migração contra `bacf85c`, 0 depois** |
-| G3 | Treinador que explica e varia | execução detalhada, técnicas de intensidade, objetivo do exercício, variação entre ciclos | **feita, não commitada** — gate: **30 falhas contra `c241562`, 0 depois**. Ver "Validação de G3" |
+| G3 | Treinador que explica e varia | execução detalhada, técnicas de intensidade, objetivo do exercício, variação entre ciclos | **no ar** — commit `bfb4e91`, gate 30 falhas contra `c241562`. **Reprovada na validação de tela (5 ALTOs)** — ver "Correção da validação de tela do G3" |
+| G3.1 | Correção da validação de tela do G3 | ALTO-1 (português) ALTO-2/3 (cadência) ALTO-4 (vídeo) ALTO-5 (banner) + 6 MÉDIOS | **feita, não commitada** — gate: **19 falhas contra `bfb4e91`, 0 depois** |
 | 4 | Série em 1 toque | U1 U2 U5 U6 U7 | **feita, não commitada** — gate: **33 falhas contra `bb6babf`, 0 depois**. Ver "Validação da fase 4" |
 | 5 | Segurança e nutrição | F5 N3 N6 N8 U8 | **feita, não commitada** — gate: **50 falhas contra `ee156d5`, 0 depois**. Ver "Validação da fase 5" |
 | 5.1 | Correção dos críticos que a Fase 5 criou | N17 N11 N12 N13 N14 N15 N18 N10 N20 N21 | **feita, não commitada** — gate: **37 falhas contra `bfb4e91`, 0 depois**. Ver "Validação da fase 5.1" |
@@ -404,6 +405,116 @@ Com os números que a revisora deu, para a fase 6:
 - **N20** — **fechado nesta fase**: o ramo `dadosParaEstimar === undefined` entrou
   na grade e é o que N11 mais expôs.
 - **N22, N23** — pendências da auditoria de 29/07.
+
+## Correção da validação de tela do G3 (04/08/2026)
+
+A validação de tela reprovou G3 com **5 ALTOs**, já commitado (`bfb4e91`) e **não
+deployado** por causa disso. Working tree, sem commit. `tsc --noEmit` limpo,
+`testar:gerador` e `testar:migracao` 100%. **Sem mudança de schema.**
+
+**O gate.** As seções 44-46 foram escritas antes da correção e rodadas contra
+`bfb4e91` num worktree com o MESMO arquivo de teste: **19 falhas**. Depois: **0**.
+
+| Invariante | UNIDADE | contra `bfb4e91` | depois |
+|---|---|---|---|
+| 44. português correto em toda frase de objetivo | **frase gerada** (349) | 9 | 0 |
+| 45. cadência × tipo de carga, e o texto ao lado | **exercício** (117) | 9 | 0 |
+| 46. banner da quebra nos dois lados | **lado da transição** | 1 | 0 |
+
+**ALTO-1 — 98,5% das frases tinham erro de português, e nenhuma asserção via.**
+As seções 36-40 mediam se a função DEVOLVE texto, e ela devolvia. A unidade nova
+é a **frase gerada**: a varredura monta sessões sintéticas cobrindo os quatro
+ramos de `porqueEsteExercicio` para os 117 exercícios e lê o texto de verdade.
+
+A correção é estrutural, como pedido. Todo substantivo declara `genero` e
+`plural`; `artigo`, `contrair` e `unicoDe` são funções; `COMO_SE_FALA` (que
+embutia o artigo dentro da string, impedindo qualquer contração) deu lugar a
+`GRUPOS`. E **nenhum template conta exercícios** — contar era o único motivo de
+existir o `(s)`, e "os outros 2 exercícios de peito não fazem esse movimento" diz
+o mesmo que "é a única abertura do dia" com 60 caracteres a mais e dois erros.
+
+| | antes | depois |
+|---|---|---|
+| `de`/`por` sem contrair | 190 frases | **0** |
+| `exercício(s)` na tela | 145 | **0** |
+| gênero discordante | 235 | **0** |
+| fallback `"É o outro do dia"` (antebraço) | 1 | **0** |
+| acima de 175 caracteres | 311 de 349 | **0** |
+| comprimento médio | 227 | **138** |
+
+Três rótulos estavam errados no próprio dado e foram corrigidos: `flexora
+sentado` → `sentada`, `flexora deitado` → `deitada`, `panturrilha sentado` →
+`sentada`.
+
+**ALTO-2 — a prancha recebia instrução de descida.** `cadenciaDe` já devolvia
+`{0,0,0}`; quem não olhava o caso era o TEXTO e o subtítulo. Agora
+`porqueCadenciaDe` tem três ramos e o rótulo "descida · pausa · subida" só
+aparece quando existem as três fases. Na tela: *"por tempo | a série é medida em
+segundos | Série medida em segundos: não há descida nem subida para
+cronometrar"*.
+
+**ALTO-3 — o texto fixo negava o 4-0-1 da mesma tela.** `PORQUE_CADENCIA` era
+constante. A parte que é EVIDÊNCIA (0,5 a 8 s) continua fixa; a parte que diz o
+que fazer passou a derivar da cadência daquele exercício. Na nórdica, lido na
+tela: *"Este exercício é a exceção declarada: aqui a descida é o exercício
+inteiro… e os 4 s não são 'mais intensidade' — são o protocolo do movimento"*.
+
+**ALTO-4 — o checklist de vídeo vendia o mito que o G3 desfaz.** A linha "a fase
+excêntrica é onde mais se cresce" ficava acima do card que diz o contrário com a
+fonte na mão. Virou critério verificável: *"Descida controlada, com o peso sendo
+sustentado — não largado. Não precisa ser lenta: precisa ser conduzida."*
+
+**ALTO-5 — o banner do lado NOVO era estruturalmente impossível.** Ele estava
+aninhado em `{serie.length > 1 ? …}`, e exercício que acabou de entrar no bloco
+tem zero ponto por definição: metade das 1.252 quebras não tinha como aparecer, e
+era o lado em que a pessoa pergunta "por que estou começando do zero?". O aviso é
+sobre a TROCA, não sobre o gráfico — agora é irmão dele, não filho. Confirmado na
+tela: `/exercicio/1` (`Supino reto com barra`, zero histórico) mostra **"ESTA
+CURVA COMEÇA DO ZERO"**; `/exercicio/106` mostra **"ESTA CURVA TERMINA AQUI"**.
+
+**MÉDIOS, todos fechados.** `erroComumDe` deixou de mandar ajustar *banco* numa
+panturrilha em pé (tornozelo e abdômen não têm pivô a alinhar: a classe mecânica
+deles é amplitude, e vem antes do erro de implemento). A dica do catálogo que
+pedia "pausa embaixo" contra uma cadência 2-0-1 foi corrigida **e sincronizada**
+— `completarCatalogo` só insere o que falta, então corrigir o seed não corrigia
+o aparelho de ninguém; `sincronizarDicas` escreve por nome, em lista declarada,
+numa coluna de uma tabela. O `repsTipicas = 10` cravado ("~30 s em 10 reps" num
+exercício de 6-10) virou **segundos por repetição**, que é sempre verdade e não
+depende de uma faixa que aquela tela não conhece. E o texto do dia encolheu:
+**910 px → 308 px** de objetivo, medido na mesma coluna de 202 px.
+
+**Duas lições de RÉGUA, e as duas se repetiram no mesmo dia.** Três das quatro
+falhas residuais eram o teste casando com o COMENTÁRIO que explicava o defeito: a
+prosa citava `serie.length > 1` e "onde mais se cresce", e a régua achava a
+prosa. Régua que lê fonte tem que apontar para código — as três passaram a
+ancorar no JSX e no literal do array. A quarta era uma régua que reprovava a
+NEGAÇÃO ("não há descida nem subida"): ela media a palavra, não o sentido.
+
+**Validado em tela, 390×844, app real** (Chrome headless próprio com
+`Emulation.setDeviceMetricsOverride`; ponte `globalThis.__forjaMod` sobre
+`__r.getModules()` do Metro — que devolve um **Map**, não um objeto). Perfil e
+dois blocos criados chamando as funções de produção de dentro da página, o que
+produziu quebras reais: `peito: Supino máquina → Supino reto com barra`,
+`quadriceps: Leg press → Hack machine`, `posterior: Stiff → Levantamento terra
+romeno`. Telas conferidas: `/dia/5` (frases certas, 7 exercícios), `/exercicio/1`
+e `/106` (os dois lados da quebra), `/63` (prancha), `/85` (nórdica), `/59`
+(panturrilha). `scrollWidth` 390 em todas, **zero erro de console**.
+
+**Armadilha de ambiente — OPFS aceita UM access handle por arquivo.** Navegar
+direto de `/dia/5` para `/exercicio/106` deixa o worker do SQLite anterior
+segurando o `forja.db` e a rota nova estoura `NoModificationAllowedError`. Só
+passando por `about:blank` com ~1,2 s entre navegações. Isso derruba qualquer
+varredura ingênua de rotas — está anotado no `AGENTS.md`.
+
+**Não corrigido, registrado:** `routines.criado_em` acumula dois papéis — âncora
+da semana do bloco **e** chave de ordenação de qual bloco veio antes
+(`quebrasDeAncoraSalvas`). Mexer num afeta o outro, e a fragilidade é real mesmo
+tendo sido induzida no teste.
+
+**O que a validação de tela NÃO conseguiu ver:** a variação de B8 nível 2 em
+tela (só medida na grade); "zero técnica no deload" em tela (confirmado chamando
+a função); drop set em cenário natural (exigiu envelhecer o perfil à mão); e nada
+em iOS/Android nativo.
 
 ## Validação de G3 — Treinador que explica e varia (04/08/2026)
 
@@ -1320,6 +1431,23 @@ Da fase 2 (31/07 — fitness-scientist R1-R8 + descobertas da validação):
 11. **F8 (aquecimento)**: `anilhas.ts` já tem `aquecimento()` pronto e órfão —
     par natural da readaptação, melhor custo/benefício do relatório original
     ainda não implementado (já está na fase 3 do roadmap).
+
+De G3.1 (04/08 — validação de tela; registrados, não corrigidos):
+
+45. **`routines.criado_em` acumula dois papéis.** É a âncora da semana do bloco
+    (`semanaDoBloco`) **e** a chave de ordenação de qual bloco veio antes
+    (`quebrasDeAncoraSalvas` pega a última rotina arquivada por `criado_em`).
+    Mexer num afeta o outro. A validação induziu o caso, mas a fragilidade é
+    real: duas perguntas diferentes lendo a mesma coluna é a forma como as duas
+    contas de volume deste projeto passaram meses discordando.
+46. **B8 nível 2 nunca foi visto em tela.** O rodízio de acessórios entre
+    sessões é medido na grade (0 de 1.027 pares repetem) e conferido no dump do
+    plano; ninguém abriu os dois dias no app e comparou. Mesma coisa para "zero
+    técnica no deload", confirmado chamando a função, e para o drop set em
+    cenário natural — a validação teve que envelhecer o perfil à mão.
+47. **Nada foi visto em iOS ou Android nativo.** Toda a validação de G3 e G3.1 é
+    PWA em Chrome headless. `hitSlop`, toque longo e teclado já mostraram
+    divergir entre os dois mundos neste projeto.
 
 De G3 (04/08 — achados medidos durante a implementação, NÃO corrigidos):
 

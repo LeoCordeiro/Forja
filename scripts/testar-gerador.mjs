@@ -4441,5 +4441,248 @@ console.log('\n43. A regra antiga não fica viva ao lado da nova (N21)');
      /export function projetar/.test(FONTE_RECOMP2) ? 'zero chamadores em app/ e src/' : 'apagada');
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Correção da validação de tela do G3 (5 ALTOs)
+//
+// UNIDADE NOVA: a **frase gerada**. Nenhuma das seções 36-40 podia pegar o pior
+// defeito do G3 — elas mediam se a função DEVOLVE texto, e ela devolvia: 457
+// frases distintas, das quais 7 corretas. Asserção de existência não lê
+// português. A régua aqui varre o texto de verdade.
+//
+// A segunda unidade nova é o **lado da transição** (antigo/novo): o banner da
+// quebra existia, era testado e nunca renderizava do lado novo, porque estava
+// aninhado dentro do gráfico e exercício que acabou de entrar tem zero ponto.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── 44. Toda frase de objetivo é português correto ────────────────────────
+//
+// UNIDADE: **frase gerada**. A varredura monta sessões sintéticas cobrindo os
+// quatro ramos de `porqueEsteExercicio` (sozinho no grupo, único do padrão,
+// único no pico, dividindo o padrão) para os 117 exercícios do catálogo.
+console.log('\n44. Objetivo do exercício: português correto em TODA frase gerada');
+{
+  const porque = PORQUE.porqueEsteExercicio;
+  ok('existe a função de objetivo', typeof porque === 'function', typeof porque);
+
+  const frases = new Map(); // frase → contexto de exemplo
+  if (typeof porque === 'function') {
+    const porGrupo = {};
+    for (const e of CAT_FORCA) (porGrupo[e.grupo_primario] ??= []).push(e);
+
+    for (const [g, lista] of Object.entries(porGrupo)) {
+      for (const alvo of lista) {
+        const item = (x) => ({ nome: x.nome, grupo: x.grupo_primario, equipamento: x.equipamento });
+        // Ramo 1: sozinho no grupo.
+        const ctx = [[item(alvo)]];
+        // Ramos 2-4: com cada um dos outros do MESMO grupo ao lado. Cobre
+        // "mesmo padrão" (quando o outro compartilha padrão), "único no pico" e
+        // "único do padrão" sem precisar adivinhar qual é qual.
+        for (const outro of lista) if (outro !== alvo) ctx.push([item(alvo), item(outro)]);
+        for (const sessao of ctx) {
+          const f = porque(item(alvo), sessao);
+          if (f && !frases.has(f)) frases.set(f, `${g} | ${alvo.nome} | com ${sessao.length - 1}`);
+        }
+      }
+    }
+  }
+
+  ok('a varredura produziu frases para medir', frases.size > 100, `${frases.size} frases distintas`);
+
+  const defeitos = {
+    'preposição "de" sem contrair': /\bde\s+(o|a|os|as)\s/i,
+    'preposição "por" sem contrair': /\bpor\s+(o|a|os|as)\s/i,
+    'preposição "em" sem contrair': /\bem\s+(o|a|os|as)\s/i,
+    'plural fingido com "(s)"': /\(s\)/,
+    'contagem de exercícios na frase': /\d+\s+exerc[íi]cio/i,
+    'fallback quebrado "o outro do dia"': /\bo outro do dia\b/i,
+    'maiúscula no meio da frase': /[a-zà-ú,]\s+(É|A|O|De|Em|Por)\s+[a-zà-ú]/,
+    'frase sem ponto final': /[^.!?]$/,
+  };
+  for (const [nome, re] of Object.entries(defeitos)) {
+    const maus = [...frases.keys()].filter((f) => re.test(f));
+    ok(`nenhuma frase com ${nome}`, maus.length === 0,
+       `${maus.length} de ${frases.size}${maus.length ? ` — ex.: "${maus[0].slice(0, 120)}"` : ''}`);
+  }
+
+  // ── Concordância de gênero, cobrada contra o DADO, não contra uma lista ──
+  //
+  // Cada rótulo de padrão declara `genero`. A frase que anuncia unicidade tem
+  // que usar "o único" para masculino e "a única" para feminino — 235 das 457
+  // frases erravam isto, porque o "o" era fixo e 32 dos 45 rótulos são
+  // femininos.
+  const rotulos = typeof PORQUE.unicoDe === 'function' ? PORQUE : null;
+  ok('gênero e número são dados declarados, não presumidos',
+     typeof PORQUE.unicoDe === 'function' && typeof PORQUE.contrair === 'function',
+     rotulos ? 'unicoDe + contrair' : 'não existem as funções de concordância');
+  if (rotulos) {
+    ok('unicoDe concorda no masculino', PORQUE.unicoDe({ nome: 'mergulho', genero: 'm' }) === 'o único mergulho');
+    ok('unicoDe concorda no feminino', PORQUE.unicoDe({ nome: 'abertura', genero: 'f' }) === 'a única abertura');
+    ok('contrair resolve de + as (costas)',
+       PORQUE.contrair('de', { nome: 'costas', genero: 'f', plural: true }) === 'das costas');
+    ok('contrair resolve por + o (peito)',
+       PORQUE.contrair('por', { nome: 'peito', genero: 'm' }) === 'pelo peito');
+  }
+
+  // Discordância residual: "É o <rótulo feminino>" e "É a <rótulo masculino>".
+  const generoErrado = [...frases.keys()].filter((f) =>
+    /É o (única|abertura|remada|prensa|adução|rotação|extensão|elevação|flexora|puxada|dobradiça|abdução|panturrilha|rosca|cadeia)/.test(f) ||
+    /É a (único|mergulho|empurrar|desenvolvimento|agachamento|coice|empurrão|encolhimento|trabalho|excêntrico)/.test(f)
+  );
+  ok('nenhuma frase com gênero discordante', generoErrado.length === 0,
+     `${generoErrado.length}${generoErrado.length ? ` — ex.: "${generoErrado[0].slice(0, 110)}"` : ''}`);
+
+  // ── Teto de comprimento: a tela do dia é uma coluna de 202 px a 11 px ────
+  //
+  // 64% das frases passavam de 200 caracteres, o que dava 6 a 9 linhas por card
+  // e 910 px só de objetivo numa tela de 788. O teto é do LAYOUT, não do gosto.
+  const TETO = 175;
+  const longas = [...frases.keys()].filter((f) => f.length > TETO);
+  const media = Math.round([...frases.keys()].reduce((a, f) => a + f.length, 0) / (frases.size || 1));
+  ok(`nenhuma frase acima de ${TETO} caracteres`, longas.length === 0,
+     `${longas.length} de ${frases.size}, média ${media}${longas.length ? ` — ex.: ${longas[0].length} chars` : ''}`);
+
+  // E o fecho não pode ser o mesmo em todo card: 3 cards seguidos terminando na
+  // mesma cláusula lê como boilerplate, e foi o que a validação viu no dia 7.
+  const fechos = new Set([...frases.keys()].map((f) => f.split('. ').pop()));
+  ok('os fechos variam (não é uma cláusula só repetida)',
+     fechos.size >= 8, `${fechos.size} fechos distintos em ${frases.size} frases`);
+}
+
+// ── 45. Cadência × tipo de carga, e o texto que a acompanha ───────────────
+//
+// UNIDADE: **exercício**. `cadenciaDe` já devolvia {0,0,0} para série por tempo
+// — o defeito estava no TEXTO ao lado, que não olhava esse caso: a prancha
+// recebia "Desça em 2 s, suba com intenção de acelerar" e, duas linhas abaixo,
+// "não há amplitude a percorrer". E a nórdica recebia 4-0-1 com um texto fixo
+// dizendo "o padrão aqui é 2 s" logo embaixo.
+console.log('\n45. Cadência e texto concordam com o tipo de carga (ALTO-2 e ALTO-3)');
+{
+  ok('o texto de cadência é derivado, não constante',
+     typeof EXEC.porqueCadenciaDe === 'function',
+     typeof EXEC.porqueCadenciaDe === 'function' ? 'porqueCadenciaDe' : 'só existe a constante');
+
+  let tempoComRitmo = 0, lentoNegado = 0, semTexto = 0;
+  const amostra = { tempo: '', lento: '', sem: '' };
+  for (const e of CAT_FORCA) {
+    const x = EXEC.execucaoDe?.(e.nome, e.grupo_primario, e.equipamento, e.tipo_carga);
+    if (!x) { semTexto++; continue; }
+    const contexto =
+      typeof EXEC.porqueCadenciaDe === 'function' ? EXEC.porqueCadenciaDe(x.cadencia) : '';
+    const todo = `${x.porqueCadencia} ${contexto}`;
+    if (!x.porqueCadencia || !contexto) { semTexto++; amostra.sem ||= e.nome; continue; }
+
+    // Série por tempo: nenhum texto pode mandar descer em 2 s nem falar de subida.
+    // O que não pode é INSTRUÇÃO de ritmo — imperativo ou o número da cadência.
+    // Casar com a palavra "descida" pegaria também "não há descida nem subida",
+    // que é justamente a frase certa: régua que reprova a negação está medindo
+    // a palavra, não o sentido.
+    if (e.tipo_carga === 'tempo' && /(desça|suba)|2 s descendo|intenção de acelerar/i.test(todo)) {
+      tempoComRitmo++;
+      amostra.tempo ||= `${e.nome}: ${todo.slice(0, 90)}`;
+    }
+    // Excêntrico de 4 s: o texto ao lado não pode dizer que o padrão é 2 s nem
+    // que descer mais devagar não adianta — a mesma tela acabou de prescrever 4.
+    if (x.cadencia.excentrica >= 4 && /o padrão (aqui )?é 2 s|não substitui carga/i.test(todo)) {
+      lentoNegado++;
+      amostra.lento ||= `${e.nome}: ${todo.slice(0, 110)}`;
+    }
+  }
+  ok('série por tempo não recebe instrução de descida/subida',
+     tempoComRitmo === 0, `${tempoComRitmo} — ex.: ${amostra.tempo}`);
+  ok('exercício de 4 s não é contradito pelo texto ao lado',
+     lentoNegado === 0, `${lentoNegado} — ex.: ${amostra.lento}`);
+  ok('todo exercício tem os dois textos', semTexto === 0, `${semTexto} — ex.: ${amostra.sem}`);
+
+  // O rótulo "descida · pausa · subida" não pode aparecer sem as três fases.
+  ok('a tela não rotula as três fases numa série por tempo',
+     /temCadencia \? 'descida · pausa · subida'/.test(FONTE_TELA_EX),
+     /descida · pausa · subida/.test(FONTE_TELA_EX) ? 'rótulo incondicional' : 'ausente');
+  // E não inventa um número de repetições que ela não conhece.
+  ok('a tela não crava um número de repetições',
+     !/repsTipicas/.test(FONTE_TELA_EX),
+     /repsTipicas/.test(FONTE_TELA_EX) ? 'ainda usa repsTipicas = 10' : 'por repetição');
+
+  // ── ALTO-4: o checklist de vídeo não pode negar a evidência do card ─────
+  const FONTE_VIDEO = readFileSync(
+    new URL('../src/features/treino/video.ts', import.meta.url),
+    'utf8'
+  );
+  // Só o ARRAY, não o arquivo: o comentário que explica a remoção cita a frase
+  // removida, e comentário não chega à tela. Régua que lê prosa reprova a
+  // própria explicação — foi o que aconteceu na primeira rodada desta seção.
+  const arrayVideo = FONTE_VIDEO.slice(
+    FONTE_VIDEO.indexOf('export const COMO_AVALIAR_VIDEO')
+  );
+  ok('o checklist de vídeo não vende excêntrica como ganho de hipertrofia',
+     !!arrayVideo && !/onde mais se cresce|excêntrica é onde|mais se cresce/i.test(arrayVideo),
+     /mais se cresce/i.test(arrayVideo) ? 'contradiz o card de cadência' : 'alinhado');
+
+  // ── MÉDIO: o erro derivado não pode citar aparelho que não existe ───────
+  const erroPanturrilha = EXEC.erroComumDe?.('Panturrilha em pé', 'panturrilha', 'maquina', 'peso_reps') ?? '';
+  ok('o erro da panturrilha em pé não fala de banco',
+     !!erroPanturrilha && !/banco/i.test(erroPanturrilha), erroPanturrilha.slice(0, 90));
+  const erroSupino = EXEC.erroComumDe?.('Supino máquina', 'peito', 'maquina', 'peso_reps') ?? '';
+  ok('e não é o mesmo texto do supino de máquina',
+     erroPanturrilha !== erroSupino, erroPanturrilha === erroSupino ? 'idênticos' : 'distintos');
+
+  // ── MÉDIO: a dica do catálogo não pode pedir o que a cadência não prescreve ──
+  //
+  // `Panturrilha em pé` pedia "pausa embaixo" enquanto o card acima prescrevia
+  // 2-0-1. A pausa foi medida e rejeitada (−1.184 séries na grade); quem estava
+  // errado era o texto. E não basta corrigir o seed: `completarCatalogo` só
+  // insere o que falta, então o aparelho de quem já usa o app precisa do passo
+  // de sincronização.
+  const SEED = readFileSync(new URL('../src/db/seed/exercicios.ts', import.meta.url), 'utf8');
+  const semPausa = CAT_FORCA.filter((e) => {
+    const cad = EXEC.cadenciaDe?.(e.nome, e.grupo_primario, e.equipamento, e.tipo_carga);
+    return cad && cad.pausa === 0 && (EXEC.tempoPorRepSeg?.(cad) ?? 0) > 0;
+  });
+  const pedemPausa = semPausa.filter((e) => {
+    const i = SEED.indexOf(`'${e.nome}'`);
+    return i > 0 && /pausa embaixo/i.test(SEED.slice(i, i + 900));
+  });
+  ok('nenhuma dica pede pausa em exercício prescrito sem pausa',
+     pedemPausa.length === 0, `${pedemPausa.length}${pedemPausa.length ? ` — ex.: ${pedemPausa[0].nome}` : ''}`);
+  const FONTE_NORM = readFileSync(new URL('../src/db/normalizar.ts', import.meta.url), 'utf8');
+  ok('e o banco de quem já usa o app recebe o texto corrigido',
+     /sincronizarDicas/.test(FONTE_NORM),
+     /sincronizarDicas/.test(FONTE_NORM) ? 'passo de sincronização existe' : 'só o seed foi corrigido');
+}
+
+// ── 46. O banner da quebra renderiza dos DOIS lados ───────────────────────
+//
+// UNIDADE: **lado da transição** (`antigo` / `novo`). O texto existia, a função
+// devolvia `lado: 'novo'` com a frase certa, e a tela nunca mostrava: o bloco
+// estava aninhado em `serie.length > 1`, e exercício que acabou de entrar tem
+// zero ponto por definição. Metade das 1.252 quebras era impossível de exibir —
+// e era o lado em que a pessoa pergunta "por que estou começando do zero?".
+console.log('\n46. A quebra de âncora aparece nos dois lados da transição');
+{
+  const fonte = FONTE_TELA_EX;
+  const iQuebra = fonte.indexOf("quebra.lado === 'antigo'");
+  // A âncora é o JSX, não a palavra: o comentário que documenta o defeito cita
+  // `serie.length > 1` e a régua anterior casava com ele, dando a posição
+  // errada. Régua de fonte precisa apontar para código.
+  const iGrafico = fonte.indexOf('{serie.length > 1 ? (');
+  ok('a tela conhece os dois lados da quebra', iQuebra > 0, iQuebra > 0 ? 'sim' : 'não renderiza');
+  ok('e o banner NÃO depende de haver gráfico',
+     iQuebra > 0 && iGrafico > 0 && iQuebra < iGrafico,
+     iQuebra > iGrafico ? 'aninhado dentro de serie.length > 1' : 'independente do gráfico');
+
+  // A régua estrutural: o bloco da quebra tem que FECHAR antes de o gráfico
+  // abrir. Se ele fechasse depois, estaria envolvendo o gráfico — e se não
+  // fechasse, estaria dentro dele, que era o defeito.
+  const iAbre = fonte.indexOf('{quebra ? (');
+  const trecho = iAbre > 0 && iGrafico > iAbre ? fonte.slice(iAbre, iGrafico) : '';
+  ok('o bloco da quebra fecha antes de o gráfico abrir',
+     !!trecho && trecho.includes(') : null}'),
+     trecho ? 'fechado' : 'o bloco não fecha antes do gráfico');
+
+  // E os dois textos são diferentes: "termina aqui" e "começa do zero" contam
+  // histórias opostas e nenhuma delas serve para o outro lado.
+  ok('os dois lados têm rótulo próprio',
+     /Esta curva termina aqui/.test(fonte) && /Esta curva começa do zero/.test(fonte));
+}
+
 console.log(falhas ? `\n${falhas} falha(s)\n` : '\nTudo passou\n');
 process.exit(falhas ? 1 : 0);

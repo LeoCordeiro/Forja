@@ -231,7 +231,7 @@ export const EXERCICIOS: L[] = [
   // ── PANTURRILHA ─────────────────────────────────────────────────────────
   ['Panturrilha em pé','panturrilha','','maquina','peso_reps','Standing_Calf_Raises',
    'Ponta dos pés na plataforma, calcanhar livre.|Suba o máximo na ponta dos pés.|Desça alongando por completo.',
-   'Amplitude total e pausa embaixo. Meia amplitude não desenvolve panturrilha.'],
+   'Amplitude total, sem quicar embaixo. Meia amplitude não desenvolve panturrilha.'],
   ['Panturrilha sentado','panturrilha','','maquina','peso_reps','Seated_Calf_Raise',
    'Sentado, almofada sobre os joelhos, ponta dos pés na plataforma.|Suba na ponta.|Desça alongando.',
    'A versão sentada foca o sóleo, que é a base do volume da panturrilha.'],
